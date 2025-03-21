@@ -1,0 +1,26 @@
+# System packages required (run these first):
+# sudo apt-get update && sudo apt-get install -y \
+#     portaudio19-dev \
+#     python3-pyaudio \
+#     python3-pygame \
+#     python3-gpiozero \
+#     espeak  # Text-to-speech engine
+
+# Core system
+RPi.GPIO==0.7.1  # Raspberry Pi GPIO
+gpiozero==2.0
+pyserial==3.5
+
+# Audio and Speech
+pygame==2.5.2
+SpeechRecognition==3.10.0
+PyAudio==0.2.13
+
+
+# Network and Communication
+wireless==0.3.3  # For WiFi management
+requests==2.31.0
+python-redmine==2.4.0
+
+# Utility
+python-dotenv==1.0.0  # For environment variables 
