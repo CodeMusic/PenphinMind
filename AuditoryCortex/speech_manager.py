@@ -1,37 +1,34 @@
-import serial
-import serial.tools.list_ports
-from typing import Optional
+import json
+from typing import Optional, Dict, Any
+from CorpusCallosum.neural_commands import NeuralCommands
+from CorpusCallosum.synaptic_pathways import SynapticPathways
 
 class SpeechManager:
     def __init__(self):
-        self.serial_connection: Optional[serial.Serial] = None
         self.listening = False
-        self._initialize_serial()
+        self._initialize_neural_pathway()
 
-    def _initialize_serial(self, port="/dev/ttyUSB0", baud_rate=115200):
+    def _initialize_neural_pathway(self):
         """
-        Initialize serial connection to LLM module
+        Initialize connection to neural pathway for JSON communication
         """
         try:
-            self.serial_connection = serial.Serial(port, baud_rate, timeout=2)
-        except serial.SerialException as e:
-            print(f"Error initializing serial connection: {e}")
-            print("Available ports:")
-            ports = serial.tools.list_ports.comports()
-            for port in ports:
-                print(f"  {port.device}: {port.description}")
+            SynapticPathways.initialize()
+        except Exception as e:
+            print(f"Error establishing neural pathway: {e}")
             raise
 
     def start_recording(self):
         """
-        Start recording audio via LLM module
+        Start recording audio via JSON command
         """
-        if not self.serial_connection:
-            self._initialize_serial()
-            
-        print("Recording... Speak now")
-        self.serial_connection.write(b"STT:START\n")
-        self.listening = True
+        try:
+            SynapticPathways.transmit_json(NeuralCommands.STT_START)
+            self.listening = True
+            print("Recording... Speak now")
+        except Exception as e:
+            print(f"Error in neural transmission: {e}")
+            raise
 
     def stop_recording(self):
         """
@@ -41,17 +38,11 @@ class SpeechManager:
             return "No audio recorded"
             
         try:
-            response = self.serial_connection.readline().decode().strip()
-            print(f"You said: {response}")
-            return response
+            response = SynapticPathways.transmit_json(NeuralCommands.STT_STOP)
+            result = json.loads(response)
+            print(f"You said: {result['text']}")
+            return result['text']
         except Exception as e:
             return f"Error processing audio: {e}"
         finally:
             self.listening = False
-
-    def __del__(self):
-        """
-        Cleanup serial connection on object destruction
-        """
-        if self.serial_connection:
-            self.serial_connection.close()

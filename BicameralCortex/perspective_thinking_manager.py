@@ -1,6 +1,7 @@
 from typing import Dict, Any
-from ..CorpusCallosum.redmine_manager import RedmineManager
-from ..CorpusCallosum.synaptic_pathways import SynapticPathways
+from CorpusCallosum.redmine_manager import RedmineManager
+from CorpusCallosum.synaptic_pathways import SynapticPathways
+from CorpusCallosum.neural_commands import NeuralCommands
 
 class PerspectiveThinkingManager:
     """
@@ -38,8 +39,12 @@ class PerspectiveThinkingManager:
         """
         Process input with logical, structured thinking
         """
-        prompt = f"Analyze this logically: {input_text}"
-        return await SynapticPathways.transmit_signal(prompt, "llm")
+        command = NeuralCommands.create_command(
+            NeuralCommands.CommandTypes.SPEAK_TEXT,
+            text=f"Analyze this logically: {input_text}",
+            mode="llm"
+        )
+        return await SynapticPathways.transmit_json(command)
 
     async def _creative_perspective(self, input_text: str) -> str:
         """

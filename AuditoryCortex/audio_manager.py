@@ -8,13 +8,21 @@ class AudioManager:
 
     def _configure_audio_hat(self):
         """
-        Configure Waveshare Audio HAT settings
+        Configure Waveshare Audio HAT settings with comprehensive mixer controls
         """
         try:
-            # Set default mixer settings
-            subprocess.run(['amixer', '-c', '0', 'sset', 'PCM', '100%'], check=True)
+            # Set all relevant mixer settings
+            subprocess.run(["amixer", "-c", "0", "sset", "Speaker", "100%"], check=True)
+            subprocess.run(["amixer", "-c", "0", "sset", "Playback", "100%"], check=True)
+            subprocess.run(["amixer", "-c", "0", "sset", "Headphone", "100%"], check=True)
+            subprocess.run(["amixer", "-c", "0", "sset", "PCM", "100%"], check=True)
         except subprocess.CalledProcessError as e:
             print(f"Error configuring Audio HAT: {e}")
+            print("Available controls:")
+            try:
+                subprocess.run(["amixer", "-c", "0", "controls"], check=True)
+            except subprocess.CalledProcessError:
+                print("Could not list audio controls")
 
     def play_sound(self, sound_file):
         """
@@ -39,10 +47,11 @@ class AudioManager:
 
     def set_volume(self, volume):
         """
-        Set volume level (0-100)
+        Set volume level (0-100) for all outputs
         """
         try:
             volume = max(0, min(100, int(volume * 100)))
-            subprocess.run(['amixer', '-c', '0', 'sset', 'PCM', f'{volume}%'], check=True)
+            for control in ["Speaker", "Playback", "Headphone", "PCM"]:
+                subprocess.run(['amixer', '-c', '0', 'sset', control, f'{volume}%'], check=True)
         except subprocess.CalledProcessError as e:
             print(f"Error setting volume: {e}") 
