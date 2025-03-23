@@ -1,4 +1,4 @@
-# PenphinOS - Bicameral Mind AI Implementation
+# PenphinOS (RoverAI Inception) - Bicameral Mind AI Implementation
 
 ## Overview
 This project is a **fork of the Rover Project**, designed to integrate both **local AI (DeepSeek)** and **cloud-based AI (OpenAI)** into an evolving autonomous system. The local model will **train on inputs and refine output accuracy**, eventually enabling it to become more self-directed. The OpenAI component will assist with **higher-level reasoning and complex problem-solving**.
