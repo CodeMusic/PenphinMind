@@ -1,0 +1,24 @@
+{
+    "audio": {
+        "output_type": "LLM",
+        "sample_rate": 16000,
+        "channels": 1,
+        "device": "default",
+        "volume": 80
+    },
+    "serial": {
+        "baud_rate": 115200,
+        "timeout": 2.0,
+        "max_retries": 3,
+        "retry_delay": 1.0,
+        "default_port": "/dev/ttyUSB0"
+    },
+    "paths": {
+        "audio_cache": "cache/audio",
+        "models": "models"
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "logs/penphinos.system.log"
+    }
+} 

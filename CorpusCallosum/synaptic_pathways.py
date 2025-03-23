@@ -6,210 +6,363 @@ import os
 import stat
 import pwd
 import grp
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union, Callable
+from pathlib import Path
 import subprocess
+from enum import Enum
+from dataclasses import dataclass
+from .neural_commands import (
+    BaseCommand, CommandType, CommandFactory, CommandSerializer,
+    TTSCommand, ASRCommand, VADCommand, LLMCommand, VLMCommand,
+    KWSCommand, SystemCommand, AudioCommand, CameraCommand,
+    YOLOCommand, WhisperCommand, MeloTTSCommand
+)
+from config import CONFIG
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+class SerialConnectionError(Exception):
+    """Error establishing serial connection"""
+    pass
+
+class CommandTransmissionError(Exception):
+    """Error transmitting command"""
+    pass
 
 class SynapticPathways:
     """
-    Manages JSON communication pathways between cortices with SSH-aware permissions
+    Manages JSON communication pathways between cortices with SSH-aware permissions.
+    
+    This class handles serial communication with proper error handling and retry logic,
+    ensuring robust communication between different system components.
     """
     _serial_connection: Optional[serial.Serial] = None
-    _managers = {}
-    _max_retries = 3
-    _retry_delay = 1.0
-    _last_known_port = "/dev/ttyUSB0"
+    _managers: Dict[str, Any] = {}
+    _command_handlers: Dict[CommandType, Callable] = {}
+    _initialized = False
 
     @classmethod
-    def _check_device_permissions(cls, port: str) -> bool:
-        try:
-            if not os.path.exists(port):
-                print(f"Device {port} does not exist")
-                return False
+    def register_command_handler(cls, command_type: CommandType, handler: Callable) -> None:
+        """Register a handler for a specific command type"""
+        cls._command_handlers[command_type] = handler
 
-            # Get current user and group info
+    @classmethod
+    async def _check_device_permissions(cls, device_path: str) -> bool:
+        """Check if we have permission to access the device"""
+        try:
+            if not os.path.exists(device_path):
+                return False
+                
+            # Get device stats
+            stat = os.stat(device_path)
+            
+            # Get owner and group info
+            owner = pwd.getpwuid(stat.st_uid).pw_name
+            group = grp.getgrgid(stat.st_gid).gr_name
+            
+            # Get current user info
             current_user = pwd.getpwuid(os.getuid()).pw_name
             user_groups = [g.gr_name for g in grp.getgrall() if current_user in g.gr_mem]
             
-            stat_info = os.stat(port)
-            owner = pwd.getpwuid(stat_info.st_uid).pw_name
-            group = grp.getgrgid(stat_info.st_gid).gr_name
-
-            print(f"Device {port}:")
+            # Get permissions in octal format
+            perms = oct(stat.st_mode)[-3:]
+            
+            # Print detailed device info for debugging
+            print(f"Device {device_path}:")
             print(f"  Owner: {owner}")
             print(f"  Group: {group}")
             print(f"  Current user: {current_user}")
             print(f"  User groups: {user_groups}")
-            print(f"  Permissions: {oct(stat_info.st_mode)[-3:]}")
-
-            # Check if user has access through group membership
-            if 'dialout' not in user_groups:
-                print("Adding user to dialout group...")
-                try:
-                    subprocess.run(['sudo', 'usermod', '-a', '-G', 'dialout', current_user], check=True)
-                    print("Added to dialout group - please reconnect SSH session")
-                    return False
-                except subprocess.CalledProcessError as e:
-                    print(f"Failed to add to dialout group: {e}")
-
-            # Ensure device has correct permissions
-            if not os.access(port, os.R_OK | os.W_OK):
-                print("Fixing device permissions...")
-                try:
-                    subprocess.run(['sudo', 'chown', 'root:dialout', port], check=True)
-                    subprocess.run(['sudo', 'chmod', '660', port], check=True)
-                except subprocess.CalledProcessError as e:
-                    print(f"Failed to fix permissions: {e}")
-                    return False
-
-            return True
+            print(f"  Permissions: {perms}")
+            
+            # Check if user has access
+            return (
+                os.access(device_path, os.R_OK | os.W_OK) and
+                (current_user == owner or
+                 group in user_groups or
+                 'dialout' in user_groups)
+            )
             
         except Exception as e:
-            print(f"Error checking permissions: {e}")
+            logger.error(f"Error checking device permissions: {e}")
             return False
 
     @classmethod
-    def _find_device(cls) -> str:
+    async def _find_device(cls) -> str:
         """
-        Find the correct USB device by checking available ports
+        Find the correct USB device by checking available ports.
+        
+        Returns:
+            str: Path to the found device or default port
         """
         try:
-            # First try listing with sudo to ensure we can see all devices
-            result = subprocess.run(['sudo', 'ls', '/dev/ttyUSB*'], 
-                                  capture_output=True, 
-                                  text=True)
-            if result.stdout:
-                devices = result.stdout.strip().split('\n')
-                print(f"Found USB devices: {devices}")
-                for device in devices:
-                    if cls._check_device_permissions(device):
-                        return device
-
-            # Fallback to pyserial port listing
-            ports = serial.tools.list_ports.comports()
+            # Use asyncio.to_thread for blocking serial operations
+            ports = await asyncio.to_thread(list, serial.tools.list_ports.comports())
+            
+            # Log all found ports for debugging
+            logger.info("Found serial ports:")
             for port in ports:
-                if "USB" in port.device and cls._check_device_permissions(port.device):
+                logger.info(f"  Port: {port.device}")
+                logger.info(f"    Description: {port.description}")
+                logger.info(f"    Hardware ID: {port.hwid}")
+                logger.info(f"    USB Info: {port.usb_info()}")
+                logger.info(f"    Interface: {port.interface}")
+                
+            # First try ports that match our expected hardware
+            for port in ports:
+                if ("USB" in port.device and 
+                    await cls._check_device_permissions(port.device)):
+                    logger.info(f"Found matching USB device: {port.device}")
                     return port.device
                     
+            # Fall back to checking /dev/ttyUSB* directly
+            proc = await asyncio.create_subprocess_exec(
+                'ls', '/dev/ttyUSB*',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            if stdout:
+                devices = stdout.decode().strip().split('\n')
+                logger.info(f"Found USB devices: {devices}")
+                for device in devices:
+                    if await cls._check_device_permissions(device):
+                        return device
+                    
         except Exception as e:
-            print(f"Error finding USB devices: {e}")
+            logger.error(f"Error finding USB devices: {e}")
             
-        return cls._last_known_port
+        return CONFIG.serial_default_port
 
     @classmethod
-    def initialize(cls, port=None, baud_rate=115200):
-        """Initialize serial connection with SSH-aware retry logic"""
-        retry_count = 0
-        while retry_count < cls._max_retries:
+    async def _initialize_connection(cls) -> None:
+        """Initialize serial connection with proper handshake"""
+        if cls._serial_connection and cls._serial_connection.is_open:
+            logger.debug("Connection already initialized")
+            return
+            
+        # List of baud rates to try
+        baud_rates = [115200, 9600, 57600, 38400]
+        
+        for attempt in range(CONFIG.serial_max_retries):
             try:
-                if cls._serial_connection:
+                # Find available device
+                port = await cls._find_device()
+                if not port:
+                    logger.warning("No suitable USB device found")
+                    await asyncio.sleep(CONFIG.serial_retry_delay)
+                    continue
+                    
+                # Check device permissions
+                if not await cls._check_device_permissions(port):
+                    logger.warning(f"Insufficient permissions for {port}")
+                    await asyncio.sleep(CONFIG.serial_retry_delay)
+                    continue
+                    
+                # Try each baud rate
+                for baud_rate in baud_rates:
                     try:
-                        cls._serial_connection.close()
-                    except:
-                        pass
-
-                port = port or cls._last_known_port
-                if not cls._check_device_permissions(port):
-                    raise serial.SerialException(f"Cannot access {port} - check SSH session")
-
-                print(f"Attempting connection to {port}")
-                cls._serial_connection = serial.Serial(
-                    port=port,
-                    baudrate=baud_rate,
-                    timeout=2,
-                    exclusive=True,
-                    rtscts=True,  # Enable hardware flow control
-                    dsrdtr=True   # Enable hardware flow control
-                )
-                
-                # Clear any pending data
-                cls._serial_connection.reset_input_buffer()
-                cls._serial_connection.reset_output_buffer()
-                time.sleep(0.1)  # Short delay after buffer clear
-                
-                print("Testing connection...")
-                cls._serial_connection.write(b'{"cmd": "ping"}\n')
-                time.sleep(0.1)  # Wait for response
-                response = cls._serial_connection.readline()
-                
-                if not response:
-                    raise serial.SerialException("No response from device")
-                    
-                print(f"Successfully connected to {port}")
-                return
-                
-            except serial.SerialException as e:
-                retry_count += 1
-                print(f"Attempt {retry_count}: Connection failed: {e}")
-                if retry_count < cls._max_retries:
-                    print(f"Retrying in {cls._retry_delay} seconds...")
-                    time.sleep(cls._retry_delay)
-                else:
-                    raise
-
-    @classmethod
-    def transmit_json(cls, command: Dict[str, Any]) -> str:
-        """Transmit JSON commands with retry logic"""
-        retry_count = 0
-        while retry_count < cls._max_retries:
-            try:
-                if not cls._serial_connection or not cls._serial_connection.is_open:
-                    cls.initialize()
-
-                json_data = json.dumps(command) + "\n"
-                cls._serial_connection.write(json_data.encode())
-                response = cls._serial_connection.readline().decode().strip()
-                
-                if not response:
-                    raise serial.SerialException("No data received")
-                    
-                return response
+                        logger.info(f"Attempting connection to {port} at {baud_rate} baud")
+                        
+                        # Close any existing connection
+                        if cls._serial_connection:
+                            try:
+                                cls._serial_connection.close()
+                            except Exception as e:
+                                logger.error(f"Error closing connection: {e}")
+                        
+                        # Wait for device to settle
+                        await asyncio.sleep(1.0)
+                        
+                        # Open new connection with specific settings
+                        cls._serial_connection = serial.Serial(
+                            port=port,
+                            baudrate=baud_rate,
+                            timeout=CONFIG.serial_timeout,
+                            write_timeout=CONFIG.serial_timeout,
+                            bytesize=serial.EIGHTBITS,
+                            parity=serial.PARITY_NONE,
+                            stopbits=serial.STOPBITS_ONE,
+                            xonxoff=False,    # Disable software flow control
+                            rtscts=False,     # Disable hardware (RTS/CTS) flow control
+                            dsrdtr=False      # Disable hardware (DSR/DTR) flow control
+                        )
+                        
+                        # Clear any pending data
+                        cls._serial_connection.reset_input_buffer()
+                        cls._serial_connection.reset_output_buffer()
+                        
+                        # Wait for device to be ready
+                        await asyncio.sleep(2.0)
+                        
+                        logger.info("Testing connection...")
+                        
+                        # Send handshake command
+                        handshake_cmd = {
+                            "type": "handshake",
+                            "version": "1.0",
+                            "baud_rate": baud_rate
+                        }
+                        
+                        # Convert to bytes and add newline
+                        cmd_bytes = (json.dumps(handshake_cmd) + "\n").encode('utf-8')
+                        
+                        # Log the exact bytes being sent (for debugging)
+                        logger.debug(f"Sending handshake bytes: {cmd_bytes!r}")
+                        
+                        # Write command with a small delay between bytes
+                        for b in cmd_bytes:
+                            cls._serial_connection.write(bytes([b]))
+                            cls._serial_connection.flush()
+                            await asyncio.sleep(0.001)  # 1ms delay between bytes
+                        
+                        # Wait for response
+                        logger.debug("Waiting for handshake response...")
+                        response = await asyncio.to_thread(cls._serial_connection.readline)
+                        
+                        if not response:
+                            logger.warning(f"No response at {baud_rate} baud")
+                            continue
+                            
+                        # Log raw response for debugging
+                        logger.debug(f"Raw response: {response!r}")
+                        
+                        try:
+                            response_data = json.loads(response.decode('utf-8'))
+                            if response_data.get("status") == "ok":
+                                logger.info(f"Successfully connected to {port} at {baud_rate} baud")
+                                return
+                            else:
+                                logger.warning(f"Invalid handshake response: {response_data}")
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Invalid handshake response format: {e}")
+                            continue
+                            
+                    except (serial.SerialException, CommandTransmissionError) as e:
+                        logger.warning(f"Failed at {baud_rate} baud: {e}")
+                        continue
+                        
+                # If we get here, none of the baud rates worked
+                logger.warning(f"No working baud rate found for {port}")
                 
             except Exception as e:
-                retry_count += 1
-                print(f"Attempt {retry_count}: Neural transmission error: {e}")
-                if retry_count < cls._max_retries:
-                    print(f"Retrying in {cls._retry_delay} seconds...")
-                    time.sleep(cls._retry_delay)
-                    cls.initialize()  # Reinitialize with device search
-                else:
-                    raise
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                
+            # Wait before next attempt
+            await asyncio.sleep(CONFIG.serial_retry_delay)
+            
+        raise SerialConnectionError("Failed to establish connection after all attempts")
 
     @classmethod
-    def register_manager(cls, manager_type: str, manager_instance):
-        """
-        Register a manager instance for cross-cortex communication
-        """
+    async def initialize(cls) -> None:
+        """Initialize the pathways system"""
+        if cls._initialized:
+            return
+            
+        try:
+            await cls._initialize_connection()
+            cls._initialized = True
+        except Exception as e:
+            logger.error(f"Failed to initialize: {e}")
+            raise
+
+    @classmethod
+    async def transmit_command(cls, command: BaseCommand) -> Dict[str, Any]:
+        """Transmit a command through the neural pathway"""
+        if not cls._initialized:
+            await cls.initialize()
+            
+        try:
+            # Serialize command to JSON
+            command_json = CommandSerializer.serialize(command)
+            
+            # Add newline to mark end of command
+            command_bytes = (command_json + "\n").encode('utf-8')
+            
+            logger.debug(f"Sending command: {command_json}")
+            
+            # Write command
+            cls._serial_connection.write(command_bytes)
+            cls._serial_connection.flush()
+            
+            # Read response
+            response = await asyncio.to_thread(cls._serial_connection.readline)
+            if not response:
+                raise CommandTransmissionError("No response received")
+                
+            try:
+                return json.loads(response.decode('utf-8'))
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid response format: {e}")
+                raise CommandTransmissionError("Invalid response format")
+                
+        except Exception as e:
+            logger.error(f"Command transmission error: {e}")
+            raise CommandTransmissionError(str(e))
+
+    @classmethod
+    def register_manager(cls, manager_type: str, manager_instance: Any) -> None:
+        """Register a manager instance for cross-cortex communication"""
         cls._managers[manager_type] = manager_instance
 
     @classmethod
-    def transmit_signal(cls, signal: str, target: str = "TTS"):
-        """
-        Transmit signals between cortices
-        """
-        if not cls._serial_connection:
-            cls.initialize()
-
-        command = f"{target}:{signal}\n"
-        cls._serial_connection.write(command.encode())
-        response = cls._serial_connection.readline().decode().strip()
-        
-        # Log the interaction if redmine manager is available
-        if "redmine" in cls._managers:
-            cls._managers["redmine"].log_learning(
-                title="Signal Transmission",
-                description=f"Signal: {signal}\nTarget: {target}\nResponse: {response}",
-                category="communication"
-            )
-            
-        return response
-
-    @classmethod
-    def close_connections(cls):
-        """Safely close all connections"""
+    async def close_connections(cls) -> None:
+        """Close all open connections"""
         if cls._serial_connection:
             try:
-                cls._serial_connection.reset_input_buffer()
-                cls._serial_connection.reset_output_buffer()
+                # Send close command
+                close_cmd = {
+                    "type": "close",
+                    "timestamp": time.time()
+                }
+                cmd_bytes = (json.dumps(close_cmd) + "\n").encode('utf-8')
+                cls._serial_connection.write(cmd_bytes)
+                cls._serial_connection.flush()
+                
+                # Wait briefly for any response
+                await asyncio.sleep(0.1)
+                
+                # Close the connection
                 cls._serial_connection.close()
-            except:
-                pass 
+                cls._serial_connection = None
+                cls._initialized = False
+            except Exception as e:
+                logger.error(f"Error closing connection: {e}")
+                raise
+
+    # Convenience methods for common commands
+    @classmethod
+    async def send_tts(cls, text: str, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0) -> Dict[str, Any]:
+        """Send Text-to-Speech command"""
+        command = TTSCommand(
+            command_type=CommandType.TTS,
+            text=text,
+            voice_id=voice_id,
+            speed=speed,
+            pitch=pitch
+        )
+        return await cls.transmit_command(command)
+
+    @classmethod
+    async def send_asr(cls, audio_data: bytes, language: str = "en", model_type: str = "base") -> Dict[str, Any]:
+        """Send Automatic Speech Recognition command"""
+        command = ASRCommand(
+            command_type=CommandType.ASR,
+            input_audio=audio_data,
+            language=language,
+            model_type=model_type
+        )
+        return await cls.transmit_command(command)
+
+    @classmethod
+    async def send_llm(cls, prompt: str, max_tokens: int = 100, temperature: float = 0.7) -> Dict[str, Any]:
+        """Send Large Language Model command"""
+        command = LLMCommand(
+            command_type=CommandType.LLM,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return await cls.transmit_command(command) 

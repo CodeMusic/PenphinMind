@@ -1,48 +1,88 @@
-import json
+import asyncio
 from typing import Optional, Dict, Any
-from CorpusCallosum.neural_commands import NeuralCommands
+import logging
+from pathlib import Path
+
 from CorpusCallosum.synaptic_pathways import SynapticPathways
+from CorpusCallosum.neuro_commands import (
+    CommandType, TTSCommand, ASRCommand, WhisperCommand
+)
+
+logger = logging.getLogger(__name__)
 
 class SpeechManager:
+    """Manages speech recognition and synthesis"""
+    
     def __init__(self):
-        self.listening = False
-        self._initialize_neural_pathway()
-
-    def _initialize_neural_pathway(self):
-        """
-        Initialize connection to neural pathway for JSON communication
-        """
-        try:
-            SynapticPathways.initialize()
-        except Exception as e:
-            print(f"Error establishing neural pathway: {e}")
-            raise
-
-    def start_recording(self):
-        """
-        Start recording audio via JSON command
-        """
-        try:
-            SynapticPathways.transmit_json(NeuralCommands.STT_START)
-            self.listening = True
-            print("Recording... Speak now")
-        except Exception as e:
-            print(f"Error in neural transmission: {e}")
-            raise
-
-    def stop_recording(self):
-        """
-        Stop recording and return transcribed text
-        """
-        if not self.listening:
-            return "No audio recorded"
+        self.recording: bool = False
+        self.current_audio: Optional[bytes] = None
+        self.logger = logger
+        
+    async def start_recording(self) -> None:
+        """Start recording audio"""
+        if self.recording:
+            return
             
+        self.recording = True
+        self.current_audio = b''
+        self.logger.info("Started recording")
+        
+    async def stop_recording(self) -> str:
+        """
+        Stop recording and transcribe the audio
+        
+        Returns:
+            str: Transcribed text from the audio
+        """
+        if not self.recording:
+            return ""
+            
+        self.recording = False
+        self.logger.info("Stopped recording, transcribing...")
+        
         try:
-            response = SynapticPathways.transmit_json(NeuralCommands.STT_STOP)
-            result = json.loads(response)
-            print(f"You said: {result['text']}")
-            return result['text']
+            # Use Whisper for high-quality transcription
+            response = await SynapticPathways.transmit_command(
+                WhisperCommand(
+                    command_type=CommandType.WHISPER,
+                    audio_data=self.current_audio,
+                    language="en",
+                    task="transcribe"
+                )
+            )
+            
+            transcribed_text = response.get("text", "")
+            self.logger.info(f"Transcribed: {transcribed_text}")
+            return transcribed_text
+            
         except Exception as e:
-            return f"Error processing audio: {e}"
+            self.logger.error(f"Transcription error: {e}")
+            return ""
         finally:
-            self.listening = False
+            self.current_audio = None
+            
+    async def process_audio_chunk(self, chunk: bytes) -> None:
+        """Process an incoming chunk of audio data"""
+        if self.recording and chunk:
+            self.current_audio += chunk
+            
+    async def speak_text(self, text: str, voice_id: str = "default") -> None:
+        """
+        Convert text to speech and play it
+        
+        Args:
+            text: Text to speak
+            voice_id: Voice ID to use
+        """
+        try:
+            await SynapticPathways.transmit_command(
+                TTSCommand(
+                    command_type=CommandType.TTS,
+                    text=text,
+                    voice_id=voice_id,
+                    speed=1.0,
+                    pitch=1.0
+                )
+            )
+        except Exception as e:
+            self.logger.error(f"TTS error: {e}")
