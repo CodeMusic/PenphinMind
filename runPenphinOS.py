@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 import asyncio
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Any
-import sys
 import signal
 from datetime import datetime
+
+# Add the project root to Python path
+project_root = str(Path(__file__).parent.parent)
+sys.path.append(project_root)
 
 from CorpusCallosum.synaptic_pathways import SynapticPathways, SerialConnectionError
 from CorpusCallosum.neural_commands import (
@@ -15,9 +20,20 @@ from CorpusCallosum.neural_commands import (
     ASRCommand,
     LLMCommand,
     CommandFactory,
-    CommandSerializer
+    CommandSerializer,
+    SystemCommand
 )
 from config import CONFIG
+from CorpusCallosum.redmine_manager import RedmineManager
+from SomatosensoryCortex.button_manager import ButtonManager
+from AuditoryCortex.speech_manager import SpeechManager
+from AuditoryCortex.audio_manager import AudioManager
+from BicameralCortex.perspective_thinking_manager import PerspectiveThinkingManager
+
+# Create logs directory if it doesn't exist
+log_dir = Path(CONFIG.log_file).parent
+log_dir.mkdir(parents=True, exist_ok=True)
+log_dir.chmod(0o777)  # Give full permissions
 
 # Configure logging (after CONFIG import to ensure directories exist)
 logging.basicConfig(
@@ -37,24 +53,25 @@ class PenphinOS:
         self.logger = logger
         self.running = True
         self.command_handlers = {}
-        self._setup_signal_handlers()
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
         
-    def _setup_signal_handlers(self):
-        """Setup handlers for system signals"""
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
-        
-    def _handle_shutdown(self, signum, frame):
-        """Handle system shutdown signals"""
-        self.logger.info("Shutdown signal received")
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        self.logger.info("Shutdown signal received...")
         self.running = False
-        # Note: We can't await here since this is a sync callback
-        # The cleanup will happen in the main loop's finally block
+        # Force exit after cleanup
+        sys.exit(0)
         
     async def cleanup(self):
-        """Cleanup resources before shutdown"""
+        """Clean up resources"""
         self.logger.info("Cleaning up resources...")
+        if hasattr(self, 'button_manager'):
+            self.button_manager.cleanup()
         await SynapticPathways.close_connections()
+        # Exit immediately after cleanup
+        os._exit(0)
         
     async def handle_tts_command(self, command: TTSCommand) -> Dict[str, Any]:
         """Handle Text-to-Speech commands"""
@@ -97,6 +114,18 @@ class PenphinOS:
         for command_type, handler in self.command_handlers.items():
             SynapticPathways.register_command_handler(command_type, handler)
             
+    async def _play_startup_sequence(self):
+        """Play startup audio sequence"""
+        try:
+            # Remove duration parameter
+            await SynapticPathways.send_tts(
+                text="System initializing",
+                voice_id="en-US-1"
+            )
+        except Exception as e:
+            self.logger.error(f"Startup sequence error: {e}")
+            raise
+            
     async def initialize(self):
         """Initialize all subsystems"""
         try:
@@ -104,8 +133,28 @@ class PenphinOS:
             self.logger.info("Initializing neural pathways...")
             await SynapticPathways.initialize()
             
+            # Initialize audio manager first
+            self.audio_manager = AudioManager()
+            
+            # Initialize speech manager with audio manager
+            self.speech_manager = SpeechManager(self.audio_manager)
+            
+            # Initialize button manager
+            self.button_manager = ButtonManager()
+            self.button_manager.register_press_callback(self.handle_button_press)
+            self.button_manager.register_release_callback(self.handle_button_release)
+            
             # Register command handlers
             self.register_command_handlers()
+            
+            # Play startup sequence
+            await self._play_startup_sequence()
+            
+            # Welcome message
+            await SynapticPathways.send_tts(
+                text=SynapticPathways.welcome_message,
+                voice_id="en-US-1"
+            )
             
             self.logger.info("PenphinOS initialization complete")
             
@@ -162,31 +211,59 @@ class PenphinOS:
                 except asyncio.CancelledError:
                     break
                 
-        except KeyboardInterrupt:
-            self.logger.info("Keyboard interrupt received")
         except Exception as e:
             self.logger.error(f"Runtime error: {e}")
         finally:
             await self.cleanup()
 
+    async def handle_button_press(self):
+        """Handle button press events"""
+        self.logger.info("Button pressed")
+        try:
+            await SynapticPathways.send_system_command("button_press")
+            # Start recording when button is pressed
+            await self.speech_manager.start_recording()
+        except Exception as e:
+            self.logger.error(f"Button press handler error: {e}")
+
+    async def handle_button_release(self):
+        """Handle button release events"""
+        self.logger.info("Button released")
+        try:
+            await SynapticPathways.send_system_command("button_release")
+            # Stop recording and process audio when button is released
+            text = await self.speech_manager.stop_recording()
+            if text:
+                await SynapticPathways.process_assistant_interaction(text_input=text)
+        except Exception as e:
+            self.logger.error(f"Button release handler error: {e}")
+
 async def main():
     """Main entry point"""
-    os = PenphinOS()
-    
-    # Setup cleanup on shutdown
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(
-            os.cleanup())
-        )
-    
-    await os.run()
+    try:
+        # Initialize configuration
+        # CONFIG is already an instance, no need to call it
+        logger.info("Starting PenphinOS...")
+        
+        # Initialize audio components
+        audio_manager = AudioManager()
+        speech_manager = SpeechManager(audio_manager)
+        
+        # Start the system
+        logger.info("Starting PenphinOS...")
+        
+        # Main event loop
+        while True:
+            await asyncio.sleep(1)
+            
+    except KeyboardInterrupt:
+        logger.info("Shutting down PenphinOS...")
+    except Exception as e:
+        logger.error(f"Error in main loop: {e}")
+    finally:
+        # Cleanup
+        if 'audio_manager' in locals():
+            await audio_manager.cleanup()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Program terminated by user")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        sys.exit(1)
+    asyncio.run(main())

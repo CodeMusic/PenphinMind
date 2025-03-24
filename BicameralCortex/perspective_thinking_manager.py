@@ -1,7 +1,7 @@
 from typing import Dict, Any
 from CorpusCallosum.redmine_manager import RedmineManager
 from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neural_commands import NeuralCommands
+from CorpusCallosum.neural_commands import CommandType, LLMCommand
 
 class PerspectiveThinkingManager:
     """
@@ -39,26 +39,40 @@ class PerspectiveThinkingManager:
         """
         Process input with logical, structured thinking
         """
-        command = NeuralCommands.create_command(
-            NeuralCommands.CommandTypes.SPEAK_TEXT,
-            text=f"Analyze this logically: {input_text}",
-            mode="llm"
+        command = LLMCommand(
+            command_type=CommandType.LLM,
+            prompt=f"Analyze this logically: {input_text}",
+            max_tokens=150,
+            temperature=0.3
         )
-        return await SynapticPathways.transmit_json(command)
+        response = await SynapticPathways.transmit_json(command)
+        return response.get("response", "")
 
     async def _creative_perspective(self, input_text: str) -> str:
         """
         Process input with creative, lateral thinking
         """
-        prompt = f"Think creatively about: {input_text}"
-        return await SynapticPathways.transmit_signal(prompt, "llm")
+        command = LLMCommand(
+            command_type=CommandType.LLM,
+            prompt=f"Think creatively about: {input_text}",
+            max_tokens=150,
+            temperature=0.8
+        )
+        response = await SynapticPathways.transmit_json(command)
+        return response.get("response", "")
 
     async def _analytical_perspective(self, input_text: str) -> str:
         """
         Process input with detailed analysis
         """
-        prompt = f"Analyze in detail: {input_text}"
-        return await SynapticPathways.transmit_signal(prompt, "llm")
+        command = LLMCommand(
+            command_type=CommandType.LLM,
+            prompt=f"Analyze in detail: {input_text}",
+            max_tokens=150,
+            temperature=0.5
+        )
+        response = await SynapticPathways.transmit_json(command)
+        return response.get("response", "")
 
     def _integrate_perspectives(self, perspectives: Dict[str, str]) -> str:
         """

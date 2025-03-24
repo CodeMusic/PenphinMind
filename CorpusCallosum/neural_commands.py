@@ -51,21 +51,23 @@ class ASRCommand(BaseCommand):
 
 @dataclass
 class TTSCommand(BaseCommand):
-    """Text to Speech commands"""
-    text: str
-    voice_id: str = "default"
-    speed: float = 1.0
-    pitch: float = 1.0
-    
+    """Text-to-Speech command"""
+    def __init__(self, command_type: CommandType, text: str, voice_id: str = "default", 
+                 speed: float = 1.0, pitch: float = 1.0):
+        super().__init__(command_type)
+        self.text = text
+        self.voice_id = voice_id
+        self.speed = speed
+        self.pitch = pitch
+        
     def to_dict(self) -> Dict[str, Any]:
-        data = super().to_dict()
-        data.update({
+        return {
+            "command_type": self.command_type.value,
             "text": self.text,
             "voice_id": self.voice_id,
             "speed": self.speed,
             "pitch": self.pitch
-        })
-        return data
+        }
 
 @dataclass
 class VADCommand(BaseCommand):
@@ -232,12 +234,23 @@ class MeloTTSCommand(BaseCommand):
         return data
 
 class CommandSerializer:
-    """Serializes commands to JSON format"""
+    """Handles command serialization/deserialization"""
     
     @staticmethod
-    def serialize(command: BaseCommand) -> str:
-        """Convert command to JSON string"""
-        return json.dumps(command.to_dict())
+    def serialize(command: BaseCommand) -> Dict[str, Any]:
+        """Serialize command to dictionary format"""
+        if not isinstance(command, BaseCommand):
+            raise ValueError("Invalid command type")
+            
+        # Use the command's to_dict method if available
+        if hasattr(command, 'to_dict'):
+            return command.to_dict()
+            
+        # Fallback to basic serialization
+        return {
+            "command_type": command.command_type.value,
+            **{k: v for k, v in command.__dict__.items() if not k.startswith('_')}
+        }
 
 class CommandFactory:
     """Factory class for creating neural commands"""

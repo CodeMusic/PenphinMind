@@ -5,7 +5,7 @@ from pathlib import Path
 import RPi.GPIO as GPIO
 
 from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neuro_commands import CommandType, SystemCommand
+from CorpusCallosum.neural_commands import CommandType, SystemCommand
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +52,17 @@ class ButtonManager:
         except Exception as e:
             self.logger.error(f"Button event error: {e}")
             
-    async def _notify_system(self, event: str) -> None:
+    async def _notify_system(self, event_type: str) -> None:
         """Notify system of button events"""
         try:
-            await SynapticPathways.transmit_command(
+            await SynapticPathways.transmit_json(
                 SystemCommand(
-                    command_type=CommandType.SYS,
-                    action="button_event",
-                    parameters={"event": event, "pin": self.button_pin}
+                    command_type=CommandType.SYSTEM,
+                    event=event_type
                 )
             )
         except Exception as e:
-            self.logger.error(f"System notification error: {e}")
+            self.logger.error(f"Button notification error: {e}")
             
     def register_press_callback(self, callback: Callable) -> None:
         """Register callback for button press"""

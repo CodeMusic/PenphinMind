@@ -4,19 +4,21 @@ import logging
 from pathlib import Path
 
 from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neuro_commands import (
+from CorpusCallosum.neural_commands import (
     CommandType, TTSCommand, ASRCommand, WhisperCommand
 )
+from AuditoryCortex.audio_manager import AudioManager
 
 logger = logging.getLogger(__name__)
 
 class SpeechManager:
     """Manages speech recognition and synthesis"""
     
-    def __init__(self):
+    def __init__(self, audio_manager: AudioManager):
         self.recording: bool = False
         self.current_audio: Optional[bytes] = None
         self.logger = logger
+        self.audio_manager = audio_manager
         
     async def start_recording(self) -> None:
         """Start recording audio"""
@@ -25,6 +27,8 @@ class SpeechManager:
             
         self.recording = True
         self.current_audio = b''
+        # Start VAD when recording begins
+        await self.audio_manager.start_vad()
         self.logger.info("Started recording")
         
     async def stop_recording(self) -> str:
@@ -38,11 +42,12 @@ class SpeechManager:
             return ""
             
         self.recording = False
+        self.audio_manager.vad_active = False
         self.logger.info("Stopped recording, transcribing...")
         
         try:
             # Use Whisper for high-quality transcription
-            response = await SynapticPathways.transmit_command(
+            response = await SynapticPathways.transmit_json(
                 WhisperCommand(
                     command_type=CommandType.WHISPER,
                     audio_data=self.current_audio,
@@ -65,6 +70,9 @@ class SpeechManager:
         """Process an incoming chunk of audio data"""
         if self.recording and chunk:
             self.current_audio += chunk
+            # Send chunk to VAD if active
+            if self.audio_manager.vad_active:
+                await self.audio_manager.process_audio_chunk(chunk)
             
     async def speak_text(self, text: str, voice_id: str = "default") -> None:
         """
@@ -75,7 +83,7 @@ class SpeechManager:
             voice_id: Voice ID to use
         """
         try:
-            await SynapticPathways.transmit_command(
+            await SynapticPathways.transmit_json(
                 TTSCommand(
                     command_type=CommandType.TTS,
                     text=text,

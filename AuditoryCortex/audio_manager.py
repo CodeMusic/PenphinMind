@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neuro_commands import (
+from CorpusCallosum.neural_commands import (
     CommandType, AudioCommand, VADCommand
 )
 from config import CONFIG, AudioOutputType
@@ -46,7 +46,7 @@ class AudioManager:
             
         try:
             self.vad_active = True
-            await SynapticPathways.transmit_command(
+            await SynapticPathways.transmit_json(
                 VADCommand(
                     command_type=CommandType.VAD,
                     audio_chunk=b'',  # Initial empty chunk
@@ -58,6 +58,7 @@ class AudioManager:
         except Exception as e:
             self.logger.error(f"VAD start error: {e}")
             self.vad_active = False
+            raise
             
     async def stop_vad(self) -> None:
         """Stop Voice Activity Detection"""

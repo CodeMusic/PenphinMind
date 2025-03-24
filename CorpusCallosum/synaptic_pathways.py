@@ -1,260 +1,51 @@
+# Standard library imports
+import asyncio
 import json
-import serial
-import serial.tools.list_ports
-import time
+import logging
 import os
-import stat
+import platform
 import pwd
 import grp
-from typing import Optional, Dict, Any, List, Union, Callable
+import stat
+import time
 from pathlib import Path
-import subprocess
-from enum import Enum
-from dataclasses import dataclass
+from typing import Optional, Dict, Any, List, Union, Callable
+
+# Third-party imports
+import serial
+import serial.tools.list_ports
+import openai
+
+# Local imports
 from .neural_commands import (
     BaseCommand, CommandType, CommandFactory, CommandSerializer,
-    TTSCommand, ASRCommand, VADCommand, LLMCommand, VLMCommand,
-    KWSCommand, SystemCommand, AudioCommand, CameraCommand,
-    YOLOCommand, WhisperCommand, MeloTTSCommand
+    TTSCommand, ASRCommand, LLMCommand, SystemCommand, WhisperCommand, VADCommand
 )
 from config import CONFIG
-import asyncio
-import logging
 
 logger = logging.getLogger(__name__)
 
 class SerialConnectionError(Exception):
-    """Error establishing serial connection"""
+    """Raised when serial connection fails"""
     pass
 
 class CommandTransmissionError(Exception):
-    """Error transmitting command"""
+    """Raised when command transmission fails"""
     pass
 
 class SynapticPathways:
-    """
-    Manages JSON communication pathways between cortices with SSH-aware permissions.
+    """Manages neural communication pathways with hardware abstraction"""
     
-    This class handles serial communication with proper error handling and retry logic,
-    ensuring robust communication between different system components.
-    """
+    # Class variables
     _serial_connection: Optional[serial.Serial] = None
-    _managers: Dict[str, Any] = {}
-    _command_handlers: Dict[CommandType, Callable] = {}
+    _managers = {}
     _initialized = False
+    _llm_test_mode = False
+    _audio_cache_dir = Path("cache/audio")
+    _command_handlers = {}
+    welcome_message = ""
 
-    @classmethod
-    def register_command_handler(cls, command_type: CommandType, handler: Callable) -> None:
-        """Register a handler for a specific command type"""
-        cls._command_handlers[command_type] = handler
-
-    @classmethod
-    async def _check_device_permissions(cls, device_path: str) -> bool:
-        """Check if we have permission to access the device"""
-        try:
-            if not os.path.exists(device_path):
-                return False
-                
-            # Get device stats
-            stat = os.stat(device_path)
-            
-            # Get owner and group info
-            owner = pwd.getpwuid(stat.st_uid).pw_name
-            group = grp.getgrgid(stat.st_gid).gr_name
-            
-            # Get current user info
-            current_user = pwd.getpwuid(os.getuid()).pw_name
-            user_groups = [g.gr_name for g in grp.getgrall() if current_user in g.gr_mem]
-            
-            # Get permissions in octal format
-            perms = oct(stat.st_mode)[-3:]
-            
-            # Print detailed device info for debugging
-            print(f"Device {device_path}:")
-            print(f"  Owner: {owner}")
-            print(f"  Group: {group}")
-            print(f"  Current user: {current_user}")
-            print(f"  User groups: {user_groups}")
-            print(f"  Permissions: {perms}")
-            
-            # Check if user has access
-            return (
-                os.access(device_path, os.R_OK | os.W_OK) and
-                (current_user == owner or
-                 group in user_groups or
-                 'dialout' in user_groups)
-            )
-            
-        except Exception as e:
-            logger.error(f"Error checking device permissions: {e}")
-            return False
-
-    @classmethod
-    async def _find_device(cls) -> str:
-        """
-        Find the correct USB device by checking available ports.
-        
-        Returns:
-            str: Path to the found device or default port
-        """
-        try:
-            # Use asyncio.to_thread for blocking serial operations
-            ports = await asyncio.to_thread(list, serial.tools.list_ports.comports())
-            
-            # Log all found ports for debugging
-            logger.info("Found serial ports:")
-            for port in ports:
-                logger.info(f"  Port: {port.device}")
-                logger.info(f"    Description: {port.description}")
-                logger.info(f"    Hardware ID: {port.hwid}")
-                logger.info(f"    USB Info: {port.usb_info()}")
-                logger.info(f"    Interface: {port.interface}")
-                
-            # First try ports that match our expected hardware
-            for port in ports:
-                if ("USB" in port.device and 
-                    await cls._check_device_permissions(port.device)):
-                    logger.info(f"Found matching USB device: {port.device}")
-                    return port.device
-                    
-            # Fall back to checking /dev/ttyUSB* directly
-            proc = await asyncio.create_subprocess_exec(
-                'ls', '/dev/ttyUSB*',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
-            if stdout:
-                devices = stdout.decode().strip().split('\n')
-                logger.info(f"Found USB devices: {devices}")
-                for device in devices:
-                    if await cls._check_device_permissions(device):
-                        return device
-                    
-        except Exception as e:
-            logger.error(f"Error finding USB devices: {e}")
-            
-        return CONFIG.serial_default_port
-
-    @classmethod
-    async def _initialize_connection(cls) -> None:
-        """Initialize serial connection with proper handshake"""
-        if cls._serial_connection and cls._serial_connection.is_open:
-            logger.debug("Connection already initialized")
-            return
-            
-        # List of baud rates to try
-        baud_rates = [115200, 9600, 57600, 38400]
-        
-        for attempt in range(CONFIG.serial_max_retries):
-            try:
-                # Find available device
-                port = await cls._find_device()
-                if not port:
-                    logger.warning("No suitable USB device found")
-                    await asyncio.sleep(CONFIG.serial_retry_delay)
-                    continue
-                    
-                # Check device permissions
-                if not await cls._check_device_permissions(port):
-                    logger.warning(f"Insufficient permissions for {port}")
-                    await asyncio.sleep(CONFIG.serial_retry_delay)
-                    continue
-                    
-                # Try each baud rate
-                for baud_rate in baud_rates:
-                    try:
-                        logger.info(f"Attempting connection to {port} at {baud_rate} baud")
-                        
-                        # Close any existing connection
-                        if cls._serial_connection:
-                            try:
-                                cls._serial_connection.close()
-                            except Exception as e:
-                                logger.error(f"Error closing connection: {e}")
-                        
-                        # Wait for device to settle
-                        await asyncio.sleep(1.0)
-                        
-                        # Open new connection with specific settings
-                        cls._serial_connection = serial.Serial(
-                            port=port,
-                            baudrate=baud_rate,
-                            timeout=CONFIG.serial_timeout,
-                            write_timeout=CONFIG.serial_timeout,
-                            bytesize=serial.EIGHTBITS,
-                            parity=serial.PARITY_NONE,
-                            stopbits=serial.STOPBITS_ONE,
-                            xonxoff=False,    # Disable software flow control
-                            rtscts=False,     # Disable hardware (RTS/CTS) flow control
-                            dsrdtr=False      # Disable hardware (DSR/DTR) flow control
-                        )
-                        
-                        # Clear any pending data
-                        cls._serial_connection.reset_input_buffer()
-                        cls._serial_connection.reset_output_buffer()
-                        
-                        # Wait for device to be ready
-                        await asyncio.sleep(2.0)
-                        
-                        logger.info("Testing connection...")
-                        
-                        # Send handshake command
-                        handshake_cmd = {
-                            "type": "handshake",
-                            "version": "1.0",
-                            "baud_rate": baud_rate
-                        }
-                        
-                        # Convert to bytes and add newline
-                        cmd_bytes = (json.dumps(handshake_cmd) + "\n").encode('utf-8')
-                        
-                        # Log the exact bytes being sent (for debugging)
-                        logger.debug(f"Sending handshake bytes: {cmd_bytes!r}")
-                        
-                        # Write command with a small delay between bytes
-                        for b in cmd_bytes:
-                            cls._serial_connection.write(bytes([b]))
-                            cls._serial_connection.flush()
-                            await asyncio.sleep(0.001)  # 1ms delay between bytes
-                        
-                        # Wait for response
-                        logger.debug("Waiting for handshake response...")
-                        response = await asyncio.to_thread(cls._serial_connection.readline)
-                        
-                        if not response:
-                            logger.warning(f"No response at {baud_rate} baud")
-                            continue
-                            
-                        # Log raw response for debugging
-                        logger.debug(f"Raw response: {response!r}")
-                        
-                        try:
-                            response_data = json.loads(response.decode('utf-8'))
-                            if response_data.get("status") == "ok":
-                                logger.info(f"Successfully connected to {port} at {baud_rate} baud")
-                                return
-                            else:
-                                logger.warning(f"Invalid handshake response: {response_data}")
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Invalid handshake response format: {e}")
-                            continue
-                            
-                    except (serial.SerialException, CommandTransmissionError) as e:
-                        logger.warning(f"Failed at {baud_rate} baud: {e}")
-                        continue
-                        
-                # If we get here, none of the baud rates worked
-                logger.warning(f"No working baud rate found for {port}")
-                
-            except Exception as e:
-                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
-                
-            # Wait before next attempt
-            await asyncio.sleep(CONFIG.serial_retry_delay)
-            
-        raise SerialConnectionError("Failed to establish connection after all attempts")
-
+    # Core initialization and setup
     @classmethod
     async def initialize(cls) -> None:
         """Initialize the pathways system"""
@@ -262,88 +53,202 @@ class SynapticPathways:
             return
             
         try:
-            await cls._initialize_connection()
-            cls._initialized = True
+            # Detect platform and set mode
+            cls._detect_platform()
+            
+            # Only try hardware setup on Raspberry Pi
+            if not cls._llm_test_mode and await cls._setup_ax620e():
+                cls._initialized = True
+                return
+                
+            if cls._llm_test_mode:
+                cls._initialized = True
+                return
+                
+            raise SerialConnectionError("No compatible device found")
+            
         except Exception as e:
             logger.error(f"Failed to initialize: {e}")
             raise
 
     @classmethod
-    async def transmit_command(cls, command: BaseCommand) -> Dict[str, Any]:
-        """Transmit a command through the neural pathway"""
-        if not cls._initialized:
-            await cls.initialize()
-            
+    def _detect_platform(cls) -> None:
+        """Detect platform and set test mode accordingly"""
+        if platform.system() != "Linux" or not os.path.exists("/sys/firmware/devicetree/base/model"):
+            cls._llm_test_mode = True
+            cls.welcome_message = "Welcome to the bicameral mind testing harness."
+            logger.info("Non-Raspberry Pi platform detected, enabling test mode")
+        else:
+            # Check audio device permissions
+            try:
+                audio_group = grp.getgrnam('audio')
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                if current_user not in audio_group.gr_mem:
+                    logger.error("User not in 'audio' group. Please run:")
+                    logger.error("sudo usermod -a -G audio $USER")
+                    logger.error("Then log out and back in.")
+                    cls._llm_test_mode = True
+                    return
+            except KeyError:
+                logger.error("Audio group not found")
+                cls._llm_test_mode = True
+                return
+
+            cls._llm_test_mode = False
+            cls.welcome_message = "Welcome to Penphin OS, the original AI bicameral mind."
+            logger.info("Raspberry Pi platform detected, using hardware mode")
+
+    @classmethod
+    async def _setup_ax620e(cls) -> bool:
+        """Set up direct connection to ax620e device"""
+        if cls._llm_test_mode:
+            logger.info("Running in LLM test mode")
+            return True
+
         try:
-            # Serialize command to JSON
-            command_json = CommandSerializer.serialize(command)
+            # Check device existence and permissions
+            device_path = CONFIG.serial_default_port
+            if not os.path.exists(device_path):
+                logger.error(f"Device {device_path} not found")
+                return False
+
+            # Get device permissions and ownership
+            st = os.stat(device_path)
+            current_user = pwd.getpwuid(os.getuid()).pw_name
+            device_user = pwd.getpwuid(st.st_uid).pw_name
+            device_group = grp.getgrgid(st.st_gid).gr_name
+
+            logger.info(f"Device permissions: {stat.filemode(st.st_mode)}")
+            logger.info(f"Device owner: {device_user}:{device_group}")
+            logger.info(f"Current user: {current_user}")
+
+            # Check if user is in dialout group
+            user_groups = [g.gr_name for g in grp.getgrall() if current_user in g.gr_mem]
+            if 'dialout' not in user_groups:
+                logger.error("User not in 'dialout' group. Please run:")
+                logger.error("sudo usermod -a -G dialout $USER")
+                logger.error("Then log out and back in.")
+                return False
+
+            # Initialize serial connection
+            cls._serial_connection = serial.Serial(
+                port=device_path,
+                baudrate=CONFIG.serial_baud_rate,
+                timeout=CONFIG.serial_timeout
+            )
+
+            # Test connection
+            cls._serial_connection.reset_input_buffer()
+            cls._serial_connection.reset_output_buffer()
             
-            # Add newline to mark end of command
-            command_bytes = (command_json + "\n").encode('utf-8')
-            
-            logger.debug(f"Sending command: {command_json}")
-            
-            # Write command
-            cls._serial_connection.write(command_bytes)
-            cls._serial_connection.flush()
-            
-            # Read response
-            response = await asyncio.to_thread(cls._serial_connection.readline)
-            if not response:
-                raise CommandTransmissionError("No response received")
-                
-            try:
-                return json.loads(response.decode('utf-8'))
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid response format: {e}")
-                raise CommandTransmissionError("Invalid response format")
-                
+            logger.info("Connection established successfully")
+            return True
+
         except Exception as e:
-            logger.error(f"Command transmission error: {e}")
-            raise CommandTransmissionError(str(e))
-
-    @classmethod
-    def register_manager(cls, manager_type: str, manager_instance: Any) -> None:
-        """Register a manager instance for cross-cortex communication"""
-        cls._managers[manager_type] = manager_instance
-
-    @classmethod
-    async def close_connections(cls) -> None:
-        """Close all open connections"""
-        if cls._serial_connection:
-            try:
-                # Send close command
-                close_cmd = {
-                    "type": "close",
-                    "timestamp": time.time()
-                }
-                cmd_bytes = (json.dumps(close_cmd) + "\n").encode('utf-8')
-                cls._serial_connection.write(cmd_bytes)
-                cls._serial_connection.flush()
-                
-                # Wait briefly for any response
-                await asyncio.sleep(0.1)
-                
-                # Close the connection
+            logger.error(f"Error setting up ax620e connection: {e}")
+            if cls._serial_connection:
                 cls._serial_connection.close()
                 cls._serial_connection = None
-                cls._initialized = False
-            except Exception as e:
-                logger.error(f"Error closing connection: {e}")
-                raise
+            return False
 
-    # Convenience methods for common commands
+    # Primary command handling
+    @classmethod
+    async def transmit_json(cls, command: Union[Dict[str, Any], BaseCommand]) -> Dict[str, Any]:
+        """Transmit JSON commands with test mode awareness"""
+        if not cls._initialized:
+            await cls.initialize()
+
+        # Convert command object to dict if needed
+        if isinstance(command, BaseCommand):
+            command = command.to_dict()
+
+        if cls._llm_test_mode:
+            return await cls._process_llm_test_command(command)
+
+        # Real hardware communication
+        retries = CONFIG.serial_max_retries
+        retry_delay = CONFIG.serial_retry_delay
+        
+        for attempt in range(retries):
+            try:
+                if not cls._serial_connection or not cls._serial_connection.is_open:
+                    await cls._setup_ax620e()
+
+                json_data = json.dumps(command) + "\n"
+                cls._serial_connection.write(json_data.encode())
+                response = cls._serial_connection.readline().decode().strip()
+                
+                if not response:
+                    raise CommandTransmissionError("No response received")
+                    
+                return json.loads(response)
+                
+            except Exception as e:
+                logger.error(f"Transmission attempt {attempt + 1} failed: {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise CommandTransmissionError(f"Failed after {retries} attempts: {e}")
+
+    @classmethod
+    async def _process_llm_test_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process commands in LLM test mode - real LLM, no hardware"""
+        cmd_type = command.get("command_type")
+        logger.info(f"Processing command in LLM test mode: {cmd_type}")
+        
+        if cmd_type == CommandType.LLM.value:
+            return await cls._call_llm_api(
+                prompt=command.get("prompt", ""),
+                max_tokens=command.get("max_tokens", 150),
+                temperature=command.get("temperature", 0.7)
+            )
+            
+        elif cmd_type == CommandType.TTS.value:
+            # Always return test mode message for welcome
+            text = command.get("text", "")
+            if "Welcome to Penphin OS" in text:
+                return {
+                    "status": "ok",
+                    "text": cls.welcome_message
+                }
+            return {"status": "ok", "text": text}
+            
+        elif cmd_type == CommandType.ASR.value:
+            return {"status": "ok", "text": ""}
+            
+        return {
+            "status": "ok",
+            "command_type": cmd_type,
+            "message": "Command acknowledged in LLM test mode"
+        }
+
+    # High-level command interfaces
+    @classmethod
+    async def send_llm(cls, prompt: str, max_tokens: int = 100, temperature: float = 0.7) -> Dict[str, Any]:
+        """Send Large Language Model command"""
+        command = LLMCommand(
+            command_type=CommandType.LLM,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return await cls.transmit_json(command)
+
     @classmethod
     async def send_tts(cls, text: str, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0) -> Dict[str, Any]:
         """Send Text-to-Speech command"""
-        command = TTSCommand(
-            command_type=CommandType.TTS,
-            text=text,
-            voice_id=voice_id,
-            speed=speed,
-            pitch=pitch
-        )
-        return await cls.transmit_command(command)
+        try:
+            command = TTSCommand(
+                command_type=CommandType.TTS,
+                text=text,
+                voice_id=voice_id,
+                speed=speed,
+                pitch=pitch
+            )
+            return await cls.transmit_json(command)
+        except Exception as e:
+            logger.error(f"TTS command failed: {e}")
+            return {"status": "error", "message": str(e)}
 
     @classmethod
     async def send_asr(cls, audio_data: bytes, language: str = "en", model_type: str = "base") -> Dict[str, Any]:
@@ -354,15 +259,138 @@ class SynapticPathways:
             language=language,
             model_type=model_type
         )
-        return await cls.transmit_command(command)
+        return await cls.transmit_json(command)
+
+    # Command handler registration
+    @classmethod
+    def register_command_handler(cls, command_type: CommandType, handler: Callable) -> None:
+        """Register a handler for a specific command type"""
+        cls._command_handlers[command_type] = handler
+        logger.info(f"Registered handler for {command_type}")
+
+    # Cleanup
+    @classmethod
+    async def close_connections(cls) -> None:
+        """Clean up connections and resources"""
+        if cls._serial_connection and cls._serial_connection.is_open:
+            cls._serial_connection.close()
+            cls._serial_connection = None
+        cls._initialized = False
+        logger.info("Connections closed")
 
     @classmethod
-    async def send_llm(cls, prompt: str, max_tokens: int = 100, temperature: float = 0.7) -> Dict[str, Any]:
-        """Send Large Language Model command"""
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temperature=temperature
+    async def _call_llm_api(cls, prompt: str, max_tokens: int, temperature: float) -> Dict[str, Any]:
+        """Call the LLM API with error handling"""
+        try:
+            # Use OpenAI API directly in test mode
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are PenphinOS, a bicameral AI assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            return {
+                "status": "ok",
+                "response": response.choices[0].message.content,
+                "tokens_used": response.usage.total_tokens
+            }
+            
+        except Exception as e:
+            logger.error(f"LLM API call failed: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
+    @classmethod
+    async def transmit_command(cls, command: BaseCommand) -> Dict[str, Any]:
+        """Transmit a command object directly"""
+        try:
+            # Serialize command to JSON format
+            command_dict = CommandSerializer.serialize(command)
+            return await cls.transmit_json(command_dict)
+            
+        except Exception as e:
+            logger.error(f"Command transmission failed: {e}")
+            raise
+
+    @classmethod
+    async def process_assistant_interaction(cls, audio_data: bytes = None, text_input: str = None) -> Dict[str, Any]:
+        """High-level method to process a complete assistant interaction"""
+        try:
+            # Process audio input if provided
+            if audio_data and not text_input:
+                asr_response = await cls.send_asr(audio_data)
+                text_input = asr_response.get("text", "")
+                if not text_input:
+                    return {"status": "error", "message": "Failed to transcribe audio"}
+
+            # Process text through LLM
+            llm_response = await cls.send_llm(
+                prompt=text_input,
+                max_tokens=150
+            )
+            assistant_response = llm_response.get("response", "")
+
+            # Generate audio response if not in test mode
+            audio_path = None
+            if not cls._llm_test_mode and assistant_response:
+                tts_response = await cls.send_tts(assistant_response)
+                audio_path = tts_response.get("audio_path")
+
+            return {
+                "status": "ok",
+                "input_text": text_input,
+                "assistant_response": assistant_response,
+                "audio_path": audio_path
+            }
+
+        except Exception as e:
+            logger.error(f"Assistant interaction failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @classmethod
+    async def send_system_command(cls, command_type: str, data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Send system-level commands"""
+        command = SystemCommand(
+            command_type=CommandType.SYSTEM,
+            system_command=command_type,
+            data=data or {}
         )
-        return await cls.transmit_command(command) 
+        return await cls.transmit_json(command)
+
+    @classmethod
+    async def send_whisper_command(cls, audio_data: bytes, language: str = "en", task: str = "transcribe") -> Dict[str, Any]:
+        """Send Whisper transcription command"""
+        command = WhisperCommand(
+            command_type=CommandType.WHISPER,
+            audio_data=audio_data,
+            language=language,
+            task=task
+        )
+        return await cls.transmit_json(command)
+
+    @classmethod
+    async def send_vad_command(cls, audio_data: bytes, threshold: float = 0.5) -> Dict[str, Any]:
+        """Send Voice Activity Detection command"""
+        command = VADCommand(
+            command_type=CommandType.VAD,
+            audio_data=audio_data,
+            threshold=threshold
+        )
+        return await cls.transmit_json(command)
+
+    @classmethod
+    def get_manager(cls, manager_type: str) -> Any:
+        """Get a registered manager instance"""
+        return cls._managers.get(manager_type)
+
+    @classmethod
+    def register_manager(cls, manager_type: str, manager_instance: Any) -> None:
+        """Register a manager instance"""
+        cls._managers[manager_type] = manager_instance
+        logger.info(f"Registered {manager_type} manager") 

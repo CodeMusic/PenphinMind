@@ -15,10 +15,11 @@
     },
     "paths": {
         "audio_cache": "cache/audio",
-        "models": "models"
+        "models": "models",
+        "logs": "logs"
     },
     "logging": {
         "level": "INFO",
         "file": "logs/penphinos.system.log"
     }
-} 
+}
