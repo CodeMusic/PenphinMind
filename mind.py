@@ -7,7 +7,7 @@ from CorpusCallosum.synaptic_pathways import SynapticPathways
 from CorpusCallosum.audio_automation import AudioAutomation, AudioConfig
 from TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.integration_area import IntegrationArea
 from ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea as SomatosensoryIntegration
-from OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualIntegration
+from OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualProcessor
 # Add other lobe imports as needed
 
 class Mind:
@@ -23,7 +23,7 @@ class Mind:
             "somatosensory": SomatosensoryIntegration()
         }
         self.occipital_lobe = {
-            "visual": VisualIntegration()
+            "visual": VisualProcessor()
         }
         self.audio_automation = None
         # Add other lobes as they're implemented
