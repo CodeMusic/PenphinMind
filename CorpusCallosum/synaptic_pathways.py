@@ -22,6 +22,11 @@ from .neural_commands import (
 )
 from config import CONFIG
 
+# Update imports
+from TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.integration_area import IntegrationArea
+from ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea as SomatosensoryIntegration
+from OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualIntegration
+
 logger = logging.getLogger(__name__)
 
 class SerialConnectionError(Exception):

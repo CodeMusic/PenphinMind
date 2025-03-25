@@ -56,7 +56,7 @@ class AudioManager:
             )
             self.logger.info("VAD started")
         except Exception as e:
-            self.logger.error(f"VAD start error: {e}")
+            self.logger.error(f"VAD start error: {e}")  
             self.vad_active = False
             raise
             

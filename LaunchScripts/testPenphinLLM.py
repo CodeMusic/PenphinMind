@@ -11,6 +11,10 @@ import sounddevice as sd
 import numpy as np
 import time
 import sys
+from mind import Mind
+from CorpusCallosum.synaptic_pathways import SynapticPathways
+from CorpusCallosum.neural_commands import CommandType
+from config import CONFIG
 
 # Add the project root to Python path
 project_root = str(Path(__file__).parent.parent)
@@ -24,10 +28,6 @@ from CorpusCallosum.neural_commands import (
     BaseCommand,
     ASRCommand
 )
-from CorpusCallosum.audio_automation import AudioAutomation, AudioConfig
-from config import CONFIG
-from CorpusCallosum.visual_cortex import VisualCortex
-from PreFrontalCortex.behavior_manager import BehaviorManager, SystemState
 
 # Configure logging
 logging.basicConfig(
@@ -43,17 +43,15 @@ class AIType(Enum):
     CUSTOM = "custom"
 
 class CortexCategory(Enum):
-    """Neural cortex categories"""
-    AUDITORY = "AuditoryCortex"
-    BICAMERAL = "BicameralCortex"
-    FRONTAL = "FrontalLobe"
-    HIPPOCAMPUS = "Hippocampus"
-    OCCIPITAL = "OccipitalLobe"
-    PARIETAL = "ParietalLobe"
-    SOMATOSENSORY = "SomatosensoryCortex"
+    """Neural cortex categories matching brain structure"""
     TEMPORAL = "TemporalLobe"
+    PARIETAL = "ParietalLobe"
+    OCCIPITAL = "OccipitalLobe"
+    FRONTAL = "FrontalLobe"
+    LIMBIC = "LimbicSystem"
+    CEREBELLUM = "Cerebellum"
     THALAMUS = "Thalamus"
-    PENDING = "Pending Integration"
+    BASAL_GANGLIA = "BasalGanglia"
 
 class TestMode(Enum):
     """Available test modes"""
@@ -134,10 +132,11 @@ Respond in a balanced, integrative, and insightful manner."""
             return f"Error: {str(e)}"
 
 class TestPenphinLLM:
-    """Test class for PenphinLLM functionality"""
+    """Test class for Mind functionality"""
     
     def __init__(self):
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
+        self.mind: Optional[Mind] = None
         self.is_raspberry_pi = platform.system() == "Linux" and "raspberrypi" in platform.platform().lower()
         self.ai_type: Optional[AIType] = None
         self.custom_endpoint: Optional[str] = None
@@ -155,31 +154,21 @@ class TestPenphinLLM:
         # Get all command types
         command_types = [cmd.value for cmd in CommandType]
         
-        # Get all cortex directories
-        cortex_dirs = [cortex.value for cortex in CortexCategory]
-        
-        # Initialize function dictionary
+        # Initialize function dictionary by brain region
         self.available_functions = {
-            cortex: [] for cortex in cortex_dirs
+            cortex.value: [] for cortex in CortexCategory
         }
         
-        # Map commands to their respective cortices
+        # Map commands to their respective brain regions
         for cmd in command_types:
-            if cmd.startswith("AUDIO") or cmd.startswith("TTS") or cmd.startswith("ASR"):
-                self.available_functions[CortexCategory.AUDITORY.value].append(cmd)
-            elif cmd.startswith("LLM") or cmd.startswith("VLM"):
-                self.available_functions[CortexCategory.BICAMERAL.value].append(cmd)
-            elif cmd.startswith("BUTTON") or cmd.startswith("GPIO"):
-                self.available_functions[CortexCategory.SOMATOSENSORY.value].append(cmd)
-            elif cmd.startswith("CAMERA") or cmd.startswith("YOLO"):
+            if cmd.startswith(("AUDIO", "TTS", "ASR", "SPEECH")):
+                self.available_functions[CortexCategory.TEMPORAL.value].append(cmd)
+            elif cmd.startswith(("TOUCH", "PRESSURE")):
+                self.available_functions[CortexCategory.PARIETAL.value].append(cmd)
+            elif cmd.startswith(("VISUAL", "IMAGE")):
                 self.available_functions[CortexCategory.OCCIPITAL.value].append(cmd)
-            elif cmd.startswith("MEMORY") or cmd.startswith("LEARNING"):
-                self.available_functions[CortexCategory.HIPPOCAMPUS.value].append(cmd)
-            elif cmd.startswith("SYSTEM"):
-                self.available_functions[CortexCategory.THALAMUS.value].append(cmd)
-            else:
-                self.available_functions[CortexCategory.PENDING.value].append(cmd)
-                
+            # ... add other mappings as needed
+            
     async def detect_llm_port(self) -> Optional[str]:
         """Detect AX630 neural processor"""
         try:
@@ -198,38 +187,15 @@ class TestPenphinLLM:
             print("\nPlease check your device connections and try again")
             return None
             
-    async def initialize(self) -> None:
-        """Initialize the test environment"""
+    async def initialize(self) -> bool:
+        """Initialize test environment"""
         try:
-            # Detect LLM port first
-            self.detected_port = await self.detect_llm_port()
-            if not self.detected_port:
-                self.logger.error("\nLLM device not found!")
-                self.logger.error("Please check the following:")
-                self.logger.error("1. Is your LLM device properly connected?")
-                self.logger.error("2. Is the device powered on?")
-                self.logger.error("3. Are the correct drivers installed?")
-                self.logger.error("4. Do you have the necessary permissions?")
-                self.logger.error("\nRunning in test mode without LLM device.")
-                self.logger.info("You can still use text mode for testing, but audio features will be limited.")
-                return
-                
-            await SynapticPathways.initialize()
-            self.logger.info(f"Running in {'hardware' if self.is_raspberry_pi else 'test'} mode")
-            
-            # Initialize audio automation if needed
-            if self.test_mode in [TestMode.AUDIO, TestMode.INTEGRATED]:
-                audio_config = AudioConfig(
-                    sample_rate=16000,  # Default sample rate
-                    channels=1,         # Default channels
-                    device=self.detected_port
-                )
-                self.audio_automation = AudioAutomation(audio_config)
-                
+            self.mind = Mind()
+            await self.mind.initialize()
+            return True
         except Exception as e:
             self.logger.error(f"Initialization error: {e}")
-            self.logger.error("Please check your device connections and try again.")
-            raise
+            return False
             
     async def get_device_functions(self) -> Dict[str, List[str]]:
         """Get available functions from the device"""
@@ -489,9 +455,6 @@ class TestPenphinLLM:
             
     async def test_integrated_mode(self) -> None:
         """Test full audio pipeline"""
-        if not self.audio_automation:
-            raise ValueError("Audio automation not initialized")
-            
         try:
             print("\nStarting integrated test...")
             print("1. Speak into the microphone")
@@ -499,15 +462,15 @@ class TestPenphinLLM:
             print("3. Wait for the response")
             print("Press Ctrl+C to stop")
             
-            await self.audio_automation.start_detection()
+            # Use Mind's methods instead of direct audio automation
+            await self.mind.start_listening()
             
-            # Keep running until interrupted
             while True:
                 await asyncio.sleep(0.1)
                 
         except KeyboardInterrupt:
             print("\nStopping integrated test...")
-            self.audio_automation.stop_detection()
+            await self.mind.stop_listening()
         except Exception as e:
             self.logger.error(f"Integrated mode test error: {e}")
             raise
@@ -776,43 +739,42 @@ Format your response in a clear, structured way."""
         finally:
             await self.cleanup()
 
+    async def test_auditory_processing(self, audio_data: bytes) -> bool:
+        """Test complete auditory processing pathway"""
+        try:
+            # Use Mind interface instead of accessing internal components
+            result = await self.mind.process_audio(audio_data)
+            self.logger.info(f"Auditory processing result: {result}")
+            
+            # Use Mind's speech understanding method
+            text = await self.mind.understand_speech(audio_data)
+            self.logger.info(f"Language comprehension result: {text}")
+            
+            # Use Mind's speech generation method
+            if text:
+                response = await self.mind.generate_speech(f"Understood: {text}")
+                self.logger.info("Speech generation successful")
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Test failed: {e}")
+            return False
+
 async def main():
     """Main entry point for PenphinOS testing"""
     try:
-        # Initialize behavior manager
-        behavior_manager = BehaviorManager()
-        
-        # Initialize visual cortex
-        visual_cortex = None
-        try:
-            visual_cortex = VisualCortex()
-            behavior_manager.register_state_handler(SystemState.INITIALIZING, visual_cortex)
-            behavior_manager.register_state_handler(SystemState.THINKING, visual_cortex)
-            behavior_manager.register_state_handler(SystemState.LISTENING, visual_cortex)
-            behavior_manager.register_state_handler(SystemState.SPEAKING, visual_cortex)
-            behavior_manager.register_state_handler(SystemState.ERROR, visual_cortex)
-            behavior_manager.register_state_handler(SystemState.SHUTDOWN, visual_cortex)
-        except Exception as e:
-            logger.warning(f"Failed to initialize visual cortex: {e}")
-            logger.info("Continuing without LED matrix display")
-        
-        # Initialize synaptic pathways
-        await SynapticPathways.initialize(test_mode=True)
-        
         # Create and run test interface
         test_interface = TestPenphinLLM()
+        await test_interface.initialize()
         await test_interface.run_menu()
         
     except Exception as e:
         logger.error(f"Runtime error: {e}")
-        if visual_cortex:
-            visual_cortex.on_state_change(SystemState.ERROR)
     finally:
         if 'test_interface' in locals():
             await test_interface.cleanup()
         await SynapticPathways.close_connections()
-        if visual_cortex:
-            visual_cortex.cleanup()
             
 if __name__ == "__main__":
     asyncio.run(main()) 
