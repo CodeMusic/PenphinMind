@@ -5,44 +5,30 @@ and a mock matrix on macOS.
 
 import platform
 import time
+import asyncio
+from PenphinMind.mind import Mind
 
-# Conditional import based on platform
-if platform.system() == "Linux":
-    from rgbmatrix import RGBMatrix, RGBMatrixOptions
-else:
-    # Note the leading dot for relative import
-    from .mock_rpi_rgb_led_matrix import (
-        CognitiveMatrix as RGBMatrix,
-        CognitiveMatrixOptions as RGBMatrixOptions
-    )
-
-
-def runPsychologyDrivenMatrixTest():
+async def runPsychologyDrivenMatrixTest():
     """
     Run a test of the LED matrix at 50% brightness, provide status output, 
     then clear on interruption or after the delay.
     """
-    # Architecture-focused LED matrix options
-    options = RGBMatrixOptions()
-    options.rows = 64
-    options.cols = 64
-    options.chain_length = 1
-    options.parallel = 1
-    options.hardware_mapping = "regular"
-    options.brightness = 50
-
-    matrix = RGBMatrix(options=options)
-
+    mind = Mind()
+    await mind.initialize()
+    
     try:
         print("✅ Running LED Matrix Test at 50% Brightness...")
-        matrix.Fill(128, 128, 128)  # Grey background
-        time.sleep(5)
+        # Use the mind's visual cortex to control the matrix
+        await mind.occipital_lobe["visual"].set_background(128, 128, 128)  # Grey background
+        await asyncio.sleep(5)
         print("✅ Test Complete!")
     except KeyboardInterrupt:
         print("\n🔹 Exiting... Clearing Matrix.")
     finally:
-        matrix.Clear()
+        await mind.occipital_lobe["visual"].clear()
 
+async def main():
+    await runPsychologyDrivenMatrixTest()
 
 if __name__ == "__main__":
-    runPsychologyDrivenMatrixTest() 
+    asyncio.run(main()) 

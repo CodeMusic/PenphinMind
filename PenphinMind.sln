@@ -6,23 +6,23 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "rpi-rgb-led-matrix", "rpi-r
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "bindings", "bindings", "{34EEC31D-4EB1-666A-C406-BE819A62C89E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RPiRgbLEDMatrix", "rpi-rgb-led-matrix\bindings\c#\RPiRgbLEDMatrix.csproj", "{E9AB487F-E285-896C-EFCF-D8311CA10A8B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RPiRgbLEDMatrix", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\RPiRgbLEDMatrix.csproj", "{E9AB487F-E285-896C-EFCF-D8311CA10A8B}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "c#", "c#", "{AD147B02-B9DB-7418-27FB-F7F3769FF29D}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{FFE467E0-DF3B-CDDF-4A3D-00EFD625DEF2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MatrixRain", "rpi-rgb-led-matrix\bindings\c#\examples\MatrixRain\MatrixRain.csproj", "{A3B3BA55-77F8-6A19-5D05-ABF9E051AC4A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MatrixRain", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\examples\MatrixRain\MatrixRain.csproj", "{A3B3BA55-77F8-6A19-5D05-ABF9E051AC4A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rotating3DCube", "rpi-rgb-led-matrix\bindings\c#\examples\Rotating3DCube\Rotating3DCube.csproj", "{1404E0F4-AFAA-C46D-3BD9-786E13B60D6A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rotating3DCube", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\examples\Rotating3DCube\Rotating3DCube.csproj", "{1404E0F4-AFAA-C46D-3BD9-786E13B60D6A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MinimalExample", "rpi-rgb-led-matrix\bindings\c#\examples\MinimalExample\MinimalExample.csproj", "{6C311282-1CCB-68A6-33BC-E4933DFC0F65}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MinimalExample", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\examples\MinimalExample\MinimalExample.csproj", "{6C311282-1CCB-68A6-33BC-E4933DFC0F65}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontExample", "rpi-rgb-led-matrix\bindings\c#\examples\FontExample\FontExample.csproj", "{DBFD2CDD-CE92-BF50-FF37-47F6F19F46DC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontExample", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\examples\FontExample\FontExample.csproj", "{DBFD2CDD-CE92-BF50-FF37-47F6F19F46DC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulsingBrightness", "rpi-rgb-led-matrix\bindings\c#\examples\PulsingBrightness\PulsingBrightness.csproj", "{64AB416F-39F3-462A-6252-E1010F088E13}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulsingBrightness", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\examples\PulsingBrightness\PulsingBrightness.csproj", "{64AB416F-39F3-462A-6252-E1010F088E13}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlayGIF", "rpi-rgb-led-matrix\bindings\c#\examples\PlayGIF\PlayGIF.csproj", "{DE3C1602-99B4-26F0-A6E1-A0DDF4191103}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlayGIF", "PenphinMind\rpi-rgb-led-matrix\bindings\c#\examples\PlayGIF\PlayGIF.csproj", "{DE3C1602-99B4-26F0-A6E1-A0DDF4191103}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
