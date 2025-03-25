@@ -24,6 +24,7 @@ python-redmine==2.4.0
 
 # Utility
 python-dotenv>=1.0.0  # For environment variables
+psutil>=5.9.0  # For system monitoring
 
 # New dependencies
 openai>=1.0.0

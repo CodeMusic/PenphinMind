@@ -1,0 +1,23 @@
+# Audio and Speech
+pygame==2.5.2
+SpeechRecognition==3.10.0
+PyAudio==0.2.14
+
+# Network and Communication
+requests==2.31.0
+python-redmine==2.5.0
+
+# Utility
+python-dotenv==1.0.1
+psutil==5.9.8
+
+# Core dependencies
+openai==1.12.0
+elevenlabs==1.54.0
+sounddevice==0.4.6
+numpy==1.26.4
+aiohttp==3.9.3
+pydantic>=2.4.0,<3.0.0
+
+# Missing dependency causing the issue:
+pyserial==3.5  # This must be on a separate line!

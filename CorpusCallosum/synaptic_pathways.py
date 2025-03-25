@@ -14,7 +14,6 @@ from typing import Optional, Dict, Any, List, Union, Callable
 # Third-party imports
 import serial
 import serial.tools.list_ports
-import openai
 
 # Local imports
 from .neural_commands import (
@@ -40,42 +39,50 @@ class SynapticPathways:
     _serial_connection: Optional[serial.Serial] = None
     _managers = {}
     _initialized = False
-    _llm_test_mode = False
+    _test_mode = False  # Only for hardware testing, not simulation
     _audio_cache_dir = Path("cache/audio")
     _command_handlers = {}
     welcome_message = ""
 
+    @classmethod
+    def set_test_mode(cls, enabled: bool = True) -> None:
+        """Set hardware test mode status"""
+        cls._test_mode = enabled
+        logger.info(f"Neural processor test mode {'enabled' if enabled else 'disabled'}")
+
     # Core initialization and setup
     @classmethod
-    async def initialize(cls) -> None:
-        """Initialize the pathways system"""
+    async def initialize(cls, test_mode: bool = False) -> None:
+        """Initialize the neural pathways system"""
         if cls._initialized:
             return
             
         try:
-            # Detect platform and set mode
-            cls._detect_platform()
+            # Set test mode
+            cls._test_mode = test_mode
+            logger.info(f"Initializing neural pathways in {'test' if test_mode else 'production'} mode")
             
-            # Only try hardware setup on Raspberry Pi
-            if not cls._llm_test_mode and await cls._setup_ax620e():
+            # Always attempt hardware setup unless in test mode
+            if not test_mode:
+                if await cls._setup_ax630e():
+                    cls._initialized = True
+                    return
+                raise SerialConnectionError("No compatible neural processor found")
+            else:
+                # In test mode, just mark as initialized
                 cls._initialized = True
+                logger.info("Neural pathways initialized in test mode")
                 return
                 
-            if cls._llm_test_mode:
-                cls._initialized = True
-                return
-                
-            raise SerialConnectionError("No compatible device found")
-            
         except Exception as e:
-            logger.error(f"Failed to initialize: {e}")
+            logger.error(f"Failed to initialize neural pathways: {e}")
             raise
 
     @classmethod
     def _detect_platform(cls) -> None:
         """Detect platform and set test mode accordingly"""
         if platform.system() != "Linux" or not os.path.exists("/sys/firmware/devicetree/base/model"):
-            cls._llm_test_mode = True
+            cls._test_mode = True
             cls.welcome_message = "Welcome to the bicameral mind testing harness."
             logger.info("Non-Raspberry Pi platform detected, enabling test mode")
         else:
@@ -87,52 +94,67 @@ class SynapticPathways:
                     logger.error("User not in 'audio' group. Please run:")
                     logger.error("sudo usermod -a -G audio $USER")
                     logger.error("Then log out and back in.")
-                    cls._llm_test_mode = True
+                    cls._test_mode = True
                     return
             except KeyError:
                 logger.error("Audio group not found")
-                cls._llm_test_mode = True
+                cls._test_mode = True
                 return
 
-            cls._llm_test_mode = False
+            cls._test_mode = False
             cls.welcome_message = "Welcome to Penphin OS, the original AI bicameral mind."
             logger.info("Raspberry Pi platform detected, using hardware mode")
 
     @classmethod
-    async def _setup_ax620e(cls) -> bool:
-        """Set up direct connection to ax620e device"""
-        if cls._llm_test_mode:
-            logger.info("Running in LLM test mode")
-            return True
-
+    async def _setup_ax630e(cls) -> bool:
+        """Set up direct connection to neural processor"""
         try:
-            # Check device existence and permissions
-            device_path = CONFIG.serial_default_port
-            if not os.path.exists(device_path):
-                logger.error(f"Device {device_path} not found")
-                return False
-
-            # Get device permissions and ownership
-            st = os.stat(device_path)
-            current_user = pwd.getpwuid(os.getuid()).pw_name
-            device_user = pwd.getpwuid(st.st_uid).pw_name
-            device_group = grp.getgrgid(st.st_gid).gr_name
-
-            logger.info(f"Device permissions: {stat.filemode(st.st_mode)}")
-            logger.info(f"Device owner: {device_user}:{device_group}")
-            logger.info(f"Current user: {current_user}")
-
-            # Check if user is in dialout group
-            user_groups = [g.gr_name for g in grp.getgrall() if current_user in g.gr_mem]
-            if 'dialout' not in user_groups:
-                logger.error("User not in 'dialout' group. Please run:")
-                logger.error("sudo usermod -a -G dialout $USER")
-                logger.error("Then log out and back in.")
+            # Look for AX630 device
+            ports = serial.tools.list_ports.comports()
+            ax630_port = None
+            
+            print("\n=== Neural Processor Detection ===")
+            print("Scanning for AX630...")
+            
+            for port in ports:
+                # On macOS, AX630 typically appears as "usbserial-" or "tty.usbserial-"
+                if (("usbserial" in port.device.lower() and "AX630" in port.hwid) or
+                    ("AX630" in port.description)):
+                    ax630_port = port.device
+                    print(f"\n✓ AX630 Neural Processor detected!")
+                    print("=" * 50)
+                    print(f"Port: {port.device}")
+                    print(f"Hardware ID: {port.hwid}")
+                    print(f"Description: {port.description}")
+                    print("=" * 50)
+                    break
+            
+            if not ax630_port:
+                print("\n❌ AX630 Neural Processor not found")
+                print("\nTroubleshooting steps:")
+                if platform.system() == "Darwin":  # macOS
+                    print("1. Check USB connection")
+                    print("2. Verify power supply")
+                    print("3. Install USB-Serial driver:")
+                    print("   brew install --cask silicon-labs-vcp-driver")
+                    print("4. Check device permissions:")
+                    print("   ls -l /dev/tty.usbserial*")
+                    print("5. Fix permissions if needed:")
+                    print("   sudo chmod 666 /dev/tty.usbserial*")
+                else:  # Linux
+                    print("1. Check USB connection")
+                    print("2. Verify power supply")
+                    print("3. Check device permissions:")
+                    print("   sudo usermod -a -G dialout $USER")
+                    print("   sudo usermod -a -G tty $USER")
+                    print("4. Reload udev rules:")
+                    print("   sudo udevadm control --reload-rules")
+                    print("   sudo udevadm trigger")
                 return False
 
             # Initialize serial connection
             cls._serial_connection = serial.Serial(
-                port=device_path,
+                port=ax630_port,
                 baudrate=CONFIG.serial_baud_rate,
                 timeout=CONFIG.serial_timeout
             )
@@ -141,11 +163,34 @@ class SynapticPathways:
             cls._serial_connection.reset_input_buffer()
             cls._serial_connection.reset_output_buffer()
             
-            logger.info("Connection established successfully")
-            return True
+            # Send initialization command
+            init_command = {
+                "type": "SYSTEM",
+                "command": "initialize",
+                "data": {
+                    "device": "AX630",
+                    "mode": "neural_processor"
+                }
+            }
+            
+            json_data = json.dumps(init_command) + "\n"
+            cls._serial_connection.write(json_data.encode())
+            response = cls._serial_connection.readline().decode().strip()
+            
+            if not response:
+                raise CommandTransmissionError("No response from neural processor during initialization")
+            
+            response_data = json.loads(response)
+            if response_data.get("status") == "ok":
+                print("\n✓ Neural processor initialized successfully")
+                print(f"Firmware version: {response_data.get('version', 'unknown')}")
+                print(f"Status: {response_data.get('state', 'unknown')}")
+                return True
+            else:
+                raise CommandTransmissionError(f"Initialization failed: {response_data.get('message', 'unknown error')}")
 
         except Exception as e:
-            logger.error(f"Error setting up ax620e connection: {e}")
+            logger.error(f"Error setting up neural processor: {e}")
             if cls._serial_connection:
                 cls._serial_connection.close()
                 cls._serial_connection = None
@@ -154,7 +199,7 @@ class SynapticPathways:
     # Primary command handling
     @classmethod
     async def transmit_json(cls, command: Union[Dict[str, Any], BaseCommand]) -> Dict[str, Any]:
-        """Transmit JSON commands with test mode awareness"""
+        """Transmit commands to neural processor"""
         if not cls._initialized:
             await cls.initialize()
 
@@ -162,24 +207,54 @@ class SynapticPathways:
         if isinstance(command, BaseCommand):
             command = command.to_dict()
 
-        if cls._llm_test_mode:
-            return await cls._process_llm_test_command(command)
+        # In test mode, return mock responses
+        if cls._test_mode:
+            logger.debug(f"Test mode - Command sent: {json.dumps(command, indent=2)}")
+            
+            # Mock response based on command type
+            if command.get("type") == "LLM":
+                mock_response = {
+                    "status": "ok",
+                    "response": f"Test mode response for prompt: {command.get('prompt', '')}",
+                    "tokens_used": 50,
+                    "model": "test-model"
+                }
+            elif command.get("type") == "TTS":
+                mock_response = {
+                    "status": "ok",
+                    "audio_path": "test_audio.wav",
+                    "duration": 2.5
+                }
+            elif command.get("type") == "ASR":
+                mock_response = {
+                    "status": "ok",
+                    "text": "This is a test transcription",
+                    "confidence": 0.95
+                }
+            else:
+                mock_response = {
+                    "status": "ok",
+                    "message": f"Test mode - Command processed: {command.get('type', 'unknown')}"
+                }
+                
+            logger.debug(f"Test mode - Response: {json.dumps(mock_response, indent=2)}")
+            return mock_response
 
-        # Real hardware communication
+        # Production mode - attempt hardware communication
         retries = CONFIG.serial_max_retries
         retry_delay = CONFIG.serial_retry_delay
         
         for attempt in range(retries):
             try:
                 if not cls._serial_connection or not cls._serial_connection.is_open:
-                    await cls._setup_ax620e()
+                    await cls._setup_ax630e()
 
                 json_data = json.dumps(command) + "\n"
                 cls._serial_connection.write(json_data.encode())
                 response = cls._serial_connection.readline().decode().strip()
                 
                 if not response:
-                    raise CommandTransmissionError("No response received")
+                    raise CommandTransmissionError("No response from neural processor")
                     
                 return json.loads(response)
                 
@@ -188,39 +263,7 @@ class SynapticPathways:
                 if attempt < retries - 1:
                     await asyncio.sleep(retry_delay)
                     continue
-                raise CommandTransmissionError(f"Failed after {retries} attempts: {e}")
-
-    @classmethod
-    async def _process_llm_test_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Process commands in LLM test mode - real LLM, no hardware"""
-        cmd_type = command.get("command_type")
-        logger.info(f"Processing command in LLM test mode: {cmd_type}")
-        
-        if cmd_type == CommandType.LLM.value:
-            return await cls._call_llm_api(
-                prompt=command.get("prompt", ""),
-                max_tokens=command.get("max_tokens", 150),
-                temperature=command.get("temperature", 0.7)
-            )
-            
-        elif cmd_type == CommandType.TTS.value:
-            # Always return test mode message for welcome
-            text = command.get("text", "")
-            if "Welcome to Penphin OS" in text:
-                return {
-                    "status": "ok",
-                    "text": cls.welcome_message
-                }
-            return {"status": "ok", "text": text}
-            
-        elif cmd_type == CommandType.ASR.value:
-            return {"status": "ok", "text": ""}
-            
-        return {
-            "status": "ok",
-            "command_type": cmd_type,
-            "message": "Command acknowledged in LLM test mode"
-        }
+                raise CommandTransmissionError(f"Neural processor communication failed after {retries} attempts: {e}")
 
     # High-level command interfaces
     @classmethod
@@ -270,37 +313,30 @@ class SynapticPathways:
 
     # Cleanup
     @classmethod
-    async def close_connections(cls) -> None:
-        """Clean up connections and resources"""
+    async def cleanup(cls) -> None:
+        """Clean up resources"""
         if cls._serial_connection and cls._serial_connection.is_open:
             cls._serial_connection.close()
             cls._serial_connection = None
         cls._initialized = False
-        logger.info("Connections closed")
+        logger.info("Neural pathways closed")
 
     @classmethod
     async def _call_llm_api(cls, prompt: str, max_tokens: int, temperature: float) -> Dict[str, Any]:
-        """Call the LLM API with error handling"""
+        """Process requests through neural processor"""
         try:
-            # Use OpenAI API directly in test mode
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are PenphinOS, a bicameral AI assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
-            
-            return {
-                "status": "ok",
-                "response": response.choices[0].message.content,
-                "tokens_used": response.usage.total_tokens
+            # Always use hardware communication
+            command = {
+                "type": "LLM",
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature
             }
             
+            return await cls.transmit_json(command)
+            
         except Exception as e:
-            logger.error(f"LLM API call failed: {e}")
+            logger.error(f"Neural processor error: {e}")
             return {
                 "status": "error",
                 "message": str(e)
@@ -338,7 +374,7 @@ class SynapticPathways:
 
             # Generate audio response if not in test mode
             audio_path = None
-            if not cls._llm_test_mode and assistant_response:
+            if not cls._test_mode and assistant_response:
                 tts_response = await cls.send_tts(assistant_response)
                 audio_path = tts_response.get("audio_path")
 
@@ -393,4 +429,18 @@ class SynapticPathways:
     def register_manager(cls, manager_type: str, manager_instance: Any) -> None:
         """Register a manager instance"""
         cls._managers[manager_type] = manager_instance
-        logger.info(f"Registered {manager_type} manager") 
+        logger.info(f"Registered {manager_type} manager")
+
+    @classmethod
+    async def close_connections(cls) -> None:
+        """Close all connections and clean up resources"""
+        try:
+            if cls._serial_connection and cls._serial_connection.is_open:
+                cls._serial_connection.close()
+                cls._serial_connection = None
+            cls._initialized = False
+            cls._test_mode = False
+            logger.info("Neural pathways connections closed")
+        except Exception as e:
+            logger.error(f"Error closing neural pathways connections: {e}")
+            raise 

@@ -89,19 +89,33 @@ class VADCommand(BaseCommand):
 class LLMCommand(BaseCommand):
     """Large Language Model commands"""
     prompt: str
-    max_tokens: int = 100
+    max_tokens: int = 150
     temperature: float = 0.7
     model: str = "gpt-3.5-turbo"
     
+    def __init__(
+        self,
+        command_type: CommandType,
+        prompt: str,
+        max_tokens: int = 150,
+        temperature: float = 0.7,
+        model: str = "gpt-3.5-turbo"
+    ):
+        super().__init__(command_type)
+        self.prompt = prompt
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.model = model
+        
     def to_dict(self) -> Dict[str, Any]:
-        data = super().to_dict()
-        data.update({
+        """Convert command to dictionary for JSON serialization"""
+        return {
+            "command_type": self.command_type.value,
             "prompt": self.prompt,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "model": self.model
-        })
-        return data
+        }
 
 @dataclass
 class VLMCommand(BaseCommand):

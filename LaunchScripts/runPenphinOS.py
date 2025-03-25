@@ -7,12 +7,17 @@ from pathlib import Path
 from typing import Dict, Any
 import signal
 from datetime import datetime
+import time
+from CorpusCallosum.visual_cortex import VisualCortex
+from CorpusCallosum.synaptic_pathways import SynapticPathways
+from PreFrontalCortex.behavior_manager import BehaviorManager
+from config import CONFIG
+
 
 # Add the project root to Python path
 project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
 
-from CorpusCallosum.synaptic_pathways import SynapticPathways, SerialConnectionError
 from CorpusCallosum.neural_commands import (
     CommandType,
     BaseCommand,
@@ -23,26 +28,22 @@ from CorpusCallosum.neural_commands import (
     CommandSerializer,
     SystemCommand
 )
-from config import CONFIG
 from CorpusCallosum.redmine_manager import RedmineManager
 from SomatosensoryCortex.button_manager import ButtonManager
 from AuditoryCortex.speech_manager import SpeechManager
 from AuditoryCortex.audio_manager import AudioManager
 from BicameralCortex.perspective_thinking_manager import PerspectiveThinkingManager
+from CorpusCallosum.audio_automation import AudioAutomation, AudioConfig
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
 log_dir.mkdir(parents=True, exist_ok=True)
 log_dir.chmod(0o777)  # Give full permissions
 
-# Configure logging (after CONFIG import to ensure directories exist)
+# Configure logging
 logging.basicConfig(
-    level=getattr(logging, CONFIG.log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(CONFIG.log_file)
-    ]
+    level=logging.INFO,  # Default to INFO if config not available
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("PenphinOS")
 
@@ -51,8 +52,9 @@ class PenphinOS:
     
     def __init__(self):
         self.logger = logger
-        self.running = True
+        self.running = False
         self.command_handlers = {}
+        self.audio_automation = None
         # Set up signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -127,43 +129,39 @@ class PenphinOS:
             raise
             
     async def initialize(self):
-        """Initialize all subsystems"""
+        """Initialize all neural subsystems"""
         try:
-            # Initialize neural pathways
-            self.logger.info("Initializing neural pathways...")
             await SynapticPathways.initialize()
-            
-            # Initialize audio manager first
-            self.audio_manager = AudioManager()
-            
-            # Initialize speech manager with audio manager
-            self.speech_manager = SpeechManager(self.audio_manager)
-            
-            # Initialize button manager
-            self.button_manager = ButtonManager()
-            self.button_manager.register_press_callback(self.handle_button_press)
-            self.button_manager.register_release_callback(self.handle_button_release)
-            
-            # Register command handlers
             self.register_command_handlers()
             
-            # Play startup sequence
-            await self._play_startup_sequence()
-            
-            # Welcome message
-            await SynapticPathways.send_tts(
-                text=SynapticPathways.welcome_message,
-                voice_id="en-US-1"
+            # Initialize audio automation
+            audio_config = AudioConfig(
+                sample_rate=CONFIG.audio_sample_rate,
+                channels=CONFIG.audio_channels,
+                device=CONFIG.audio_device
             )
+            self.audio_automation = AudioAutomation(audio_config)
             
-            self.logger.info("PenphinOS initialization complete")
+            self.running = True
+            self.logger.info("PenphinOS initialized successfully")
             
-        except SerialConnectionError as e:
-            self.logger.error(f"Failed to initialize neural pathways: {e}")
-            raise
         except Exception as e:
             self.logger.error(f"Initialization error: {e}")
             raise
+            
+    async def start_audio_automation(self):
+        """Start audio detection and automation"""
+        if self.audio_automation:
+            try:
+                await self.audio_automation.start_detection()
+            except Exception as e:
+                self.logger.error(f"Error starting audio automation: {e}")
+                raise
+                
+    def stop_audio_automation(self):
+        """Stop audio detection and automation"""
+        if self.audio_automation:
+            self.audio_automation.stop_detection()
             
     async def demo_capabilities(self):
         """Demonstrate various neural capabilities"""
@@ -238,32 +236,117 @@ class PenphinOS:
         except Exception as e:
             self.logger.error(f"Button release handler error: {e}")
 
-async def main():
-    """Main entry point"""
+async def get_system_info():
+    """Get comprehensive system information"""
     try:
-        # Initialize configuration
-        # CONFIG is already an instance, no need to call it
-        logger.info("Starting PenphinOS...")
+        import platform
+        import psutil
+        import torch
         
-        # Initialize audio components
-        audio_manager = AudioManager()
-        speech_manager = SpeechManager(audio_manager)
+        system_info = {
+            "System": {
+                "OS": platform.system(),
+                "Version": platform.version(),
+                "Machine": platform.machine(),
+                "Processor": platform.processor()
+            },
+            "Resources": {
+                "CPU Cores": psutil.cpu_count(),
+                "Memory Total (GB)": round(psutil.virtual_memory().total / (1024**3), 2),
+                "Memory Available (GB)": round(psutil.virtual_memory().available / (1024**3), 2),
+                "Disk Usage (%)": psutil.disk_usage('/').percent
+            },
+            "CUDA": {
+                "Available": torch.cuda.is_available(),
+                "Device Count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+                "Current Device": torch.cuda.current_device() if torch.cuda.is_available() else None,
+                "Device Name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+            }
+        }
+        return system_info
+    except Exception as e:
+        logger.error(f"Error getting system info: {e}")
+        return {}
+
+async def display_system_status():
+    """Display comprehensive system status"""
+    try:
+        # Get system information
+        system_info = await get_system_info()
+        
+        logger.info("\n" + "="*50)
+        logger.info("PenphinOS System Status")
+        logger.info("="*50)
+        
+        # Configuration Status
+        logger.info("\nConfiguration:")
+        logger.info(f"Mode: {'Hardware' if CONFIG.is_raspberry_pi else 'Test'}")
+        logger.info(f"Audio Output: {CONFIG.audio_output_type}")
+        logger.info(f"Serial Port: {CONFIG.serial_default_port}")
+        logger.info(f"Serial Baud Rate: {CONFIG.serial_baud_rate}")
+        logger.info(f"Log Level: {CONFIG.log_level}")
+        logger.info(f"Log File: {CONFIG.log_file}")
+        
+        # System Information
+        if system_info:
+            logger.info("\nSystem Information:")
+            for category, info in system_info.items():
+                logger.info(f"\n{category}:")
+                for key, value in info.items():
+                    logger.info(f"  {key}: {value}")
+        
+        # Neural Components Status
+        logger.info("\nNeural Components:")
+        logger.info(f"SynapticPathways Ready: {hasattr(SynapticPathways, '_instance')}")
+        logger.info(f"Audio Manager Ready: {CONFIG.audio_enabled}")
+        logger.info(f"Speech Recognition Model: {CONFIG.asr_model_type}")
+        logger.info(f"TTS Provider: {CONFIG.tts_provider}")
+        logger.info(f"LLM Provider: {CONFIG.llm_provider}")
+        
+        logger.info("\n" + "="*50)
+    except Exception as e:
+        logger.error(f"Error displaying system status: {e}")
+
+async def main():
+    """Main entry point for PenphinOS"""
+    try:
+        # Initialize behavior manager
+        behavior_manager = BehaviorManager()
+        
+        # Initialize visual cortex
+        visual_cortex = None
+        try:
+            visual_cortex = VisualCortex()
+            behavior_manager.register_state_handler(SystemState.INITIALIZING, visual_cortex)
+            behavior_manager.register_state_handler(SystemState.THINKING, visual_cortex)
+            behavior_manager.register_state_handler(SystemState.LISTENING, visual_cortex)
+            behavior_manager.register_state_handler(SystemState.SPEAKING, visual_cortex)
+            behavior_manager.register_state_handler(SystemState.ERROR, visual_cortex)
+            behavior_manager.register_state_handler(SystemState.SHUTDOWN, visual_cortex)
+        except Exception as e:
+            logger.warning(f"Failed to initialize visual cortex: {e}")
+            logger.info("Continuing without LED matrix display")
+        
+        # Initialize synaptic pathways
+        await SynapticPathways.initialize(test_mode=False)
+        
+        # Start behavior management
+        behavior_manager.start()
         
         # Start the system
-        logger.info("Starting PenphinOS...")
+        os = PenphinOS()
+        await os.run()
         
-        # Main event loop
-        while True:
-            await asyncio.sleep(1)
-            
-    except KeyboardInterrupt:
-        logger.info("Shutting down PenphinOS...")
     except Exception as e:
-        logger.error(f"Error in main loop: {e}")
+        logger.error(f"Runtime error: {e}")
+        if visual_cortex:
+            visual_cortex.on_state_change(SystemState.ERROR)
     finally:
-        # Cleanup
-        if 'audio_manager' in locals():
-            await audio_manager.cleanup()
-
+        if 'os' in locals():
+            await os.cleanup()
+        await SynapticPathways.close_connections()
+        if visual_cortex:
+            visual_cortex.cleanup()
+            
 if __name__ == "__main__":
     asyncio.run(main())

@@ -4,7 +4,8 @@
         "sample_rate": 16000,
         "channels": 1,
         "device": "default",
-        "volume": 80
+        "volume": 80,
+        "chunk_size": 1024
     },
     "serial": {
         "baud_rate": 115200,
@@ -20,6 +21,42 @@
     },
     "logging": {
         "level": "INFO",
-        "file": "logs/penphinos.system.log"
+        "file": "logs/penphinos.system.log",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    },
+    "api_keys": {
+        "openai": "your_api_key_here",
+        "elevenlabs": "your_elevenlabs_api_key_here"
+    },
+    "llm": {
+        "model": "gpt-3.5-turbo",
+        "max_tokens": 150,
+        "temperature": 0.7,
+        "system_prompt": "You are PenphinOS, a bicameral AI assistant."
+    },
+    "tts": {
+        "voice_id": "default",
+        "speed": 1.0,
+        "pitch": 1.0
+    },
+    "asr": {
+        "language": "en",
+        "model_type": "whisper"
+    },
+    "device": {
+        "input_device": null,
+        "output_device": null
+    },
+    "led_matrix": {
+        "rows": 64,
+        "cols": 64,
+        "max_brightness": 50,
+        "gpio_slowdown": 4,
+        "chain_length": 1,
+        "parallel": 1,
+        "pwm_bits": 11,
+        "scan_mode": 0,
+        "pwm_lsb_nanoseconds": 130,
+        "rgb_sequence": "RGB"
     }
 }
