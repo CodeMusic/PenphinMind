@@ -1,4 +1,8 @@
-# PenphinOS
+# PenphinMind
+
+An AI the follows the structure of the mind and brain. It has a bicameral mind, where unique agents engage in perspective thinking.
+This project is based on the CodeMusai work which evolved into RoverByte. The codename for this project is Penphin, it is a mix of the words penguin and dolphin.
+I associate the spirit animal of a penguin to my creative side, and a dolphin for my logical side. Since this project follows this bicameral approach, the project became Penphin!
 
 A modular operating system for AI-powered audio interaction, built with a neural architecture inspired by the human brain.
 
