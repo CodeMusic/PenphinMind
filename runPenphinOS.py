@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import signal
 from datetime import datetime
 import time
@@ -12,7 +12,6 @@ from CorpusCallosum.visual_cortex import VisualCortex
 from CorpusCallosum.synaptic_pathways import SynapticPathways
 from PreFrontalCortex.behavior_manager import BehaviorManager
 from config import CONFIG
-from mind import Mind
 
 
 # Add the project root to Python path
@@ -49,48 +48,17 @@ logging.basicConfig(
 logger = logging.getLogger("PenphinOS")
 
 class PenphinOS:
-    """Main OS class that manages the Mind system"""
+    """Main OS class that manages all neural subsystems"""
     
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.mind: Optional[Mind] = None
-        self.running: bool = False
+        self.logger = logger
+        self.running = False
+        self.command_handlers = {}
+        self.audio_automation = None
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
         
-    async def initialize(self):
-        """Initialize the mind and neural pathways"""
-        try:
-            await SynapticPathways.initialize()
-            self.mind = Mind()
-            self.running = True
-            self.logger.info("PenphinOS initialized successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Initialization error: {e}")
-            raise
-            
-    async def process_audio_input(self, audio_data: bytes):
-        """Process audio through the mind"""
-        if not self.mind:
-            raise RuntimeError("Mind not initialized")
-            
-        try:
-            # Process through auditory system
-            result = await self.mind.process_audio(audio_data)
-            
-            # If speech detected, understand it
-            if result.get("text"):
-                response = await self.mind.understand_speech(audio_data)
-                
-                # Generate speech response if needed
-                if response:
-                    audio_response = await self.mind.generate_speech(response)
-                    return audio_response
-                    
-            return result
-        except Exception as e:
-            self.logger.error(f"Audio processing error: {e}")
-            raise
-
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals"""
         self.logger.info("Shutdown signal received...")
@@ -158,6 +126,27 @@ class PenphinOS:
             )
         except Exception as e:
             self.logger.error(f"Startup sequence error: {e}")
+            raise
+            
+    async def initialize(self):
+        """Initialize all neural subsystems"""
+        try:
+            await SynapticPathways.initialize()
+            self.register_command_handlers()
+            
+            # Initialize audio automation
+            audio_config = AudioConfig(
+                sample_rate=CONFIG.audio_sample_rate,
+                channels=CONFIG.audio_channels,
+                device=CONFIG.audio_device
+            )
+            self.audio_automation = AudioAutomation(audio_config)
+            
+            self.running = True
+            self.logger.info("PenphinOS initialized successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Initialization error: {e}")
             raise
             
     async def start_audio_automation(self):

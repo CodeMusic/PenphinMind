@@ -3,9 +3,9 @@ from PreFrontalCortex.system_journeling_manager import (
     SystemJournelingLevel
 )
 
-from PenphinOS.LaunchScripts import runPenguinOS
-from PenphinOS.LaunchScripts import testPenphinLLM
-from PenphinOS.LaunchScripts import testLEDMatrix
+from PenphinMind.LaunchScripts import runPenguinOS
+from PenphinMind.LaunchScripts import testPenphinLLM
+from PenphinMind.LaunchScripts import testLEDMatrix
 
 def main():
     # Initialize the journaling manager (example)
