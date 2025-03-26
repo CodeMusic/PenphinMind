@@ -1,6 +1,5 @@
-
 <div align="center">
-	**PenphinMind**
+  <h1><strong>PenphinMind</strong></h1>
   <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="352"/>
 </div>
 
