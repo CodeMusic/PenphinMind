@@ -1,4 +1,4 @@
-PenphinMind: A Modular Cognitive Framework
+Whitepaper 1: PenphinMind: A Modular Cognitive Framework
 
 A Symphony of Thought in the Age of AI
 
