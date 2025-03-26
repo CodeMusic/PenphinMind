@@ -1,6 +1,6 @@
-**PenphinMind**: A new era of AI that blends creativity with logic, evolving with every interaction.
 
 <div align="center">
+	**PenphinMind**: A new era of AI that blends creativity with logic, evolving with every interaction.
   <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="352"/>
 </div>
 
