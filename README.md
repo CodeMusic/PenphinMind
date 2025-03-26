@@ -1,8 +1,10 @@
-Got it! Here’s the updated README.md for PenphinMind, ensuring all the whitepaper links are correct:
+<div align="center">
+  <h2><em>PenphinMind</em></h2>
+  <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="352"/>
+<br/>PenphinMind: <i>The AI that bridges creativity and logic, evolving with every interaction.</i>
+</div>
 
-# PenphinMind
 
-PenphinMind is a modular AI framework designed to mimic human cognition, inspired by the structure of the brain. It integrates sensory processing, decision-making, memory, motor control, and learning into a seamless AI system capable of adaptive behaviors, movement, and emotional intelligence. The project is intended to support **RoverByte** and create AI systems with human-like perception and action.
 
 ## Features
 
