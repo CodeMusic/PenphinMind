@@ -12,25 +12,104 @@ Neurological Function:
     - Figure-ground separation
 """
 import logging
+import numpy as np
 from typing import Dict, Any, List
-from CorpusCallosum.synaptic_pathways import SynapticPathways
+from ...CorpusCallosum.synaptic_pathways import SynapticPathways
+from ...config import CONFIG
+
+logger = logging.getLogger(__name__)
 
 class SecondaryVisualArea:
+    """Complex visual feature processing"""
+    
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
-
-    async def analyze_complex_features(self, image_data: bytes) -> Dict[str, Any]:
-        """Analyze complex visual features and patterns"""
-        try:
-            response = await SynapticPathways.transmit_json({
-                "type": "complex_visual_analysis",
-                "image_data": image_data,
-                "analysis_type": "complex_features"
-            })
+        """Initialize the secondary visual area"""
+        self._initialized = False
+        self._processing = False
+        
+    async def initialize(self) -> None:
+        """Initialize the secondary visual area"""
+        if self._initialized:
+            return
             
-            self.logger.info("Analyzed complex visual features")
-            return response
-
+        try:
+            self._initialized = True
+            logger.info("Secondary visual area initialized")
+            
         except Exception as e:
-            self.logger.error(f"Complex feature analysis error: {e}")
-            return {} 
+            logger.error(f"Failed to initialize secondary visual area: {e}")
+            raise
+            
+    async def analyze_complex_features(self, image_data: bytes) -> Dict[str, Any]:
+        """Analyze complex visual features"""
+        try:
+            # Convert image data to numpy array
+            image = np.frombuffer(image_data, dtype=np.uint8)
+            image = image.reshape((CONFIG.visual_height, CONFIG.visual_width, 3))
+            
+            # Analyze complex features
+            features = {
+                "texture": self._analyze_texture(image),
+                "shapes": self._detect_shapes(image),
+                "motion": self._detect_motion(image)
+            }
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"Error analyzing complex features: {e}")
+            return {}
+            
+    def _analyze_texture(self, image: np.ndarray) -> Dict[str, float]:
+        """Analyze image texture"""
+        try:
+            # Convert to grayscale
+            gray = np.mean(image, axis=2)
+            
+            # Calculate texture features
+            features = {
+                "smoothness": np.std(gray),
+                "contrast": np.max(gray) - np.min(gray),
+                "energy": np.sum(gray**2)
+            }
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"Error analyzing texture: {e}")
+            return {}
+            
+    def _detect_shapes(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        """Detect shapes in image"""
+        try:
+            # Convert to grayscale
+            gray = np.mean(image, axis=2)
+            
+            # Simple shape detection
+            shapes = []
+            # TODO: Implement shape detection
+            
+            return shapes
+            
+        except Exception as e:
+            logger.error(f"Error detecting shapes: {e}")
+            return []
+            
+    def _detect_motion(self, image: np.ndarray) -> Dict[str, Any]:
+        """Detect motion in image"""
+        try:
+            # Convert to grayscale
+            gray = np.mean(image, axis=2)
+            
+            # Simple motion detection
+            motion = {
+                "magnitude": 0.0,
+                "direction": 0.0
+            }
+            # TODO: Implement motion detection
+            
+            return motion
+            
+        except Exception as e:
+            logger.error(f"Error detecting motion: {e}")
+            return {"magnitude": 0.0, "direction": 0.0} 

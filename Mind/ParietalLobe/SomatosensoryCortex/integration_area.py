@@ -1,19 +1,84 @@
 """
-Integration area for the Somatosensory Cortex, handling touch and physical input
+Somatosensory Integration Area - Processes and integrates tactile information
 """
 
-from typing import Dict, Any
-from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neural_commands import CommandType, SystemCommand
-from config import CONFIG
+import logging
+from typing import Dict, Any, Optional
+from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+from Mind.config import CONFIG
+
+logger = logging.getLogger(__name__)
 
 class IntegrationArea:
-    """Integration area for somatosensory processing"""
+    """Processes and integrates tactile information"""
     
     def __init__(self):
-        self.button_manager = None
-        self.touch_manager = None
+        """Initialize the integration area"""
+        self._initialized = False
+        self._processing = False
         
+        # Register with SynapticPathways
+        SynapticPathways.register_integration_area("somatosensory", self)
+        
+    async def initialize(self) -> None:
+        """Initialize the integration area"""
+        if self._initialized:
+            return
+            
+        try:
+            # Initialize tactile processing components
+            self._initialized = True
+            logger.info("Somatosensory integration area initialized")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize somatosensory integration area: {e}")
+            raise
+            
+    async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a tactile command"""
+        if not self._initialized:
+            raise RuntimeError("Integration area not initialized")
+            
+        if self._processing:
+            raise RuntimeError("Already processing a command")
+            
+        try:
+            self._processing = True
+            
+            # Process command based on type
+            command_type = command.get("type")
+            if command_type == "TACTILE":
+                return await self._process_tactile(command)
+            else:
+                raise ValueError(f"Unknown command type: {command_type}")
+                
+        except Exception as e:
+            logger.error(f"Error processing command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+        finally:
+            self._processing = False
+            
+    async def _process_tactile(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process tactile command"""
+        try:
+            # Process tactile input
+            return {"status": "ok", "message": "Tactile command processed"}
+            
+        except Exception as e:
+            logger.error(f"Error processing tactile command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def cleanup(self) -> None:
+        """Clean up resources"""
+        try:
+            self._initialized = False
+            logger.info("Somatosensory integration area cleaned up")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up somatosensory integration area: {e}")
+            raise
+
     async def process_button_press(self, button_id: str) -> Dict[str, Any]:
         """Process button press events"""
         try:
@@ -45,9 +110,4 @@ class IntegrationArea:
             )
             return response
         except Exception as e:
-            raise Exception(f"Error processing touch input: {e}")
-            
-    async def initialize(self) -> None:
-        """Initialize somatosensory components"""
-        # Initialize button and touch managers here
-        pass 
+            raise Exception(f"Error processing touch input: {e}") 

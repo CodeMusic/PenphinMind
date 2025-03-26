@@ -1,34 +1,32 @@
 """
-testLEDMatrix script to demonstrate LED Matrix functionality on Raspberry Pi 
-and a mock matrix on macOS.
+Test script for LED Matrix functionality
 """
 
-import platform
-import time
-import asyncio
-from PenphinMind.mind import Mind
+import logging
+from typing import Dict, Any, Optional
+from .Mind.mind import Mind
 
-async def runPsychologyDrivenMatrixTest():
-    """
-    Run a test of the LED matrix at 50% brightness, provide status output, 
-    then clear on interruption or after the delay.
-    """
-    mind = Mind()
-    await mind.initialize()
-    
+logger = logging.getLogger(__name__)
+
+async def test_led_matrix():
+    """Test LED Matrix functionality"""
     try:
-        print("✅ Running LED Matrix Test at 50% Brightness...")
-        # Use the mind's visual cortex to control the matrix
-        await mind.occipital_lobe["visual"].set_background(128, 128, 128)  # Grey background
-        await asyncio.sleep(5)
-        print("✅ Test Complete!")
-    except KeyboardInterrupt:
-        print("\n🔹 Exiting... Clearing Matrix.")
-    finally:
-        await mind.occipital_lobe["visual"].clear()
-
-async def main():
-    await runPsychologyDrivenMatrixTest()
+        mind = Mind()
+        await mind.initialize()
+        
+        # Test LED matrix
+        await mind.set_background(255, 0, 0)  # Red
+        await asyncio.sleep(1)
+        await mind.set_background(0, 255, 0)  # Green
+        await asyncio.sleep(1)
+        await mind.set_background(0, 0, 255)  # Blue
+        await asyncio.sleep(1)
+        await mind.clear_matrix()
+        
+    except Exception as e:
+        logger.error(f"LED Matrix test error: {e}")
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    import asyncio
+    asyncio.run(test_led_matrix()) 

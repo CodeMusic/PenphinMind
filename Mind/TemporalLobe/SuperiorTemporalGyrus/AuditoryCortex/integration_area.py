@@ -1,91 +1,136 @@
 """
-Integration area for the Auditory Cortex, coordinating speech and audio processing
+Auditory Integration Area - Processes and integrates auditory information
 """
 
-from typing import Dict, Any
-from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neural_commands import CommandType, LLMCommand, TTSCommand, ASRCommand
-from config import CONFIG
-from .belt_area import BeltArea
-from ..HeschlGyrus.primary_acoustic_area import PrimaryAcousticArea
+import logging
+from typing import Dict, Any, Optional
+from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+from Mind.config import CONFIG
+
+logger = logging.getLogger(__name__)
 
 class IntegrationArea:
-    """Integration area for auditory processing"""
+    """Processes and integrates auditory information"""
     
     def __init__(self):
-        self.belt_area = BeltArea()
-        self.primary_acoustic = PrimaryAcousticArea()
+        """Initialize the integration area"""
+        self._initialized = False
+        self._processing = False
         
-    async def process_auditory_input(self, audio_data: bytes) -> Dict[str, Any]:
-        """Process incoming audio data"""
+        # Register with SynapticPathways
+        SynapticPathways.register_integration_area("auditory", self)
+        
+    async def initialize(self) -> None:
+        """Initialize the integration area"""
+        if self._initialized:
+            return
+            
         try:
-            # First process through primary acoustic area
-            basic_features = await self.primary_acoustic.process_acoustic_signal(audio_data)
+            # Initialize audio processing components
+            self._initialized = True
+            logger.info("Auditory integration area initialized")
             
-            # Then process through belt area for complex features
-            complex_features = await self.belt_area.process_complex_features(audio_data)
-            
-            # Finally process through language model
-            response = await SynapticPathways.send_llm(
-                prompt=complex_features.get("text", ""),
-                max_tokens=CONFIG.llm_max_tokens,
-                temperature=CONFIG.llm_temperature
-            )
-            
-            return {
-                "basic_features": basic_features,
-                "complex_features": complex_features,
-                "response": response.get("response", "")
-            }
         except Exception as e:
-            raise Exception(f"Error processing auditory input: {e}")
+            logger.error(f"Failed to initialize auditory integration area: {e}")
+            raise
             
-    async def process_text(self, text: str) -> str:
-        """Process text input through the language model"""
-        try:
-            response = await SynapticPathways.send_llm(
-                prompt=text,
-                max_tokens=CONFIG.llm_max_tokens,
-                temperature=CONFIG.llm_temperature
-            )
-            return response.get("response", "")
-        except Exception as e:
-            raise Exception(f"Error processing text: {e}")
+    async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process an auditory command"""
+        if not self._initialized:
+            raise RuntimeError("Integration area not initialized")
             
-    async def record_audio(self, duration: float) -> bytes:
-        """Record audio for specified duration"""
+        if self._processing:
+            raise RuntimeError("Already processing a command")
+            
         try:
-            return await self.primary_acoustic.record_acoustic_signal(duration)
+            self._processing = True
+            
+            # Process command based on type
+            command_type = command.get("type")
+            if command_type == "TTS":
+                return await self._process_tts(command)
+            elif command_type == "ASR":
+                return await self._process_asr(command)
+            elif command_type == "VAD":
+                return await self._process_vad(command)
+            else:
+                raise ValueError(f"Unknown command type: {command_type}")
+                
         except Exception as e:
-            raise Exception(f"Error recording audio: {e}")
-
-class BrocaArea:
-    """Speech production area"""
-    
-    async def generate_speech(self, text: str) -> bytes:
-        """Generate speech from text"""
+            logger.error(f"Error processing command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+        finally:
+            self._processing = False
+            
+    async def _process_tts(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process text-to-speech command"""
         try:
+            text = command.get("text", "")
+            voice_id = command.get("voice_id", "default")
+            speed = command.get("speed", 1.0)
+            pitch = command.get("pitch", 1.0)
+            
+            # Process TTS command
             response = await SynapticPathways.send_tts(
                 text=text,
-                voice_id=CONFIG.tts_voice_id,
-                speed=CONFIG.tts_speed,
-                pitch=CONFIG.tts_pitch
+                voice_id=voice_id,
+                speed=speed,
+                pitch=pitch
             )
-            return response.get("audio", b"")
+            
+            return response
+            
         except Exception as e:
-            raise Exception(f"Error generating speech: {e}")
-
-class WernickeArea:
-    """Speech comprehension area"""
-    
-    async def process_linguistic_content(self, audio_data: bytes) -> str:
-        """Process audio into text"""
+            logger.error(f"Error processing TTS command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def _process_asr(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process automatic speech recognition command"""
         try:
+            audio_data = command.get("audio_data")
+            language = command.get("language", "en")
+            model_type = command.get("model_type", "base")
+            
+            # Process ASR command
             response = await SynapticPathways.send_asr(
                 audio_data=audio_data,
-                language=CONFIG.asr_language,
-                model_type=CONFIG.asr_model_type
+                language=language,
+                model_type=model_type
             )
-            return response.get("text", "")
+            
+            return response
+            
         except Exception as e:
-            raise Exception(f"Error processing linguistic content: {e}") 
+            logger.error(f"Error processing ASR command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def _process_vad(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process voice activity detection command"""
+        try:
+            audio_chunk = command.get("audio_chunk")
+            threshold = command.get("threshold", 0.5)
+            frame_duration = command.get("frame_duration", 30)
+            
+            # Process VAD command
+            response = await SynapticPathways.send_vad(
+                audio_chunk=audio_chunk,
+                threshold=threshold,
+                frame_duration=frame_duration
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error processing VAD command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def cleanup(self) -> None:
+        """Clean up resources"""
+        try:
+            self._initialized = False
+            logger.info("Auditory integration area cleaned up")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up auditory integration area: {e}")
+            raise 

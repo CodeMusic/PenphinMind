@@ -1,36 +1,93 @@
 """
-High-level coordinator for all brain regions
+Main Mind class that coordinates all brain regions
 """
 
-from typing import Dict, Any
-from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.audio_automation import AudioAutomation, AudioConfig
-from TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.integration_area import IntegrationArea
-from ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea as SomatosensoryIntegration
-from OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualProcessor
-from MotorCortex.integration_area import IntegrationArea as MotorIntegration
+import logging
+import platform
+from typing import Dict, Any, Optional
+from .CorpusCallosum.synaptic_pathways import SynapticPathways
+from .TemporalLobe.SuperiorTemporalGyrus.HeschlGyrus.primary_acoustic_area import PrimaryAcousticArea
+from .OccipitalLobe.VisualCortex.associative_visual_area import AssociativeVisualArea
+from .ParietalLobe.SomatosensoryCortex.primary_area import PrimaryArea
+from .FrontalLobe.PrefrontalCortex.llm import LLM
+from .FrontalLobe.MotorCortex.motor import Motor
+from .TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.integration_area import IntegrationArea
+from .ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea as SomatosensoryIntegration
+from .OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualProcessor
+from .FrontalLobe.MotorCortex.integration_area import IntegrationArea as MotorIntegration
+from .config import CONFIG
 # Add other lobe imports as needed
+
+logger = logging.getLogger(__name__)
 
 class Mind:
     """
     High-level coordinator for all brain regions
     """
     def __init__(self):
+        # Initialize instance variables
+        self._occipital_lobe = {}
+        self._temporal_lobe = {}
+        self._parietal_lobe = {}
+        self._motor_cortex = {}
+        self.primary_acoustic = None
+        self._initialized = False
+        self._processing = False
+        self._llm = None  # LLM instance
+        
         # Initialize all lobes
-        self.temporal_lobe = {
+        self._temporal_lobe = {
             "auditory": IntegrationArea()
         }
-        self.parietal_lobe = {
+        self._parietal_lobe = {
             "somatosensory": SomatosensoryIntegration()
         }
-        self.occipital_lobe = {
+        self._occipital_lobe = {
             "visual": VisualProcessor()
         }
-        self.motor_cortex = {
+        self._motor_cortex = {
             "motor": MotorIntegration()
         }
-        self.audio_automation = None
-        # Add other lobes as they're implemented
+        
+    @property
+    def temporal_lobe(self) -> Dict[str, Any]:
+        """Get temporal lobe components"""
+        return self._temporal_lobe
+        
+    @temporal_lobe.setter
+    def temporal_lobe(self, value: Dict[str, Any]):
+        """Set temporal lobe components"""
+        self._temporal_lobe = value
+        
+    @property
+    def parietal_lobe(self) -> Dict[str, Any]:
+        """Get parietal lobe components"""
+        return self._parietal_lobe
+        
+    @parietal_lobe.setter
+    def parietal_lobe(self, value: Dict[str, Any]):
+        """Set parietal lobe components"""
+        self._parietal_lobe = value
+        
+    @property
+    def occipital_lobe(self) -> Dict[str, Any]:
+        """Get occipital lobe components"""
+        return self._occipital_lobe
+        
+    @occipital_lobe.setter
+    def occipital_lobe(self, value: Dict[str, Any]):
+        """Set occipital lobe components"""
+        self._occipital_lobe = value
+        
+    @property
+    def motor_cortex(self) -> Dict[str, Any]:
+        """Get motor cortex components"""
+        return self._motor_cortex
+        
+    @motor_cortex.setter
+    def motor_cortex(self, value: Dict[str, Any]):
+        """Set motor cortex components"""
+        self._motor_cortex = value
         
     async def process_audio(self, audio_data: bytes) -> Dict[str, Any]:
         """High-level audio processing"""
@@ -47,21 +104,89 @@ class Mind:
 
     async def start_listening(self) -> None:
         """Start audio input processing"""
-        if not self.audio_automation:
-            # Initialize audio automation if needed
-            self.audio_automation = AudioAutomation(AudioConfig())
-        await self.audio_automation.start_detection()
+        if not self.primary_acoustic:
+            # Initialize primary acoustic area if needed
+            self.primary_acoustic = PrimaryAcousticArea()
+        await self.primary_acoustic.start_vad()
 
     async def stop_listening(self) -> None:
         """Stop audio input processing"""
-        if self.audio_automation:
-            self.audio_automation.stop_detection()
+        if self.primary_acoustic:
+            await self.primary_acoustic.stop_vad()
 
+    def _is_raspberry_pi(self) -> bool:
+        """Check if running on a Raspberry Pi"""
+        try:
+            with open('/proc/cpuinfo', 'r') as f:
+                return 'Raspberry Pi' in f.read()
+        except:
+            return False
+            
     async def initialize(self) -> None:
         """Initialize all brain regions"""
-        await SynapticPathways.initialize()
-        if not self.audio_automation:
-            self.audio_automation = AudioAutomation(AudioConfig())
+        if self._initialized:
+            return
+            
+        try:
+            # Initialize synaptic pathways with appropriate test mode
+            is_raspberry_pi = self._is_raspberry_pi()
+            test_mode = not is_raspberry_pi
+            logger.info(f"Running on {'Raspberry Pi' if is_raspberry_pi else 'non-Raspberry Pi'}, test_mode={test_mode}")
+            await SynapticPathways.initialize(test_mode=test_mode)
+            
+            # Initialize all integration areas
+            for area in self.temporal_lobe.values():
+                await area.initialize()
+            for area in self.parietal_lobe.values():
+                await area.initialize()
+            for area in self.occipital_lobe.values():
+                await area.initialize()
+            for area in self.motor_cortex.values():
+                await area.initialize()
+            
+            # Initialize primary acoustic area if needed
+            if not self.primary_acoustic:
+                self.primary_acoustic = PrimaryAcousticArea()
+                await self.primary_acoustic.initialize()
+                
+            # Initialize LLM
+            self._llm = LLM()
+            await self._llm.initialize()
+                
+            self._initialized = True
+            logger.info("Mind initialized")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize mind: {e}")
+            raise
+            
+    async def cleanup(self) -> None:
+        """Clean up all brain regions"""
+        try:
+            # Clean up all integration areas
+            for area in self.temporal_lobe.values():
+                await area.cleanup()
+            for area in self.parietal_lobe.values():
+                await area.cleanup()
+            for area in self.occipital_lobe.values():
+                await area.cleanup()
+            for area in self.motor_cortex.values():
+                await area.cleanup()
+                
+            # Clean up primary acoustic area
+            if self.primary_acoustic:
+                await self.primary_acoustic.cleanup()
+                
+            # Clean up LLM
+            if self._llm:
+                await self._llm.cleanup()
+                
+            self._initialized = False
+            logger.info("Mind cleaned up")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up mind: {e}")
+            raise
             
     async def execute_movement(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
         """High-level movement execution"""
@@ -81,4 +206,29 @@ class Mind:
         
     async def clear_matrix(self) -> None:
         """Clear the LED matrix"""
-        await self.occipital_lobe["visual"].clear() 
+        await self.occipital_lobe["visual"].clear()
+
+    async def process_input(self, input_text: str) -> Dict[str, Any]:
+        """Process text input through LLM"""
+        try:
+            if not self._initialized:
+                await self.initialize()
+                
+            if not self._llm:
+                raise RuntimeError("LLM not initialized")
+                
+            # Process through LLM
+            response = await self._llm.process_input(input_text)
+            
+            return {
+                "status": "ok",
+                "response": response.get("response", ""),
+                "message": response.get("message", "")
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing input: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            } 

@@ -1,3 +1,7 @@
+"""
+Synaptic Pathways - Neural communication system
+"""
+
 # Standard library imports
 import asyncio
 import json
@@ -9,7 +13,8 @@ import grp
 import stat
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union, Callable
+from typing import Optional, Dict, Any, List, Union, Callable, Type
+from enum import Enum
 
 # Third-party imports
 import serial
@@ -20,12 +25,7 @@ from .neural_commands import (
     BaseCommand, CommandType, CommandFactory, CommandSerializer,
     TTSCommand, ASRCommand, LLMCommand, SystemCommand, WhisperCommand, VADCommand
 )
-from config import CONFIG
-
-# Update imports
-from TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.integration_area import IntegrationArea
-from ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea as SomatosensoryIntegration
-from OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualIntegration
+from ..config import CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,24 @@ class SynapticPathways:
     
     # Class variables
     _serial_connection: Optional[serial.Serial] = None
-    _managers = {}
+    _managers: Dict[str, Any] = {}
     _initialized = False
     _test_mode = False  # Only for hardware testing, not simulation
     _audio_cache_dir = Path("cache/audio")
-    _command_handlers = {}
+    _command_handlers: Dict[CommandType, Callable] = {}
+    _integration_areas: Dict[str, Any] = {}
     welcome_message = ""
+
+    @classmethod
+    def register_integration_area(cls, area_type: str, area_instance: Any) -> None:
+        """Register an integration area for neural processing"""
+        cls._integration_areas[area_type] = area_instance
+        logger.info(f"Registered integration area: {area_type}")
+
+    @classmethod
+    def get_integration_area(cls, area_type: str) -> Any:
+        """Get a registered integration area"""
+        return cls._integration_areas.get(area_type)
 
     @classmethod
     def set_test_mode(cls, enabled: bool = True) -> None:
@@ -121,21 +133,41 @@ class SynapticPathways:
             print("\n=== Neural Processor Detection ===")
             print("Scanning for AX630...")
             
+            # Print all available ports for debugging
+            print("\nAvailable ports:")
             for port in ports:
-                # On macOS, AX630 typically appears as "usbserial-" or "tty.usbserial-"
-                if (("usbserial" in port.device.lower() and "AX630" in port.hwid) or
-                    ("AX630" in port.description)):
-                    ax630_port = port.device
-                    print(f"\n✓ AX630 Neural Processor detected!")
-                    print("=" * 50)
-                    print(f"Port: {port.device}")
-                    print(f"Hardware ID: {port.hwid}")
-                    print(f"Description: {port.description}")
-                    print("=" * 50)
-                    break
+                print(f"Device: {port.device}")
+                print(f"Hardware ID: {port.hwid}")
+                print(f"Description: {port.description}")
+                print("-" * 50)
+            
+            for port in ports:
+                # On macOS, check for any USB serial device
+                if platform.system() == "Darwin":
+                    if "usbserial" in port.device.lower() or "tty.usbserial" in port.device.lower():
+                        ax630_port = port.device
+                        print(f"\n✓ USB Serial device detected!")
+                        print("=" * 50)
+                        print(f"Port: {port.device}")
+                        print(f"Hardware ID: {port.hwid}")
+                        print(f"Description: {port.description}")
+                        print("=" * 50)
+                        break
+                else:
+                    # On Linux, look for AX630 identifier
+                    if (("usbserial" in port.device.lower() and "AX630" in port.hwid) or
+                        ("AX630" in port.description)):
+                        ax630_port = port.device
+                        print(f"\n✓ AX630 Neural Processor detected!")
+                        print("=" * 50)
+                        print(f"Port: {port.device}")
+                        print(f"Hardware ID: {port.hwid}")
+                        print(f"Description: {port.description}")
+                        print("=" * 50)
+                        break
             
             if not ax630_port:
-                print("\n❌ AX630 Neural Processor not found")
+                print("\n❌ No USB Serial device found")
                 print("\nTroubleshooting steps:")
                 if platform.system() == "Darwin":  # macOS
                     print("1. Check USB connection")
@@ -168,7 +200,7 @@ class SynapticPathways:
             cls._serial_connection.reset_input_buffer()
             cls._serial_connection.reset_output_buffer()
             
-            # Send initialization command
+            # Send initialization command directly
             init_command = {
                 "type": "SYSTEM",
                 "command": "initialize",
@@ -191,100 +223,70 @@ class SynapticPathways:
                 print(f"Firmware version: {response_data.get('version', 'unknown')}")
                 print(f"Status: {response_data.get('state', 'unknown')}")
                 return True
-            else:
-                raise CommandTransmissionError(f"Initialization failed: {response_data.get('message', 'unknown error')}")
-
+                
         except Exception as e:
-            logger.error(f"Error setting up neural processor: {e}")
-            if cls._serial_connection:
-                cls._serial_connection.close()
-                cls._serial_connection = None
+            logger.error(f"Error setting up AX630: {e}")
             return False
-
-    # Primary command handling
-    @classmethod
-    async def transmit_json(cls, command: Union[Dict[str, Any], BaseCommand]) -> Dict[str, Any]:
-        """Transmit commands to neural processor"""
-        if not cls._initialized:
-            await cls.initialize()
-
-        # Convert command object to dict if needed
-        if isinstance(command, BaseCommand):
-            command = command.to_dict()
-
-        # In test mode, return mock responses
-        if cls._test_mode:
-            logger.debug(f"Test mode - Command sent: {json.dumps(command, indent=2)}")
             
-            # Mock response based on command type
-            if command.get("type") == "LLM":
-                mock_response = {
-                    "status": "ok",
-                    "response": f"Test mode response for prompt: {command.get('prompt', '')}",
-                    "tokens_used": 50,
-                    "model": "test-model"
-                }
-            elif command.get("type") == "TTS":
-                mock_response = {
-                    "status": "ok",
-                    "audio_path": "test_audio.wav",
-                    "duration": 2.5
-                }
-            elif command.get("type") == "ASR":
-                mock_response = {
-                    "status": "ok",
-                    "text": "This is a test transcription",
-                    "confidence": 0.95
-                }
-            else:
-                mock_response = {
-                    "status": "ok",
-                    "message": f"Test mode - Command processed: {command.get('type', 'unknown')}"
-                }
-                
-            logger.debug(f"Test mode - Response: {json.dumps(mock_response, indent=2)}")
-            return mock_response
-
-        # Production mode - attempt hardware communication
-        retries = CONFIG.serial_max_retries
-        retry_delay = CONFIG.serial_retry_delay
-        
-        for attempt in range(retries):
-            try:
-                if not cls._serial_connection or not cls._serial_connection.is_open:
-                    await cls._setup_ax630e()
-
-                json_data = json.dumps(command) + "\n"
-                cls._serial_connection.write(json_data.encode())
-                response = cls._serial_connection.readline().decode().strip()
-                
-                if not response:
-                    raise CommandTransmissionError("No response from neural processor")
-                    
-                return json.loads(response)
-                
-            except Exception as e:
-                logger.error(f"Transmission attempt {attempt + 1} failed: {e}")
-                if attempt < retries - 1:
-                    await asyncio.sleep(retry_delay)
-                    continue
-                raise CommandTransmissionError(f"Neural processor communication failed after {retries} attempts: {e}")
-
-    # High-level command interfaces
     @classmethod
-    async def send_llm(cls, prompt: str, max_tokens: int = 100, temperature: float = 0.7) -> Dict[str, Any]:
-        """Send Large Language Model command"""
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-        return await cls.transmit_json(command)
-
+    async def send_command(cls, command: BaseCommand) -> Dict[str, Any]:
+        """Send a command to the neural processor"""
+        try:
+            if not cls._initialized:
+                raise CommandTransmissionError("Neural pathways not initialized")
+                
+            # Always try to use the real AX630C hardware
+            if not cls._serial_connection:
+                if not await cls._setup_ax630e():
+                    raise SerialConnectionError("Failed to connect to AX630C")
+            
+            # Send command directly to hardware
+            command_data = command.to_dict()
+            json_data = json.dumps(command_data) + "\n"
+            cls._serial_connection.write(json_data.encode())
+            response = cls._serial_connection.readline().decode().strip()
+            
+            if not response:
+                raise CommandTransmissionError("No response from neural processor")
+                
+            return json.loads(response)
+            
+        except Exception as e:
+            logger.error(f"Error sending command: {e}")
+            raise
+            
+    @classmethod
+    async def send_system_command(cls, command_type: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Send a system command"""
+        try:
+            command = SystemCommand(
+                command_type=CommandType.SYSTEM,
+                action=command_type,
+                data=data or {}
+            )
+            return await cls.send_command(command)
+        except Exception as e:
+            logger.error(f"Error sending system command: {e}")
+            raise
+            
+    @classmethod
+    async def send_llm(cls, prompt: str, max_tokens: int = 150, temperature: float = 0.7) -> Dict[str, Any]:
+        """Send an LLM command"""
+        try:
+            command = LLMCommand(
+                command_type=CommandType.LLM,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            return await cls.send_command(command)
+        except Exception as e:
+            logger.error(f"Error sending LLM command: {e}")
+            raise
+            
     @classmethod
     async def send_tts(cls, text: str, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0) -> Dict[str, Any]:
-        """Send Text-to-Speech command"""
+        """Send a TTS command"""
         try:
             command = TTSCommand(
                 command_type=CommandType.TTS,
@@ -293,21 +295,118 @@ class SynapticPathways:
                 speed=speed,
                 pitch=pitch
             )
-            return await cls.transmit_json(command)
+            return await cls.send_command(command)
         except Exception as e:
-            logger.error(f"TTS command failed: {e}")
-            return {"status": "error", "message": str(e)}
-
+            logger.error(f"Error sending TTS command: {e}")
+            raise
+            
     @classmethod
     async def send_asr(cls, audio_data: bytes, language: str = "en", model_type: str = "base") -> Dict[str, Any]:
-        """Send Automatic Speech Recognition command"""
-        command = ASRCommand(
-            command_type=CommandType.ASR,
-            input_audio=audio_data,
-            language=language,
-            model_type=model_type
-        )
-        return await cls.transmit_json(command)
+        """Send an ASR command"""
+        try:
+            command = ASRCommand(
+                command_type=CommandType.ASR,
+                input_audio=audio_data,
+                language=language,
+                model_type=model_type
+            )
+            return await cls.send_command(command)
+        except Exception as e:
+            logger.error(f"Error sending ASR command: {e}")
+            raise
+            
+    @classmethod
+    async def send_vad(cls, audio_chunk: bytes, threshold: float = 0.5, frame_duration: int = 30) -> Dict[str, Any]:
+        """Send a VAD command"""
+        try:
+            command = VADCommand(
+                command_type=CommandType.VAD,
+                audio_chunk=audio_chunk,
+                threshold=threshold,
+                frame_duration=frame_duration
+            )
+            return await cls.send_command(command)
+        except Exception as e:
+            logger.error(f"Error sending VAD command: {e}")
+            raise
+            
+    @classmethod
+    async def send_whisper(cls, audio_data: bytes, language: str = "en", model_type: str = "base") -> Dict[str, Any]:
+        """Send a Whisper command"""
+        try:
+            command = WhisperCommand(
+                command_type=CommandType.WHISPER,
+                audio_data=audio_data,
+                language=language,
+                model_type=model_type
+            )
+            return await cls.send_command(command)
+        except Exception as e:
+            logger.error(f"Error sending Whisper command: {e}")
+            raise
+            
+    @classmethod
+    async def transmit_json(cls, command: BaseCommand) -> Dict[str, Any]:
+        """Transmit a command as JSON"""
+        try:
+            if not cls._initialized:
+                raise CommandTransmissionError("Neural pathways not initialized")
+                
+            # Always try to use the real AX630C hardware
+            if not cls._serial_connection:
+                if not await cls._setup_ax630e():
+                    raise SerialConnectionError("Failed to connect to AX630C")
+            
+            # Send command directly to hardware
+            command_data = command.to_dict()
+            json_data = json.dumps(command_data) + "\n"
+            cls._serial_connection.write(json_data.encode())
+            response = cls._serial_connection.readline().decode().strip()
+            
+            if not response:
+                raise CommandTransmissionError("No response from neural processor")
+                
+            return json.loads(response)
+            
+        except Exception as e:
+            logger.error(f"Error transmitting JSON: {e}")
+            raise
+            
+    @classmethod
+    async def _handle_test_command(cls, command: BaseCommand) -> Dict[str, Any]:
+        """Handle commands in test mode"""
+        try:
+            if isinstance(command, LLMCommand):
+                # Always try to use the real AX630C hardware
+                if not cls._serial_connection:
+                    if not await cls._setup_ax630e():
+                        raise SerialConnectionError("Failed to connect to AX630C")
+                
+                # Send command directly to hardware
+                command_data = command.to_dict()
+                json_data = json.dumps(command_data) + "\n"
+                cls._serial_connection.write(json_data.encode())
+                response = cls._serial_connection.readline().decode().strip()
+                
+                if not response:
+                    raise CommandTransmissionError("No response from neural processor")
+                    
+                return json.loads(response)
+                
+            elif isinstance(command, TTSCommand):
+                return {"status": "ok", "audio": b"test_audio_data"}
+            elif isinstance(command, ASRCommand):
+                return {"status": "ok", "text": "Test transcribed text"}
+            elif isinstance(command, VADCommand):
+                return {"status": "ok", "vad_active": True}
+            elif isinstance(command, WhisperCommand):
+                return {"status": "ok", "text": "Test Whisper transcription"}
+            else:
+                return {"status": "ok", "message": "Test command processed"}
+                
+        except Exception as e:
+            logger.error(f"Error handling test command: {e}")
+            return {"status": "error", "message": str(e)}
 
     # Command handler registration
     @classmethod
@@ -327,21 +426,48 @@ class SynapticPathways:
         logger.info("Neural pathways closed")
 
     @classmethod
-    async def _call_llm_api(cls, prompt: str, max_tokens: int, temperature: float) -> Dict[str, Any]:
-        """Process requests through neural processor"""
+    async def _call_llm_api(cls, prompt: str, max_tokens: int = 150, temperature: float = 0.7) -> Dict[str, Any]:
+        """
+        Call the local LLM API
+        
+        Args:
+            prompt: Text to process
+            max_tokens: Maximum tokens to generate
+            temperature: Temperature for generation
+            
+        Returns:
+            Dict[str, Any]: Processed response
+        """
         try:
-            # Always use hardware communication
-            command = {
-                "type": "LLM",
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature
+            # Create LLM command
+            command = LLMCommand(
+                command_type=CommandType.LLM,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            # Send command directly to hardware
+            if not cls._serial_connection:
+                if not await cls._setup_ax630e():
+                    raise SerialConnectionError("Failed to connect to AX630C")
+            
+            command_data = command.to_dict()
+            json_data = json.dumps(command_data) + "\n"
+            cls._serial_connection.write(json_data.encode())
+            response = cls._serial_connection.readline().decode().strip()
+            
+            if not response:
+                raise CommandTransmissionError("No response from neural processor")
+                
+            response_data = json.loads(response)
+            return {
+                "status": "ok",
+                "response": response_data.get("text", "")
             }
             
-            return await cls.transmit_json(command)
-            
         except Exception as e:
-            logger.error(f"Neural processor error: {e}")
+            logger.error(f"Error in LLM processing: {e}")
             return {
                 "status": "error",
                 "message": str(e)
@@ -393,37 +519,6 @@ class SynapticPathways:
         except Exception as e:
             logger.error(f"Assistant interaction failed: {e}")
             return {"status": "error", "message": str(e)}
-
-    @classmethod
-    async def send_system_command(cls, command_type: str, data: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Send system-level commands"""
-        command = SystemCommand(
-            command_type=CommandType.SYSTEM,
-            system_command=command_type,
-            data=data or {}
-        )
-        return await cls.transmit_json(command)
-
-    @classmethod
-    async def send_whisper_command(cls, audio_data: bytes, language: str = "en", task: str = "transcribe") -> Dict[str, Any]:
-        """Send Whisper transcription command"""
-        command = WhisperCommand(
-            command_type=CommandType.WHISPER,
-            audio_data=audio_data,
-            language=language,
-            task=task
-        )
-        return await cls.transmit_json(command)
-
-    @classmethod
-    async def send_vad_command(cls, audio_data: bytes, threshold: float = 0.5) -> Dict[str, Any]:
-        """Send Voice Activity Detection command"""
-        command = VADCommand(
-            command_type=CommandType.VAD,
-            audio_data=audio_data,
-            threshold=threshold
-        )
-        return await cls.transmit_json(command)
 
     @classmethod
     def get_manager(cls, manager_type: str) -> Any:

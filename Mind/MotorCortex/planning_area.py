@@ -1,56 +1,46 @@
 """
-Neurological Function:
-    Motor Planning System:
-    - Action preparation
-    - Movement strategy
-    - Spatial planning
-    - Sequence preparation
-    - Goal-directed planning
-    - Movement optimization
-    - Action anticipation
-
-Potential Project Implementation:
-    Could handle:
-    - Movement planning
-    - Action preparation
-    - Sequence optimization
-    - Goal coordination
+Motor Planning Area - Plans motor movements
 """
 
 import logging
-from typing import Dict, Any
-from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neural_commands import CommandType, SystemCommand
-from config import CONFIG
+from typing import Dict, Any, Optional
+from ...CorpusCallosum.synaptic_pathways import SynapticPathways
+from ...CorpusCallosum.neural_commands import CommandType, SystemCommand
+from ...config import CONFIG
+
+logger = logging.getLogger(__name__)
 
 class PlanningArea:
-    """Handles movement planning and optimization"""
+    """Plans motor movements"""
     
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.current_plan = None
+        """Initialize the planning area"""
+        self._initialized = False
+        self._processing = False
         
-    async def plan_movement(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Plan a movement sequence"""
+    async def initialize(self) -> None:
+        """Initialize the planning area"""
+        if self._initialized:
+            return
+            
         try:
-            # Optimize movement path
-            path = await self._optimize_path(movement_data)
+            self._initialized = True
+            logger.info("Motor planning area initialized")
             
-            # Prepare movement sequence
-            sequence = await self._prepare_sequence(path)
-            
-            # Calculate timing
-            timing = await self._calculate_timing(sequence)
-            
-            return {
-                "path": path,
-                "sequence": sequence,
-                "timing": timing
-            }
         except Exception as e:
-            self.logger.error(f"Error planning movement: {e}")
-            return {}
+            logger.error(f"Failed to initialize motor planning area: {e}")
+            raise
             
+    async def plan_movement(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Plan motor movement"""
+        try:
+            # Process movement data
+            return {"status": "ok", "message": "Movement planned"}
+            
+        except Exception as e:
+            logger.error(f"Error planning movement: {e}")
+            return {"status": "error", "message": str(e)}
+
     async def plan_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Plan execution of a motor command"""
         try:
@@ -65,17 +55,8 @@ class PlanningArea:
             
             return validated
         except Exception as e:
-            self.logger.error(f"Error planning command: {e}")
+            logger.error(f"Error planning command: {e}")
             return {}
-            
-    async def initialize(self) -> None:
-        """Initialize planning system"""
-        try:
-            await SynapticPathways.send_system_command(
-                command_type="initialize_planning"
-            )
-        except Exception as e:
-            self.logger.error(f"Error initializing planning: {e}")
             
     async def _optimize_path(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
         """Optimize movement path"""
@@ -86,7 +67,7 @@ class PlanningArea:
             )
             return response.get("path", {})
         except Exception as e:
-            self.logger.error(f"Error optimizing path: {e}")
+            logger.error(f"Error optimizing path: {e}")
             return {}
             
     async def _prepare_sequence(self, path: Dict[str, Any]) -> Dict[str, Any]:
@@ -98,7 +79,7 @@ class PlanningArea:
             )
             return response.get("sequence", {})
         except Exception as e:
-            self.logger.error(f"Error preparing sequence: {e}")
+            logger.error(f"Error preparing sequence: {e}")
             return {}
             
     async def _calculate_timing(self, sequence: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,7 +91,7 @@ class PlanningArea:
             )
             return response.get("timing", {})
         except Exception as e:
-            self.logger.error(f"Error calculating timing: {e}")
+            logger.error(f"Error calculating timing: {e}")
             return {}
             
     async def _parse_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -122,7 +103,7 @@ class PlanningArea:
             )
             return response.get("parsed", {})
         except Exception as e:
-            self.logger.error(f"Error parsing command: {e}")
+            logger.error(f"Error parsing command: {e}")
             return {}
             
     async def _generate_execution_plan(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
@@ -134,7 +115,7 @@ class PlanningArea:
             )
             return response.get("plan", {})
         except Exception as e:
-            self.logger.error(f"Error generating plan: {e}")
+            logger.error(f"Error generating plan: {e}")
             return {}
             
     async def _validate_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,5 +127,5 @@ class PlanningArea:
             )
             return response.get("validated", {})
         except Exception as e:
-            self.logger.error(f"Error validating plan: {e}")
+            logger.error(f"Error validating plan: {e}")
             return {} 

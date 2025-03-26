@@ -1,19 +1,23 @@
-#!/usr/bin/env python3
-import asyncio
-import logging
+"""
+Main entry point for PenphinOS
+"""
+
 import os
 import sys
+import logging
+import asyncio
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import signal
 from datetime import datetime
 import time
-from PenphinMind.mind import Mind
-from config import CONFIG
 
-# Add the project root to Python path
-project_root = str(Path(__file__).parent.parent)
+# Add the Mind package to Python path
+project_root = str(Path(__file__).parent)
 sys.path.append(project_root)
+
+from .Mind.mind import Mind
+from .Mind.config import CONFIG
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
@@ -55,7 +59,13 @@ class PenphinOS:
     async def initialize(self):
         """Initialize all neural subsystems"""
         try:
+            # Initialize mind first
             await self.mind.initialize()
+            
+            # Show splash screen
+            self.logger.info("Showing splash screen...")
+            await self.mind.occipital_lobe["visual"].show_splash_screen()
+            
             self.running = True
             self.logger.info("PenphinOS initialized successfully")
             
@@ -118,8 +128,16 @@ class PenphinOS:
 
 async def main():
     """Main entry point"""
-    os = PenphinOS()
-    await os.run()
+    try:
+        mind = Mind()
+        await mind.initialize()
+        
+        # Start the system
+        await mind.process_input({"type": "start", "content": "PenphinOS"})
+        
+    except Exception as e:
+        logger.error(f"System error: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())

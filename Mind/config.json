@@ -1,0 +1,100 @@
+{
+    "corpus_callosum": {
+        "api_keys": {
+            "openai": "",
+            "elevenlabs": ""
+        },
+        "logging": {
+            "level": "INFO",
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        }
+    },
+    "temporal_lobe": {
+        "superior_temporal_gyrus": {
+            "heschl_gyrus": {
+                "primary_acoustic_area": {
+                    "sample_rate": 16000,
+                    "channels": 1,
+                    "chunk_size": 1024,
+                    "volume": 80,
+                    "vad": {
+                        "threshold": 0.5,
+                        "frame_duration": 30
+                    },
+                    "audio_output": {
+                        "device": "waveshare",
+                        "controls": ["Speaker", "Playback", "Headphone", "PCM"],
+                        "device_name": "hw:0,0"
+                    },
+                    "ai_features": {
+                        "tts": {
+                            "implementation": "local",
+                            "fallback": {
+                                "provider": "elevenlabs",
+                                "model": "elevenlabs",
+                                "voice_id": "default"
+                            }
+                        },
+                        "asr": {
+                            "implementation": "local"
+                        },
+                        "kws": {
+                            "implementation": "local",
+                            "wake_word": "hey penphin"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "parietal_lobe": {
+        "somatosensory_cortex": {
+            "primary_area": {
+                "tactile_button_pin": 17,
+                "bounce_time_ms": 50,
+                "active_low": true
+            }
+        }
+    },
+    "occipital_lobe": {
+        "visual_cortex": {
+            "primary_visual_area": {
+                "resolution": {
+                    "width": 64,
+                    "height": 64
+                },
+                "brightness": 30,
+                "hardware_pulsing": true,
+                "gpio_slowdown": 4,
+                "chain_length": 1,
+                "parallel": 1,
+                "pwm_bits": 11,
+                "scan_mode": 0,
+                "pwm_lsb_nanoseconds": 130,
+                "rgb_sequence": "RGB"
+            },
+            "secondary_visual_area": {
+                "animation_fps": 30,
+                "double_buffer": true
+            },
+            "associative_visual_area": {
+                "sprite_cache_size": 100,
+                "text_cache_size": 50
+            }
+        }
+    },
+    "frontal_lobe": {
+        "prefrontal_cortex": {
+            "llm": {
+                "model": "gpt-3.5-turbo",
+                "max_tokens": 150,
+                "temperature": 0.7,
+                "system_prompt": "You are PenphinOS, a bicameral AI assistant."
+            }
+        },
+        "motor_cortex": {
+            "movement_speed": 1.0,
+            "acceleration": 1.0
+        }
+    }
+}

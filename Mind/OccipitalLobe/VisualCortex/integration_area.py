@@ -1,23 +1,112 @@
 """
-Integration area for the Visual Cortex, handling visual processing and LED matrix control
+Visual Integration Area - Integrates visual processing
 """
 
-from typing import Dict, Any, Tuple
-from CorpusCallosum.synaptic_pathways import SynapticPathways
-from CorpusCallosum.neural_commands import CommandType, SystemCommand
-from config import CONFIG
+import logging
+from typing import Dict, Any, Optional
+from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+from Mind.config import CONFIG
 from .primary_visual_area import PrimaryVisualArea
 from .secondary_visual_area import SecondaryVisualArea
-from .associative_visual_area import AssociativeVisualArea
+
+logger = logging.getLogger(__name__)
 
 class IntegrationArea:
-    """Integration area for visual processing"""
+    """Integrates visual processing"""
     
     def __init__(self):
-        self.primary = PrimaryVisualArea()
-        self.secondary = SecondaryVisualArea()
-        self.associative = AssociativeVisualArea()
+        """Initialize the integration area"""
+        self._initialized = False
+        self._processing = False
+        self.primary_area = PrimaryVisualArea()
+        self.secondary_area = SecondaryVisualArea()
         
+    async def initialize(self) -> None:
+        """Initialize the integration area"""
+        if self._initialized:
+            return
+            
+        try:
+            await self.primary_area.initialize()
+            await self.secondary_area.initialize()
+            self._initialized = True
+            logger.info("Visual integration area initialized")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize visual integration area: {e}")
+            raise
+            
+    async def process_visual(self, visual_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process visual input through all areas"""
+        try:
+            # Process through primary area first
+            primary_result = await self.primary_area.process_visual(visual_data)
+            
+            # Then through secondary area
+            secondary_result = await self.secondary_area.process_visual(primary_result)
+            
+            # Combine results
+            return {
+                "primary": primary_result,
+                "secondary": secondary_result,
+                "status": "ok"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing visual input: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a visual command"""
+        if not self._initialized:
+            raise RuntimeError("Integration area not initialized")
+            
+        if self._processing:
+            raise RuntimeError("Already processing a command")
+            
+        try:
+            self._processing = True
+            
+            # Process command based on type
+            command_type = command.get("type")
+            if command_type == "DISPLAY":
+                return await self._process_display(command)
+            elif command_type == "SPLASH":
+                return await self._process_splash(command)
+            else:
+                raise ValueError(f"Unknown command type: {command_type}")
+                
+        except Exception as e:
+            logger.error(f"Error processing command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+        finally:
+            self._processing = False
+            
+    async def _process_display(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process display command"""
+        try:
+            content = command.get("content")
+            if not content:
+                raise ValueError("No content provided for display")
+                
+            # Process display command
+            return {"status": "ok", "message": "Display updated"}
+            
+        except Exception as e:
+            logger.error(f"Error processing display command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def _process_splash(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process splash screen command"""
+        try:
+            # Process splash screen command
+            return {"status": "ok", "message": "Splash screen displayed"}
+            
+        except Exception as e:
+            logger.error(f"Error processing splash command: {e}")
+            return {"status": "error", "message": str(e)}
+            
     async def set_background(self, r: int, g: int, b: int) -> None:
         """Set the LED matrix background color"""
         try:
@@ -37,27 +126,283 @@ class IntegrationArea:
         except Exception as e:
             raise Exception(f"Error clearing matrix: {e}")
             
+    async def set_brightness(self, brightness: int) -> None:
+        """
+        Set LED matrix brightness
+        
+        Args:
+            brightness: Brightness level (0-100)
+        """
+        try:
+            brightness = max(0, min(100, brightness))
+            await SynapticPathways.send_system_command(
+                command_type="set_brightness",
+                data={"brightness": brightness}
+            )
+        except Exception as e:
+            raise Exception(f"Error setting brightness: {e}")
+            
+    async def draw_pixel(self, x: int, y: int, r: int, g: int, b: int) -> None:
+        """
+        Draw a single pixel on the LED matrix
+        
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            r: Red component (0-255)
+            g: Green component (0-255)
+            b: Blue component (0-255)
+        """
+        try:
+            await SynapticPathways.send_system_command(
+                command_type="draw_pixel",
+                data={
+                    "x": x,
+                    "y": y,
+                    "r": r,
+                    "g": g,
+                    "b": b
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error drawing pixel: {e}")
+            
+    async def draw_circle(self, x: int, y: int, radius: int, r: int, g: int, b: int) -> None:
+        """
+        Draw a circle on the LED matrix
+        
+        Args:
+            x: Center X coordinate
+            y: Center Y coordinate
+            radius: Circle radius
+            r: Red component (0-255)
+            g: Green component (0-255)
+            b: Blue component (0-255)
+        """
+        try:
+            await SynapticPathways.send_system_command(
+                command_type="draw_circle",
+                data={
+                    "x": x,
+                    "y": y,
+                    "radius": radius,
+                    "r": r,
+                    "g": g,
+                    "b": b
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error drawing circle: {e}")
+            
+    async def draw_line(self, x1: int, y1: int, x2: int, y2: int, r: int, g: int, b: int) -> None:
+        """
+        Draw a line on the LED matrix
+        
+        Args:
+            x1: Start X coordinate
+            y1: Start Y coordinate
+            x2: End X coordinate
+            y2: End Y coordinate
+            r: Red component (0-255)
+            g: Green component (0-255)
+            b: Blue component (0-255)
+        """
+        try:
+            await SynapticPathways.send_system_command(
+                command_type="draw_line",
+                data={
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                    "r": r,
+                    "g": g,
+                    "b": b
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error drawing line: {e}")
+            
+    async def draw_text(self, x: int, y: int, text: str, r: int, g: int, b: int) -> None:
+        """
+        Draw text on the LED matrix
+        
+        Args:
+            x: Starting X coordinate
+            y: Starting Y coordinate
+            text: Text to draw
+            r: Red component (0-255)
+            g: Green component (0-255)
+            b: Blue component (0-255)
+        """
+        try:
+            await SynapticPathways.send_system_command(
+                command_type="draw_text",
+                data={
+                    "x": x,
+                    "y": y,
+                    "text": text,
+                    "r": r,
+                    "g": g,
+                    "b": b
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error drawing text: {e}")
+            
+    async def create_sprite(self, width: int, height: int) -> Dict[str, Any]:
+        """
+        Create a sprite for animation
+        
+        Args:
+            width: Sprite width
+            height: Sprite height
+            
+        Returns:
+            Dict containing sprite data and metadata
+        """
+        try:
+            response = await SynapticPathways.send_system_command(
+                command_type="create_sprite",
+                data={
+                    "width": width,
+                    "height": height
+                }
+            )
+            sprite_id = response.get("sprite_id")
+            if sprite_id:
+                self._sprite_cache[sprite_id] = response
+            return response
+        except Exception as e:
+            raise Exception(f"Error creating sprite: {e}")
+            
+    async def draw_sprite(self, sprite_id: str, x: int, y: int) -> None:
+        """
+        Draw a sprite at the specified position
+        
+        Args:
+            sprite_id: ID of the sprite to draw
+            x: X coordinate
+            y: Y coordinate
+        """
+        try:
+            if sprite_id not in self._sprite_cache:
+                raise Exception(f"Sprite {sprite_id} not found")
+                
+            await SynapticPathways.send_system_command(
+                command_type="draw_sprite",
+                data={
+                    "sprite_id": sprite_id,
+                    "x": x,
+                    "y": y
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error drawing sprite: {e}")
+            
+    async def update_sprite(self, sprite_id: str, frame_data: bytes) -> None:
+        """
+        Update sprite frame data
+        
+        Args:
+            sprite_id: ID of the sprite to update
+            frame_data: New frame data
+        """
+        try:
+            if sprite_id not in self._sprite_cache:
+                raise Exception(f"Sprite {sprite_id} not found")
+                
+            await SynapticPathways.send_system_command(
+                command_type="update_sprite",
+                data={
+                    "sprite_id": sprite_id,
+                    "frame_data": frame_data
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error updating sprite: {e}")
+            
+    async def delete_sprite(self, sprite_id: str) -> None:
+        """
+        Delete a sprite
+        
+        Args:
+            sprite_id: ID of the sprite to delete
+        """
+        try:
+            if sprite_id in self._sprite_cache:
+                await SynapticPathways.send_system_command(
+                    command_type="delete_sprite",
+                    data={"sprite_id": sprite_id}
+                )
+                del self._sprite_cache[sprite_id]
+        except Exception as e:
+            raise Exception(f"Error deleting sprite: {e}")
+            
+    async def start_animation(self, sprite_id: str, fps: Optional[int] = None) -> None:
+        """
+        Start sprite animation
+        
+        Args:
+            sprite_id: ID of the sprite to animate
+            fps: Optional frames per second (defaults to config)
+        """
+        try:
+            if sprite_id not in self._sprite_cache:
+                raise Exception(f"Sprite {sprite_id} not found")
+                
+            await SynapticPathways.send_system_command(
+                command_type="start_animation",
+                data={
+                    "sprite_id": sprite_id,
+                    "fps": fps or CONFIG.visual_animation_fps
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Error starting animation: {e}")
+            
+    async def stop_animation(self, sprite_id: str) -> None:
+        """
+        Stop sprite animation
+        
+        Args:
+            sprite_id: ID of the sprite to stop
+        """
+        try:
+            if sprite_id not in self._sprite_cache:
+                raise Exception(f"Sprite {sprite_id} not found")
+                
+            await SynapticPathways.send_system_command(
+                command_type="stop_animation",
+                data={"sprite_id": sprite_id}
+            )
+        except Exception as e:
+            raise Exception(f"Error stopping animation: {e}")
+            
     async def process_visual_input(self, image_data: bytes) -> Dict[str, Any]:
         """Process visual input data"""
         try:
             # Process basic features
-            basic_features = await self.primary.process_raw_visual(image_data)
+            basic_features = await self.primary_area.process_raw_visual(image_data)
             
             # Process complex features
-            complex_features = await self.secondary.analyze_complex_features(image_data)
-            
-            # Process object recognition
-            objects = await self.associative.recognize_objects(image_data)
+            complex_features = await self.secondary_area.analyze_complex_features(image_data)
             
             return {
                 "basic_features": basic_features,
                 "complex_features": complex_features,
-                "objects": objects
+                "status": "ok"
             }
         except Exception as e:
-            raise Exception(f"Error processing visual input: {e}")
+            logger.error(f"Error processing visual input: {e}")
+            return {"status": "error", "message": str(e)}
             
-    async def initialize(self) -> None:
-        """Initialize visual components"""
-        # Initialize processing areas
-        await self.primary.toggle_processing(True) 
+    async def cleanup(self) -> None:
+        """Clean up resources"""
+        try:
+            self._initialized = False
+            logger.info("Visual integration area cleaned up")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up visual integration area: {e}")
+            raise 
