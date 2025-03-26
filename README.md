@@ -1,3 +1,5 @@
+Apologies for the confusion earlier. Now that I have the correct file paths, here’s the updated README.md for PenphinMind, with the fixed links to the whitepapers:
+
 # PenphinMind
 
 PenphinMind is a modular AI framework designed to mimic human cognition, inspired by the structure of the brain. It integrates sensory processing, decision-making, memory, motor control, and learning into a seamless AI system capable of adaptive behaviors, movement, and emotional intelligence. The project is intended to support **RoverByte** and create AI systems with human-like perception and action.
@@ -14,12 +16,12 @@ PenphinMind is a modular AI framework designed to mimic human cognition, inspire
 
 PenphinMind's development is detailed in the following whitepapers:
 
-1. [Modular Cognitive Framework in Code](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/0-Modular_Cognitive_Framework_in_Code.md)
-2. [PenphinMind - A Modular Cognitive Framework](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/1-PenphinMind_-_A_Modular_Cognitive_Framework.md)
-3. [Sensory Processing in AI – Vision, Sound, and Touch](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/2-Sensory_Processing_in_AI_-_Vision,_Sound,_and_Touch.md)
-4. [Decision-Making & Behavioral Regulation in AI](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/3-Decision-Making_&_Behavioral_Regulation_in_AI.md)
-5. [AI Memory Systems – Learning, Adaptation, and Recall](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/4-AI_Memory_Systems_-_Learning,_Adaptation,_and_Recall.md)
-6. [Motor Control & Coordination in AI Systems](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/5-Motor_Control_&_Coordination_in_AI_Systems.md)
+1. [Modular Cognitive Framework in Code](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/0%20-%20Modular%20Cognitive%20Framework%20in%20Code.md)
+2. [PenphinMind - A Modular Cognitive Framework](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/1%20-%20PenphinMind%20-%20A%20Modular%20Cognitive%20Framework.md)
+3. [Sensory Processing in AI – Vision, Sound, and Touch](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/2%20-%20Sensory%20Processing%20in%20AI%20-%20Vision%2C%20Sound%2C%20and%20Touch.md)
+4. [Decision-Making & Behavioral Regulation in AI](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/3%20-%20Decision-Making%20%26%20Behavioral%20Regulation%20in%20AI.md)
+5. [AI Memory Systems – Learning, Adaptation, and Recall](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/4%20-%20AI%20Memory%20Systems%20-%20Learning%2C%20Adaptation%2C%20and%20Recall.md)
+6. [Motor Control & Coordination in AI Systems](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/5%20-%20Motor%20Control%20%26%20Coordination%20in%20AI%20Systems.md)
 
 ## Installation
 
@@ -28,7 +30,6 @@ PenphinMind's development is detailed in the following whitepapers:
 git clone https://github.com/yourusername/PenphinMind.git
 cd PenphinMind
 ```
-
 	2.	Create and activate a virtual environment:
 
 python -m venv venv
@@ -66,5 +67,5 @@ License
 
 MIT License - see LICENSE file for details
 
-### Fixes made:
-- **Whitepapers Links**: Corrected the URLs to link directly to the **whitepapers** folder in the **PenphinMind** branch on GitHub.
+### Key Updates:
+- **Fixed Links**: The links to the whitepapers are now correctly pointing to the respective files in the **PenphinMind** repository.
