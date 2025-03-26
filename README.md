@@ -1,8 +1,8 @@
-# PenphinMind
-
 **PenphinMind**: A new era of AI that blends creativity with logic, evolving with every interaction.
 
-<img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="400"/>
+<div align="center">
+  <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="352"/>
+</div>
 
 PenphinMind is a modular AI framework designed to mimic human cognition, integrating sensory processing, decision-making, memory, motor control, and learning into an adaptable system. It serves as the foundation for **RoverByte**, creating AI systems that perceive and act like humans, evolving with time and interaction.
 
