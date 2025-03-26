@@ -1,9 +1,10 @@
 <div align="center">
   <h2><em>PenphinMind</em></h2>
   <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="352"/>
+	PenphinMind: **The AI that bridges creativity and logic, evolving with every interaction.**
 </div>
 
-PenphinMind: **The AI that bridges creativity and logic, evolving with every interaction.**
+
 
 ## Features
 
