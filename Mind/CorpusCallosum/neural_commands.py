@@ -1,93 +1,25 @@
-from enum import Enum
-import time
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Union, Type
+"""
+Neural command system for PenphinMind
+"""
+
+from typing import Dict, Any, Type, Optional, List
+from dataclasses import dataclass, field
 import json
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from .command_types import BaseCommand, CommandType
+from .command_loader import CommandLoader
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
 
-class CommandType(Enum):
-    """Types of neural commands supported by the system"""
-    ASR = "asr"  # Automatic Speech Recognition
-    TTS = "tts"  # Text to Speech
-    VAD = "vad"  # Voice Activity Detection
-    LLM = "llm"  # Large Language Model
-    VLM = "vlm"  # Vision Language Model
-    KWS = "kws"  # Keyword Spotting
-    SYS = "sys"  # System Commands
-    AUDIO = "audio"  # Audio Processing
-    CAMERA = "camera"  # Camera Control
-    YOLO = "yolo"  # Object Detection
-    WHISPER = "whisper"  # Speech Recognition
-    MELOTTS = "melotts"  # Neural TTS
-
-@dataclass
-class BaseCommand:
-    """Base class for all neural commands"""
-    command_type: CommandType
-    
-    def __post_init__(self):
-        """Initialize command timestamp"""
-        journaling_manager.recordScope("BaseCommand.__post_init__")
-        try:
-            if not isinstance(self.command_type, CommandType):
-                journaling_manager.recordError(f"Invalid command type: {self.command_type}")
-                raise ValueError("Command type must be a CommandType enum")
-                
-            self.timestamp: float = time.time()
-            journaling_manager.recordDebug(f"Command timestamp set to: {self.timestamp}")
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error initializing command: {e}")
-            raise
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert command to dictionary"""
-        journaling_manager.recordScope("BaseCommand.to_dict")
-        try:
-            data = {
-                "type": self.command_type.value,
-                "timestamp": self.timestamp
-            }
-            journaling_manager.recordDebug(f"Converted command to dict: {data}")
-            return data
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error converting command to dict: {e}")
-            raise
-            
-    def validate(self) -> bool:
-        """Validate command data"""
-        journaling_manager.recordScope("BaseCommand.validate")
-        try:
-            if not isinstance(self.command_type, CommandType):
-                journaling_manager.recordError(f"Invalid command type: {self.command_type}")
-                return False
-                
-            if not isinstance(self.timestamp, (int, float)):
-                journaling_manager.recordError(f"Invalid timestamp: {self.timestamp}")
-                return False
-                
-            journaling_manager.recordDebug("Command validated successfully")
-            return True
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error validating command: {e}")
-            return False
-
-@dataclass
 class ASRCommand(BaseCommand):
     """Automatic Speech Recognition commands"""
-    input_audio: bytes
-    language: str = "en"
-    model_type: str = "base"
-    
-    def __post_init__(self):
-        """Initialize ASR command"""
-        journaling_manager.recordScope("ASRCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, input_audio: bytes, language: str = "en", model_type: str = "base"):
+        journaling_manager.recordScope("ASRCommand.__init__")
+        super().__init__(command_type)
+        self.input_audio = input_audio
+        self.language = language
+        self.model_type = model_type
         journaling_manager.recordDebug(f"ASR command initialized with language: {self.language}, model: {self.model_type}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -102,7 +34,6 @@ class ASRCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted ASR command to dict: {data}")
         return data
 
-@dataclass
 class TTSCommand(BaseCommand):
     """Text-to-Speech command"""
     def __init__(self, command_type: CommandType, text: str, voice_id: str = "default", 
@@ -128,17 +59,14 @@ class TTSCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted TTS command to dict: {data}")
         return data
 
-@dataclass
 class VADCommand(BaseCommand):
     """Voice Activity Detection commands"""
-    audio_chunk: bytes
-    threshold: float = 0.5
-    frame_duration: int = 30
-    
-    def __post_init__(self):
-        """Initialize VAD command"""
-        journaling_manager.recordScope("VADCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, audio_chunk: bytes, threshold: float = 0.5, frame_duration: int = 30):
+        journaling_manager.recordScope("VADCommand.__init__")
+        super().__init__(command_type)
+        self.audio_chunk = audio_chunk
+        self.threshold = threshold
+        self.frame_duration = frame_duration
         journaling_manager.recordDebug(f"VAD command initialized with threshold: {self.threshold}, frame_duration: {self.frame_duration}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -153,14 +81,8 @@ class VADCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted VAD command to dict: {data}")
         return data
 
-@dataclass
 class LLMCommand(BaseCommand):
     """Large Language Model commands"""
-    prompt: str
-    max_tokens: int = 150
-    temperature: float = 0.7
-    model: str = "gpt-3.5-turbo"
-    
     def __init__(
         self,
         command_type: CommandType,
@@ -190,17 +112,14 @@ class LLMCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted LLM command to dict: {data}")
         return data
 
-@dataclass
 class VLMCommand(BaseCommand):
     """Vision Language Model commands"""
-    image_data: bytes
-    prompt: Optional[str] = None
-    task_type: str = "classify"
-    
-    def __post_init__(self):
-        """Initialize VLM command"""
-        journaling_manager.recordScope("VLMCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, image_data: bytes, prompt: Optional[str] = None, task_type: str = "classify"):
+        journaling_manager.recordScope("VLMCommand.__init__")
+        super().__init__(command_type)
+        self.image_data = image_data
+        self.prompt = prompt
+        self.task_type = task_type
         journaling_manager.recordDebug(f"VLM command initialized with task_type: {self.task_type}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -215,17 +134,14 @@ class VLMCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted VLM command to dict: {data}")
         return data
 
-@dataclass
 class KWSCommand(BaseCommand):
     """Keyword Spotting commands"""
-    keywords: List[str]
-    sensitivity: float = 0.5
-    audio_data: Optional[bytes] = None
-    
-    def __post_init__(self):
-        """Initialize KWS command"""
-        journaling_manager.recordScope("KWSCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, keywords: List[str], sensitivity: float = 0.5, audio_data: Optional[bytes] = None):
+        journaling_manager.recordScope("KWSCommand.__init__")
+        super().__init__(command_type)
+        self.keywords = keywords
+        self.sensitivity = sensitivity
+        self.audio_data = audio_data
         journaling_manager.recordDebug(f"KWS command initialized with keywords: {self.keywords}, sensitivity: {self.sensitivity}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -240,18 +156,13 @@ class KWSCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted KWS command to dict: {data}")
         return data
 
-@dataclass
 class SystemCommand(BaseCommand):
     """System control commands"""
-    action: str
-    parameters: Dict[str, Any] = None
-    
-    def __post_init__(self):
-        """Initialize system command"""
-        journaling_manager.recordScope("SystemCommand.__post_init__")
-        super().__post_init__()
-        if self.parameters is None:
-            self.parameters = {}
+    def __init__(self, command_type: CommandType, action: str, parameters: Dict[str, Any] = None):
+        journaling_manager.recordScope("SystemCommand.__init__")
+        super().__init__(command_type)
+        self.action = action
+        self.parameters = parameters or {}
         journaling_manager.recordDebug(f"System command initialized with action: {self.action}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -284,18 +195,15 @@ class SystemCommand(BaseCommand):
             journaling_manager.recordError(f"Error validating system command: {e}")
             return False
 
-@dataclass
 class AudioCommand(BaseCommand):
     """Audio processing commands"""
-    operation: str
-    audio_data: bytes
-    sample_rate: int = 16000
-    channels: int = 1
-    
-    def __post_init__(self):
-        """Initialize Audio command"""
-        journaling_manager.recordScope("AudioCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, operation: str, audio_data: bytes, sample_rate: int = 16000, channels: int = 1):
+        journaling_manager.recordScope("AudioCommand.__init__")
+        super().__init__(command_type)
+        self.operation = operation
+        self.audio_data = audio_data
+        self.sample_rate = sample_rate
+        self.channels = channels
         journaling_manager.recordDebug(f"Audio command initialized with operation: {self.operation}, sample_rate: {self.sample_rate}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -311,17 +219,14 @@ class AudioCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted Audio command to dict: {data}")
         return data
 
-@dataclass
 class CameraCommand(BaseCommand):
     """Camera control commands"""
-    action: str
-    resolution: tuple = (640, 480)
-    format: str = "RGB"
-    
-    def __post_init__(self):
-        """Initialize Camera command"""
-        journaling_manager.recordScope("CameraCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, action: str, resolution: tuple = (640, 480), format: str = "RGB"):
+        journaling_manager.recordScope("CameraCommand.__init__")
+        super().__init__(command_type)
+        self.action = action
+        self.resolution = resolution
+        self.format = format
         journaling_manager.recordDebug(f"Camera command initialized with action: {self.action}, resolution: {self.resolution}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -336,17 +241,14 @@ class CameraCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted Camera command to dict: {data}")
         return data
 
-@dataclass
 class YOLOCommand(BaseCommand):
     """YOLO object detection commands"""
-    image_data: bytes
-    confidence_threshold: float = 0.5
-    nms_threshold: float = 0.4
-    
-    def __post_init__(self):
-        """Initialize YOLO command"""
-        journaling_manager.recordScope("YOLOCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, image_data: bytes, confidence_threshold: float = 0.5, nms_threshold: float = 0.4):
+        journaling_manager.recordScope("YOLOCommand.__init__")
+        super().__init__(command_type)
+        self.image_data = image_data
+        self.confidence_threshold = confidence_threshold
+        self.nms_threshold = nms_threshold
         journaling_manager.recordDebug(f"YOLO command initialized with confidence: {self.confidence_threshold}, nms: {self.nms_threshold}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -361,17 +263,14 @@ class YOLOCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted YOLO command to dict: {data}")
         return data
 
-@dataclass
 class WhisperCommand(BaseCommand):
     """Whisper speech recognition commands"""
-    audio_data: bytes
-    language: Optional[str] = None
-    task: str = "transcribe"
-    
-    def __post_init__(self):
-        """Initialize Whisper command"""
-        journaling_manager.recordScope("WhisperCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, audio_data: bytes, language: Optional[str] = None, task: str = "transcribe"):
+        journaling_manager.recordScope("WhisperCommand.__init__")
+        super().__init__(command_type)
+        self.audio_data = audio_data
+        self.language = language
+        self.task = task
         journaling_manager.recordDebug(f"Whisper command initialized with task: {self.task}, language: {self.language}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -386,18 +285,15 @@ class WhisperCommand(BaseCommand):
         journaling_manager.recordDebug(f"Converted Whisper command to dict: {data}")
         return data
 
-@dataclass
 class MeloTTSCommand(BaseCommand):
     """MeloTTS synthesis commands"""
-    text: str
-    speaker_id: str = "default"
-    language: str = "en"
-    style: Optional[str] = None
-    
-    def __post_init__(self):
-        """Initialize MeloTTS command"""
-        journaling_manager.recordScope("MeloTTSCommand.__post_init__")
-        super().__post_init__()
+    def __init__(self, command_type: CommandType, text: str, speaker_id: str = "default", language: str = "en", style: Optional[str] = None):
+        journaling_manager.recordScope("MeloTTSCommand.__init__")
+        super().__init__(command_type)
+        self.text = text
+        self.speaker_id = speaker_id
+        self.language = language
+        self.style = style
         journaling_manager.recordDebug(f"MeloTTS command initialized with speaker: {self.speaker_id}, language: {self.language}")
     
     def to_dict(self) -> Dict[str, Any]:
@@ -491,90 +387,39 @@ class CommandSerializer:
             raise
 
 class CommandFactory:
-    """Factory class for creating neural commands"""
+    """Factory for creating command instances"""
     
-    _command_types: Dict[CommandType, Type[BaseCommand]] = {}
-    
-    @classmethod
-    def register_command_type(cls, command_type: CommandType, command_class: Type[BaseCommand]) -> None:
-        """Register a command type with its class"""
-        journaling_manager.recordScope("CommandFactory.register_command_type", command_type=command_type)
-        try:
-            if not issubclass(command_class, BaseCommand):
-                journaling_manager.recordError(f"Invalid command class: {command_class}")
-                raise ValueError(f"Command class must inherit from BaseCommand")
-                
-            cls._command_types[command_type] = command_class
-            journaling_manager.recordDebug(f"Registered command type: {command_type} with class: {command_class.__name__}")
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error registering command type: {e}")
-            raise
-            
-    @classmethod
-    def create_command(cls, command_type: CommandType, **kwargs) -> BaseCommand:
+    def __init__(self):
+        """Initialize the command factory"""
+        journaling_manager.recordScope("CommandFactory.__init__")
+        self.loader = CommandLoader()
+        self.command_classes = self.loader.load_commands()
+        
+    def create_command(self, command_type: CommandType, **kwargs) -> BaseCommand:
         """Create a command instance"""
         journaling_manager.recordScope("CommandFactory.create_command", command_type=command_type, kwargs=kwargs)
         try:
-            if command_type not in cls._command_types:
-                journaling_manager.recordError(f"Unknown command type: {command_type}")
-                raise ValueError(f"Unknown command type: {command_type}")
-                
-            command_class = cls._command_types[command_type]
-            command = command_class(command_type=command_type, **kwargs)
+            # Get the command class
+            command_class = self.loader.get_command_class(command_type.value)
             
-            if not command.validate():
-                journaling_manager.recordError("Command validation failed")
-                raise ValueError("Invalid command data")
-                
-            journaling_manager.recordDebug(f"Created command: {command_type} with class: {command_class.__name__}")
+            # Create the command instance
+            command = command_class(command_type=command_type, **kwargs)
+            journaling_manager.recordDebug(f"Created command instance: {command}")
             return command
             
         except Exception as e:
             journaling_manager.recordError(f"Error creating command: {e}")
             raise
             
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> BaseCommand:
-        """Create a command from dictionary data"""
-        journaling_manager.recordScope("CommandFactory.from_dict", data=data)
+    def validate_command(self, command_type: CommandType, data: Dict[str, Any]) -> None:
+        """Validate command data"""
+        journaling_manager.recordScope("CommandFactory.validate_command", command_type=command_type, data=data)
         try:
-            if not isinstance(data, dict):
-                journaling_manager.recordError("Invalid data type")
-                raise ValueError("Data must be a dictionary")
-                
-            if "type" not in data:
-                journaling_manager.recordError("Missing command type")
-                raise ValueError("Data must contain 'type' field")
-                
-            command_type = CommandType(data["type"])
-            command = cls.create_command(command_type, **data)
-            
-            journaling_manager.recordDebug(f"Created command from dict: {command_type}")
-            return command
-            
+            self.loader.validate_command(command_type.value, data)
+            journaling_manager.recordDebug("Command data validated successfully")
         except Exception as e:
-            journaling_manager.recordError(f"Error creating command from dict: {e}")
+            journaling_manager.recordError(f"Command validation failed: {e}")
             raise
-            
-    @classmethod
-    def from_json(cls, json_str: str) -> BaseCommand:
-        """Create a command from JSON string"""
-        journaling_manager.recordScope("CommandFactory.from_json", json_str=json_str)
-        try:
-            if not isinstance(json_str, str):
-                journaling_manager.recordError("Invalid JSON string type")
-                raise ValueError("Input must be a JSON string")
-                
-            data = json.loads(json_str)
-            command = cls.from_dict(data)
-            
-            journaling_manager.recordDebug(f"Created command from JSON: {command.command_type}")
-            return command
-            
-        except json.JSONDecodeError as e:
-            journaling_manager.recordError(f"Invalid JSON format: {e}")
-            raise
-        except Exception as e:
-            journaling_manager.recordError(f"Error creating command from JSON: {e}")
-            raise 
+
+# Create global command factory
+COMMAND_FACTORY = CommandFactory() 

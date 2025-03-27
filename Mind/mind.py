@@ -9,7 +9,7 @@ from .CorpusCallosum.synaptic_pathways import SynapticPathways
 from .TemporalLobe.SuperiorTemporalGyrus.HeschlGyrus.primary_acoustic_area import PrimaryAcousticArea
 from .OccipitalLobe.VisualCortex.associative_visual_area import AssociativeVisualArea
 from .ParietalLobe.SomatosensoryCortex.primary_area import PrimaryArea
-from .FrontalLobe.PrefrontalCortex.llm import LLM
+from .FrontalLobe.PrefrontalCortex.language_processor import LanguageProcessor
 from .FrontalLobe.MotorCortex.motor import Motor
 from .TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.integration_area import IntegrationArea
 from .ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea as SomatosensoryIntegration
@@ -37,7 +37,7 @@ class Mind:
         self.primary_acoustic = None
         self._initialized = False
         self._processing = False
-        self._llm = None  # LLM instance
+        self._language_processor = None  # Language processor instance
         
         # Initialize all lobes
         self._temporal_lobe = {
@@ -171,9 +171,9 @@ class Mind:
                 self.primary_acoustic = PrimaryAcousticArea()
                 await self.primary_acoustic.initialize()
                 
-            # Initialize LLM
-            self._llm = LLM()
-            await self._llm.initialize()
+            # Initialize language processor
+            self._language_processor = LanguageProcessor()
+            await self._language_processor.initialize(test_mode)
                 
             self._initialized = True
             journaling_manager.recordInfo("Mind initialized successfully")
@@ -200,9 +200,9 @@ class Mind:
             if self.primary_acoustic:
                 await self.primary_acoustic.cleanup()
                 
-            # Clean up LLM
-            if self._llm:
-                await self._llm.cleanup()
+            # Clean up language processor
+            if self._language_processor:
+                await self._language_processor.cleanup()
                 
             self._initialized = False
             journaling_manager.recordInfo("Mind cleaned up successfully")
@@ -293,7 +293,7 @@ class Mind:
 
     async def process_input(self, input_text: str) -> Dict[str, Any]:
         """
-        Process text input through LLM
+        Process text input through language system
         
         Args:
             input_text: Text to process
@@ -307,19 +307,20 @@ class Mind:
                 journaling_manager.recordDebug("Mind not initialized, initializing now")
                 await self.initialize()
                 
-            if not self._llm:
-                journaling_manager.recordError("LLM not initialized")
-                raise RuntimeError("LLM not initialized")
+            if not self._language_processor:
+                journaling_manager.recordError("Language processor not initialized")
+                raise RuntimeError("Language processor not initialized")
                 
-            journaling_manager.recordDebug("Processing input through LLM")
-            # Process through LLM
-            response = await self._llm.process_input(input_text)
+            journaling_manager.recordDebug("Processing input through language processor")
+            # Process through language processor
+            response = await self._language_processor.process_input(input_text)
             
             journaling_manager.recordInfo("Successfully processed input")
             return {
                 "status": "ok",
-                "response": response.get("response", ""),
-                "message": response.get("message", "")
+                "comprehension": response.get("comprehension", {}),
+                "response": response.get("response", {}),
+                "speech": response.get("speech", {})
             }
             
         except Exception as e:

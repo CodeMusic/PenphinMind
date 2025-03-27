@@ -18,6 +18,7 @@ sys.path.append(project_root)
 
 from Mind.mind import Mind
 from Mind.config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
@@ -31,11 +32,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
+
 class BrainRegion:
     """Enum-like class for brain regions"""
     VISUAL_CORTEX = "vc"
     AUDITORY_CORTEX = "ac"
-    CORPUS_CALLOSUM = "cc"
+    FRONTAL_CORTEX = "fc"
     FULL_MIND = "full"
 
     @classmethod
@@ -46,8 +50,8 @@ class BrainRegion:
             "visualcortex": cls.VISUAL_CORTEX,
             "ac": cls.AUDITORY_CORTEX,
             "auditorycortex": cls.AUDITORY_CORTEX,
-            "cc": cls.CORPUS_CALLOSUM,
-            "corpuscallosum": cls.CORPUS_CALLOSUM,
+            "fc": cls.FRONTAL_CORTEX,
+            "frontalcortex": cls.FRONTAL_CORTEX,
             "full": cls.FULL_MIND,
             "fullmind": cls.FULL_MIND
         }
@@ -196,11 +200,11 @@ async def run_auditory_cortex_test(mind: Mind) -> None:
         logger.error(f"Auditory cortex test error: {e}")
         raise
 
-async def run_corpus_callosum_test(mind: Mind) -> None:
-    """Run corpus callosum (LLM) unit tests"""
+async def run_frontal_cortex_test(mind: Mind) -> None:
+    """Run frontal cortex (LLM) unit tests"""
     try:
         await mind.initialize()
-        logger.info("Running corpus callosum tests...")
+        logger.info("Running frontal cortex tests...")
         
         # Interactive chat mode for testing
         print("\nWelcome to PenphinMind Chat!")
@@ -224,7 +228,7 @@ async def run_corpus_callosum_test(mind: Mind) -> None:
                 print("\nError:", response.get("message", "Unknown error"))
                 
     except Exception as e:
-        logger.error(f"Corpus callosum test error: {e}")
+        logger.error(f"Frontal cortex test error: {e}")
         raise
 
 def parse_args() -> argparse.Namespace:
@@ -233,13 +237,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--unit-test",
         choices=list(BrainRegion.get_aliases().keys()),
-        help="Run unit tests for a specific brain region"
+        help="Run unit tests for a specific brain region. Available regions: vc (visual cortex), ac (auditory cortex), fc (frontal cortex), full (full mind)"
     )
     parser.add_argument(
         "--demo",
         action="store_true",
         help="Run system in demo mode"
     )
+    
+    # Check if --unit-test is used without a value
+    if "--unit-test" in sys.argv and len(sys.argv) > sys.argv.index("--unit-test") + 1:
+        if sys.argv[sys.argv.index("--unit-test") + 1].startswith("--"):
+            print("\nError: --unit-test requires a brain region suffix")
+            print("Available regions:")
+            print("  vc  - Visual Cortex (LED Matrix)")
+            print("  ac  - Auditory Cortex (Audio)")
+            print("  fc  - Frontal Cortex (LLM)")
+            print("  full - Full Mind (All Cortices)")
+            print("\nExample: python run.py --unit-test fc")
+            sys.exit(1)
+            
     return parser.parse_args()
 
 async def main() -> None:
@@ -259,8 +276,8 @@ async def main() -> None:
                 await run_visual_cortex_test(mind.mind)
             elif region == BrainRegion.AUDITORY_CORTEX:
                 await run_auditory_cortex_test(mind.mind)
-            elif region == BrainRegion.CORPUS_CALLOSUM:
-                await run_corpus_callosum_test(mind.mind)
+            elif region == BrainRegion.FRONTAL_CORTEX:
+                await run_frontal_cortex_test(mind.mind)
             else:
                 await mind.run()
         else:

@@ -20,8 +20,12 @@ from ....CorpusCallosum.synaptic_pathways import SynapticPathways
 from ....CorpusCallosum.neural_commands import CommandType, AudioCommand, VADCommand
 from ....config import CONFIG, AudioOutputType
 import platform
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class AcousticProcessingError(Exception):
     """Acoustic processing related errors"""
@@ -32,6 +36,7 @@ class PrimaryAcousticArea:
     
     def __init__(self):
         """Initialize the primary acoustic area"""
+        journaling_manager.recordScope("PrimaryAcousticArea.__init__")
         self._initialized = False
         self._processing = False
         self.logger = logging.getLogger(__name__)
@@ -47,20 +52,20 @@ class PrimaryAcousticArea:
             
         try:
             # Set up audio device
-            self._setup_audio_device()
+            await self.configure_audio_device()
             
             # Register with synaptic pathways
             SynapticPathways.register_integration_area("auditory", self)
             
             self._initialized = True
-            logger.info("Primary acoustic area initialized")
+            journaling_manager.recordInfo("Primary acoustic area initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize primary acoustic area: {e}")
+            journaling_manager.recordError(f"Failed to initialize primary acoustic area: {e}")
             raise
             
-    def _setup_audio_device(self) -> None:
-        """Set up the audio device with proper controls"""
+    async def configure_audio_device(self) -> None:
+        """Configure audio device"""
         try:
             # Check if we're on Raspberry Pi
             is_raspberry_pi = self._is_raspberry_pi()
@@ -72,14 +77,14 @@ class PrimaryAcousticArea:
                         ["amixer", "-c", "0", "sset", control, f"{CONFIG.audio_device_controls['volume']}%"],
                         check=True
                     )
-                logger.info("WaveShare audio HAT configured")
+                journaling_manager.recordInfo("WaveShare audio HAT configured")
             else:
                 # Use LLM audio output for non-Raspberry Pi platforms
                 CONFIG.audio_output_type = AudioOutputType.LOCAL_LLM
-                logger.info("Using LLM audio output")
+                journaling_manager.recordInfo("Using LLM audio output")
                 
         except Exception as e:
-            logger.error(f"Failed to configure audio device: {e}")
+            journaling_manager.recordError(f"Failed to configure audio device: {e}")
             raise
             
     def _is_raspberry_pi(self) -> bool:
@@ -105,9 +110,9 @@ class PrimaryAcousticArea:
                     frame_duration=30
                 )
             )
-            self.logger.info("VAD started")
+            journaling_manager.recordInfo("VAD started")
         except Exception as e:
-            self.logger.error(f"VAD start error: {e}")
+            journaling_manager.recordError(f"VAD start error: {e}")
             self.vad_active = False
             raise
             
@@ -121,7 +126,7 @@ class PrimaryAcousticArea:
             return
             
         self.vad_active = False
-        self.logger.info("VAD stopped")
+        journaling_manager.recordInfo("VAD stopped")
         
     async def terminate_voice_detection(self) -> None:
         """Stop Voice Activity Detection (alias for stop_vad)"""
@@ -150,7 +155,7 @@ class PrimaryAcousticArea:
             )
             return response.get("processed_audio", b'')
         except Exception as e:
-            self.logger.error(f"Acoustic processing error: {e}")
+            journaling_manager.recordError(f"Acoustic processing error: {e}")
             return audio_data
             
     async def play_sound(self, audio_data: bytes) -> None:
@@ -179,10 +184,10 @@ class PrimaryAcousticArea:
                     temp_file.unlink()
                     
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"WaveShare playback error: {e}")
+            journaling_manager.recordError(f"WaveShare playback error: {e}")
             raise AcousticProcessingError(f"Failed to play audio: {e}")
         except Exception as e:
-            self.logger.error(f"Audio playback error: {e}")
+            journaling_manager.recordError(f"Audio playback error: {e}")
             raise AcousticProcessingError(f"Failed to play audio: {e}")
             
     async def text_to_speech(self, text: str) -> bytes:
@@ -216,7 +221,7 @@ class PrimaryAcousticArea:
             )
             return response.get("audio_data", b'')
         except Exception as e:
-            self.logger.error(f"TTS error: {e}")
+            journaling_manager.recordError(f"TTS error: {e}")
             raise AcousticProcessingError(f"Failed to convert text to speech: {e}")
             
     async def speech_to_text(self, audio_data: bytes) -> str:
@@ -243,7 +248,7 @@ class PrimaryAcousticArea:
             )
             return response.get("text", "")
         except Exception as e:
-            self.logger.error(f"ASR error: {e}")
+            journaling_manager.recordError(f"ASR error: {e}")
             raise AcousticProcessingError(f"Failed to convert speech to text: {e}")
             
     async def detect_wake_word(self, audio_data: bytes) -> bool:
@@ -271,7 +276,7 @@ class PrimaryAcousticArea:
             )
             return response.get("wake_word_detected", False)
         except Exception as e:
-            self.logger.error(f"KWS error: {e}")
+            journaling_manager.recordError(f"KWS error: {e}")
             return False
             
     async def transmit_acoustic_signal(self, audio_data: bytes) -> None:
@@ -295,9 +300,9 @@ class PrimaryAcousticArea:
                         check=True,
                         capture_output=True
                     )
-                self.logger.info(f"WaveShare volume set to {volume}%")
+                journaling_manager.recordInfo(f"WaveShare volume set to {volume}%")
             except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error setting WaveShare volume: {e}")
+                journaling_manager.recordError(f"Error setting WaveShare volume: {e}")
                 raise AcousticProcessingError(f"Failed to set volume: {e}")
                 
     def adjust_sensitivity(self, sensitivity: int) -> None:
@@ -307,7 +312,7 @@ class PrimaryAcousticArea:
     async def start_stream(self) -> None:
         """Start audio streaming"""
         self.current_stream = b''
-        self.logger.info("Audio stream started")
+        journaling_manager.recordInfo("Audio stream started")
         
     async def initiate_acoustic_stream(self) -> None:
         """Start acoustic streaming (alias for start_stream)"""
@@ -322,7 +327,7 @@ class PrimaryAcousticArea:
         """
         data = self.current_stream
         self.current_stream = None
-        self.logger.info("Audio stream stopped")
+        journaling_manager.recordInfo("Audio stream stopped")
         return data
         
     async def terminate_acoustic_stream(self) -> bytes:
@@ -347,7 +352,7 @@ class PrimaryAcousticArea:
             )
             return response.get("audio_data", b"")
         except Exception as e:
-            self.logger.error(f"Error recording audio: {e}")
+            journaling_manager.recordError(f"Error recording audio: {e}")
             return b""
             
     async def _analyze_auditory_frequency(self, audio_data: bytes) -> Dict[str, Any]:
@@ -367,7 +372,7 @@ class PrimaryAcousticArea:
             )
             return response.get("frequency_data", {})
         except Exception as e:
-            self.logger.error(f"Error analyzing auditory frequency: {e}")
+            journaling_manager.recordError(f"Error analyzing auditory frequency: {e}")
             return {}
             
     async def _analyze_frequency(self, audio_data: bytes) -> Dict[str, Any]:
@@ -391,7 +396,7 @@ class PrimaryAcousticArea:
             )
             return response.get("amplitude_data", {})
         except Exception as e:
-            self.logger.error(f"Error analyzing auditory amplitude: {e}")
+            journaling_manager.recordError(f"Error analyzing auditory amplitude: {e}")
             return {}
             
     async def _process_amplitude(self, audio_data: bytes) -> Dict[str, Any]:
@@ -415,7 +420,7 @@ class PrimaryAcousticArea:
             )
             return response.get("temporal_data", {})
         except Exception as e:
-            self.logger.error(f"Error extracting auditory temporal features: {e}")
+            journaling_manager.recordError(f"Error extracting auditory temporal features: {e}")
             return {}
             
     async def _extract_temporal_features(self, audio_data: bytes) -> Dict[str, Any]:
@@ -436,7 +441,7 @@ class PrimaryAcousticArea:
             }
             
         except Exception as e:
-            logger.error(f"Error processing audio: {e}")
+            journaling_manager.recordError(f"Error processing audio: {e}")
             return {
                 "status": "error",
                 "message": str(e)
@@ -447,8 +452,8 @@ class PrimaryAcousticArea:
         try:
             self._processing = False
             self._initialized = False
-            logger.info("Primary acoustic area cleaned up")
+            journaling_manager.recordInfo("Primary acoustic area cleaned up")
             
         except Exception as e:
-            logger.error(f"Error cleaning up primary acoustic area: {e}")
+            journaling_manager.recordError(f"Error cleaning up primary acoustic area: {e}")
             raise

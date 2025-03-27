@@ -21,6 +21,10 @@ from pathlib import Path
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import CommandType, SystemCommand
 from ...config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 # Use RPi.GPIO if available, otherwise use mock
 try:
@@ -40,6 +44,11 @@ class PrimaryArea:
     """Primary somatosensory area handling tactile input"""
     
     def __init__(self):
+        """Initialize the primary somatosensory area"""
+        journaling_manager.recordScope("PrimarySomatosensoryArea.__init__")
+        self._initialized = False
+        self._processing = False
+        self._gpio = None
         self.logger = logging.getLogger(__name__)
         self.button_pin = CONFIG.tactile_button_pin
         self.pressed = False
@@ -146,4 +155,68 @@ class PrimaryArea:
             return {
                 "error": str(e),
                 "processed": False
-            } 
+            }
+
+    async def initialize(self) -> None:
+        """Initialize the primary somatosensory area"""
+        try:
+            # Initialize GPIO
+            if platform.system() == "Linux":
+                journaling_manager.recordInfo("Using RPi.GPIO module")
+                import RPi.GPIO as GPIO
+                self._gpio = GPIO
+            else:
+                journaling_manager.recordInfo("Using mock GPIO module for development")
+                from .mock_gpio import GPIO
+                self._gpio = GPIO
+                
+            # Set up tactile pathway
+            self._gpio.setmode(self._gpio.BCM)
+            self._gpio.setup(self.button_pin, self._gpio.IN, pull_up_down=self._gpio.PUD_UP)
+            self._gpio.add_event_detect(self.button_pin, self._gpio.FALLING, callback=self._handle_button_press)
+            
+            self._initialized = True
+            journaling_manager.recordInfo(f"Tactile pathway initialized on pin {self.button_pin}")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Tactile pathway setup error: {e}")
+            raise
+            
+    async def process_tactile_stimulus(self, stimulus_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process tactile stimulus"""
+        try:
+            # Process stimulus
+            return {"status": "ok"}
+        except Exception as e:
+            journaling_manager.recordError(f"Tactile stimulus processing error: {e}")
+            raise
+            
+    async def transmit_tactile_signal(self, signal_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Transmit tactile signal"""
+        try:
+            # Transmit signal
+            return {"status": "ok"}
+        except Exception as e:
+            journaling_manager.recordError(f"Tactile signal transmission error: {e}")
+            raise
+            
+    async def cleanup(self) -> None:
+        """Clean up resources"""
+        try:
+            if self._gpio:
+                self._gpio.remove_event_detect(self.button_pin)
+                self._gpio.cleanup()
+            self._initialized = False
+            journaling_manager.recordInfo("Tactile pathway cleanup complete")
+        except Exception as e:
+            journaling_manager.recordError(f"Tactile pathway cleanup error: {e}")
+            raise
+            
+    def _handle_button_press(self, channel: int) -> None:
+        """Handle button press event"""
+        try:
+            # Handle button press
+            pass
+        except Exception as e:
+            journaling_manager.recordError(f"Tactile input processing error: {e}")
+            raise 

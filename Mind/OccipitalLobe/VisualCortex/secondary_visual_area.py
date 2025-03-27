@@ -16,14 +16,19 @@ import numpy as np
 from typing import Dict, Any, List
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class SecondaryVisualArea:
     """Complex visual feature processing"""
     
     def __init__(self):
         """Initialize the secondary visual area"""
+        journaling_manager.recordScope("SecondaryVisualArea.__init__")
         self._initialized = False
         self._processing = False
         
@@ -33,11 +38,12 @@ class SecondaryVisualArea:
             return
             
         try:
+            # Initialize components
             self._initialized = True
-            logger.info("Secondary visual area initialized")
+            journaling_manager.recordInfo("Secondary visual area initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize secondary visual area: {e}")
+            journaling_manager.recordError(f"Failed to initialize secondary visual area: {e}")
             raise
             
     async def analyze_complex_features(self, image_data: bytes) -> Dict[str, Any]:
@@ -57,7 +63,7 @@ class SecondaryVisualArea:
             return features
             
         except Exception as e:
-            logger.error(f"Error analyzing complex features: {e}")
+            journaling_manager.recordError(f"Error analyzing complex features: {e}")
             return {}
             
     def _analyze_texture(self, image: np.ndarray) -> Dict[str, float]:
@@ -76,7 +82,7 @@ class SecondaryVisualArea:
             return features
             
         except Exception as e:
-            logger.error(f"Error analyzing texture: {e}")
+            journaling_manager.recordError(f"Error analyzing texture: {e}")
             return {}
             
     def _detect_shapes(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -92,7 +98,7 @@ class SecondaryVisualArea:
             return shapes
             
         except Exception as e:
-            logger.error(f"Error detecting shapes: {e}")
+            journaling_manager.recordError(f"Error detecting shapes: {e}")
             return []
             
     def _detect_motion(self, image: np.ndarray) -> Dict[str, Any]:
@@ -111,5 +117,32 @@ class SecondaryVisualArea:
             return motion
             
         except Exception as e:
-            logger.error(f"Error detecting motion: {e}")
-            return {"magnitude": 0.0, "direction": 0.0} 
+            journaling_manager.recordError(f"Error detecting motion: {e}")
+            return {"magnitude": 0.0, "direction": 0.0}
+
+    async def process_motion(self, image_data: bytes) -> Dict[str, Any]:
+        """Process motion in visual input"""
+        try:
+            # Process motion
+            return {"status": "ok"}
+        except Exception as e:
+            journaling_manager.recordError(f"Error processing motion: {e}")
+            raise
+            
+    async def detect_objects(self, image_data: bytes) -> Dict[str, Any]:
+        """Detect objects in visual input"""
+        try:
+            # Detect objects
+            return {"status": "ok"}
+        except Exception as e:
+            journaling_manager.recordError(f"Error detecting objects: {e}")
+            raise
+            
+    async def cleanup(self) -> None:
+        """Clean up resources"""
+        try:
+            self._initialized = False
+            journaling_manager.recordInfo("Secondary visual area cleaned up")
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up secondary visual area: {e}")
+            raise 

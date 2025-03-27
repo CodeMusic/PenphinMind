@@ -58,8 +58,13 @@ class MentalConfiguration:
         
         # System settings
         self.debug_mode = False
-        self.log_level = "INFO"
+        self.log_level = "DEBUG"
         self.log_file = str(PROJECT_ROOT / "logs" / "penphin.log")
+        
+        # Serial communication settings
+        self.serial_baud_rate = 115200
+        self.serial_timeout = 1.0
+        self.serial_port = None  # Will be auto-detected
         
         # Load environment variables
         self._load_env_vars()
@@ -139,6 +144,17 @@ class MentalConfiguration:
             self.log_level = os.environ["PENPHIN_LOG_LEVEL"]
             journaling_manager.recordDebug(f"Loaded log level from env: {self.log_level}")
             
+        # Serial communication settings
+        if "PENPHIN_SERIAL_BAUD_RATE" in os.environ:
+            self.serial_baud_rate = int(os.environ["PENPHIN_SERIAL_BAUD_RATE"])
+            journaling_manager.recordDebug(f"Loaded serial baud rate from env: {self.serial_baud_rate}")
+        if "PENPHIN_SERIAL_TIMEOUT" in os.environ:
+            self.serial_timeout = float(os.environ["PENPHIN_SERIAL_TIMEOUT"])
+            journaling_manager.recordDebug(f"Loaded serial timeout from env: {self.serial_timeout}")
+        if "PENPHIN_SERIAL_PORT" in os.environ:
+            self.serial_port = os.environ["PENPHIN_SERIAL_PORT"]
+            journaling_manager.recordDebug(f"Loaded serial port from env: {self.serial_port}")
+            
         journaling_manager.recordInfo("Environment variables loaded successfully")
 
     def to_dict(self) -> Dict[str, Any]:
@@ -167,6 +183,11 @@ class MentalConfiguration:
             "system": {
                 "debug_mode": self.debug_mode,
                 "log_level": self.log_level
+            },
+            "serial": {
+                "baud_rate": self.serial_baud_rate,
+                "timeout": self.serial_timeout,
+                "port": self.serial_port
             }
         }
 

@@ -16,14 +16,19 @@ from typing import Dict, Any, Optional
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import CommandType, ASRCommand
 from ...config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class BeltArea:
     """Processes complex auditory features"""
     
     def __init__(self):
         """Initialize the belt area"""
+        journaling_manager.recordScope("BeltArea.__init__")
         self._initialized = False
         self._processing = False
         
@@ -34,10 +39,10 @@ class BeltArea:
             
         try:
             self._initialized = True
-            logger.info("Belt area initialized")
+            journaling_manager.recordInfo("Belt area initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize belt area: {e}")
+            journaling_manager.recordError(f"Failed to initialize belt area: {e}")
             raise
             
     async def process_complex_audio(self, audio_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -47,7 +52,7 @@ class BeltArea:
             return {"status": "ok", "message": "Complex audio processed"}
             
         except Exception as e:
-            logger.error(f"Error processing complex audio: {e}")
+            journaling_manager.recordError(f"Error processing complex audio: {e}")
             return {"status": "error", "message": str(e)}
 
     async def process_complex_features(self, audio_data: bytes) -> Dict[str, Any]:
@@ -68,7 +73,7 @@ class BeltArea:
                 "location": location
             }
         except Exception as e:
-            logger.error(f"Error processing complex features: {e}")
+            journaling_manager.recordError(f"Error processing complex features: {e}")
             return {}
             
     async def _process_speech(self, audio_data: bytes) -> str:
@@ -81,7 +86,7 @@ class BeltArea:
             )
             return response.get("text", "")
         except Exception as e:
-            logger.error(f"Error processing speech: {e}")
+            journaling_manager.recordError(f"Error processing speech: {e}")
             return ""
             
     async def _analyze_patterns(self, audio_data: bytes) -> Dict[str, Any]:
@@ -93,7 +98,7 @@ class BeltArea:
             )
             return response.get("patterns", {})
         except Exception as e:
-            logger.error(f"Error analyzing patterns: {e}")
+            journaling_manager.recordError(f"Error analyzing patterns: {e}")
             return {}
             
     async def _localize_sound(self, audio_data: bytes) -> Dict[str, Any]:
@@ -105,5 +110,5 @@ class BeltArea:
             )
             return response.get("location", {})
         except Exception as e:
-            logger.error(f"Error localizing sound: {e}")
+            journaling_manager.recordError(f"Error localizing sound: {e}")
             return {} 

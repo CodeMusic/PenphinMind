@@ -76,7 +76,7 @@ class CoordinationArea:
             return {"status": "ok", "message": "Movement coordinated"}
             
         except Exception as e:
-            logger.error(f"Error coordinating movement: {e}")
+            journaling_manager.recordError(f"Error coordinating movement: {e}")
             return {"status": "error", "message": str(e)}
 
     async def execute_movement_plan(self, movement_plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -131,7 +131,7 @@ class CoordinationArea:
             
             return result
         except Exception as e:
-            logger.error(f"Error executing command: {e}")
+            journaling_manager.recordError(f"Error executing command: {e}")
             return {}
             
     async def stop_all_movements(self) -> None:
@@ -162,7 +162,7 @@ class CoordinationArea:
             )
             self._processing = True
         except Exception as e:
-            logger.error(f"Error initializing movement: {e}")
+            journaling_manager.recordError(f"Error initializing movement: {e}")
             
     async def _execute_sequence(self, sequence: Dict[str, Any]) -> Dict[str, Any]:
         """Execute movement sequence"""
@@ -173,7 +173,7 @@ class CoordinationArea:
             )
             return response.get("result", {})
         except Exception as e:
-            logger.error(f"Error executing sequence: {e}")
+            journaling_manager.recordError(f"Error executing sequence: {e}")
             return {}
             
     async def _finalize_movement(self) -> None:

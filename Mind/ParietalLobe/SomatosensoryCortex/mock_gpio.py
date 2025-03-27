@@ -8,6 +8,7 @@ and testing on non-Raspberry Pi systems.
 import logging
 from typing import Optional, Callable, Dict
 from enum import Enum
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ RPI_INFO = {
     "MANUFACTURER": "Embest"
 }
 
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
+
 class MockGPIO:
     """Mock GPIO implementation"""
     
@@ -59,85 +63,103 @@ class MockGPIO:
         self._pwm_pins: Dict[int, Dict] = {}
         
     def setmode(self, mode: str) -> None:
-        """Set GPIO mode (BCM or BOARD)"""
-        self._mode = mode
-        logger.debug(f"GPIO mode set to {mode}")
+        """Set GPIO mode"""
+        try:
+            self._mode = mode
+            journaling_manager.recordDebug(f"GPIO mode set to {mode}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error setting GPIO mode: {e}")
+            raise
         
-    def setup(self, pin: int, direction: str, pull_up_down: Optional[str] = None, initial: Optional[int] = None) -> None:
-        """Setup GPIO pin"""
-        self._pin_states[pin] = HIGH if pull_up_down == PUD_UP else LOW
-        if initial is not None:
-            self._pin_states[pin] = initial
-        logger.debug(f"Pin {pin} setup with direction {direction} and pull_up_down {pull_up_down}")
+    def setup(self, pin: int, direction: str, pull_up_down: str = None) -> None:
+        """Set up GPIO pin"""
+        try:
+            self._pin_states[pin] = HIGH if pull_up_down == PUD_UP else LOW
+            journaling_manager.recordDebug(f"Pin {pin} setup with direction {direction} and pull_up_down {pull_up_down}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error setting up GPIO pin: {e}")
+            raise
         
     def input(self, pin: int) -> int:
         """Read input from pin"""
         return self._pin_states.get(pin, LOW)
         
-    def output(self, pin: int, state: int) -> None:
-        """Set output on pin"""
-        self._pin_states[pin] = state
-        logger.debug(f"Pin {pin} set to {state}")
+    def output(self, pin: int, state: bool) -> None:
+        """Set GPIO output"""
+        try:
+            self._pin_states[pin] = state
+            journaling_manager.recordDebug(f"Pin {pin} set to {state}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error setting GPIO output: {e}")
+            raise
         
-    def add_event_detect(
-        self,
-        pin: int,
-        edge: str,
-        callback: Optional[Callable] = None,
-        bouncetime: Optional[int] = None
-    ) -> None:
-        """Add edge detection on pin"""
-        self._pin_events[pin] = {
-            "edge": edge,
-            "callback": callback,
-            "bouncetime": bouncetime
-        }
-        logger.debug(f"Event detection added to pin {pin}")
+    def add_event_detect(self, pin: int, edge: str, callback: Callable) -> None:
+        """Add event detection to GPIO pin"""
+        try:
+            self._pin_events[pin] = {
+                "edge": edge,
+                "callback": callback,
+                "bouncetime": None
+            }
+            journaling_manager.recordDebug(f"Event detection added to pin {pin}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error adding event detection: {e}")
+            raise
         
     def remove_event_detect(self, pin: int) -> None:
-        """Remove edge detection from pin"""
-        if pin in self._pin_events:
-            del self._pin_events[pin]
-            logger.debug(f"Event detection removed from pin {pin}")
-            
-    def cleanup(self, pin: Optional[int] = None) -> None:
-        """Cleanup GPIO resources"""
-        if pin is None:
-            # Cleanup all pins
+        """Remove event detection from GPIO pin"""
+        try:
+            if pin in self._pin_events:
+                del self._pin_events[pin]
+                journaling_manager.recordDebug(f"Event detection removed from pin {pin}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error removing event detection: {e}")
+            raise
+        
+    def cleanup(self) -> None:
+        """Clean up GPIO resources"""
+        try:
             self._pin_states.clear()
             self._pin_events.clear()
             self._pwm_pins.clear()
-            logger.debug("All GPIO resources cleaned up")
-        elif pin in self._pin_states:
-            # Cleanup specific pin
-            del self._pin_states[pin]
+            journaling_manager.recordDebug("All GPIO resources cleaned up")
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up GPIO: {e}")
+            raise
+        
+    def cleanup_pin(self, pin: int) -> None:
+        """Clean up specific GPIO pin"""
+        try:
+            if pin in self._pin_states:
+                del self._pin_states[pin]
             if pin in self._pin_events:
                 del self._pin_events[pin]
             if pin in self._pwm_pins:
                 del self._pwm_pins[pin]
-            logger.debug(f"Pin {pin} cleaned up")
-            
-    def simulate_input(self, pin: int, state: int) -> None:
-        """
-        Simulate input on a pin (development only)
+            journaling_manager.recordDebug(f"Pin {pin} cleaned up")
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up GPIO pin: {e}")
+            raise
         
-        Args:
-            pin: Pin number to simulate
-            state: State to simulate (HIGH or LOW)
-        """
-        if pin in self._pin_events:
-            old_state = self._pin_states.get(pin, LOW)
-            self._pin_states[pin] = state
-            
-            event = self._pin_events[pin]
-            if event["callback"] and (
-                event["edge"] == BOTH or
-                (event["edge"] == RISING and state == HIGH) or
-                (event["edge"] == FALLING and state == LOW)
-            ):
-                event["callback"](pin)
-                logger.debug(f"Simulated input on pin {pin}: {state}")
+    def simulate_input(self, pin: int, state: bool) -> None:
+        """Simulate input on GPIO pin"""
+        try:
+            if pin in self._pin_events:
+                old_state = self._pin_states.get(pin, LOW)
+                self._pin_states[pin] = state
                 
+                event = self._pin_events[pin]
+                if event["callback"] and (
+                    event["edge"] == BOTH or
+                    (event["edge"] == RISING and state == HIGH) or
+                    (event["edge"] == FALLING and state == LOW)
+                ):
+                    event["callback"](pin)
+                    journaling_manager.recordDebug(f"Simulated input on pin {pin}: {state}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error simulating GPIO input: {e}")
+            raise
+        
     def PWM(self, pin: int, frequency: float) -> 'PWM':
         """Create PWM instance for a pin"""
         if pin not in self._pwm_pins:
@@ -145,34 +167,47 @@ class MockGPIO:
         return PWM(pin, frequency)
 
 class PWM:
-    """Mock PWM implementation"""
+    """Mock PWM class"""
     
     def __init__(self, pin: int, frequency: float):
         self.pin = pin
         self.frequency = frequency
         self.duty_cycle = 0
-        self._running = False
         
     def start(self, duty_cycle: float) -> None:
-        """Start PWM with duty cycle"""
-        self.duty_cycle = duty_cycle
-        self._running = True
-        logger.debug(f"PWM started on pin {self.pin} with duty cycle {duty_cycle}")
+        """Start PWM"""
+        try:
+            self.duty_cycle = duty_cycle
+            journaling_manager.recordDebug(f"PWM started on pin {self.pin} with duty cycle {duty_cycle}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error starting PWM: {e}")
+            raise
         
     def stop(self) -> None:
         """Stop PWM"""
-        self._running = False
-        logger.debug(f"PWM stopped on pin {self.pin}")
+        try:
+            journaling_manager.recordDebug(f"PWM stopped on pin {self.pin}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error stopping PWM: {e}")
+            raise
         
     def ChangeDutyCycle(self, duty_cycle: float) -> None:
-        """Change duty cycle"""
-        self.duty_cycle = duty_cycle
-        logger.debug(f"PWM duty cycle changed to {duty_cycle} on pin {self.pin}")
+        """Change PWM duty cycle"""
+        try:
+            self.duty_cycle = duty_cycle
+            journaling_manager.recordDebug(f"PWM duty cycle changed to {duty_cycle} on pin {self.pin}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error changing PWM duty cycle: {e}")
+            raise
         
     def ChangeFrequency(self, frequency: float) -> None:
-        """Change frequency"""
-        self.frequency = frequency
-        logger.debug(f"PWM frequency changed to {frequency} on pin {self.pin}")
+        """Change PWM frequency"""
+        try:
+            self.frequency = frequency
+            journaling_manager.recordDebug(f"PWM frequency changed to {frequency} on pin {self.pin}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error changing PWM frequency: {e}")
+            raise
 
 # Create global instance
 _gpio = MockGPIO()

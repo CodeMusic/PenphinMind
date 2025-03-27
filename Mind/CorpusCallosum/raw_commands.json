@@ -1,0 +1,242 @@
+{
+    "command_types": {
+        "asr": {
+            "name": "Automatic Speech Recognition",
+            "description": "Process audio input to convert speech to text",
+            "parameters": {
+                "input_audio": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Raw audio data to process"
+                },
+                "language": {
+                    "type": "string",
+                    "required": false,
+                    "default": "en",
+                    "description": "Language code for speech recognition"
+                },
+                "model_type": {
+                    "type": "string",
+                    "required": false,
+                    "default": "base",
+                    "description": "Type of ASR model to use"
+                }
+            }
+        },
+        "tts": {
+            "name": "Text to Speech",
+            "description": "Convert text to speech audio",
+            "parameters": {
+                "text": {
+                    "type": "string",
+                    "required": true,
+                    "description": "Text to convert to speech"
+                },
+                "voice_id": {
+                    "type": "string",
+                    "required": false,
+                    "default": "default",
+                    "description": "Voice ID to use for synthesis"
+                },
+                "speed": {
+                    "type": "float",
+                    "required": false,
+                    "default": 1.0,
+                    "description": "Speech speed multiplier"
+                },
+                "pitch": {
+                    "type": "float",
+                    "required": false,
+                    "default": 1.0,
+                    "description": "Speech pitch multiplier"
+                }
+            }
+        },
+        "vad": {
+            "name": "Voice Activity Detection",
+            "description": "Detect speech activity in audio",
+            "parameters": {
+                "audio_chunk": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Audio chunk to analyze"
+                },
+                "threshold": {
+                    "type": "float",
+                    "required": false,
+                    "default": 0.5,
+                    "description": "Detection threshold"
+                },
+                "frame_duration": {
+                    "type": "integer",
+                    "required": false,
+                    "default": 30,
+                    "description": "Frame duration in milliseconds"
+                }
+            }
+        },
+        "llm": {
+            "name": "Large Language Model",
+            "description": "Process text through language model",
+            "parameters": {
+                "prompt": {
+                    "type": "string",
+                    "required": true,
+                    "description": "Input text prompt"
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "required": false,
+                    "default": 1000,
+                    "description": "Maximum tokens to generate"
+                },
+                "temperature": {
+                    "type": "float",
+                    "required": false,
+                    "default": 0.7,
+                    "description": "Sampling temperature"
+                }
+            }
+        },
+        "vlm": {
+            "name": "Vision Language Model",
+            "description": "Process images through vision-language model",
+            "parameters": {
+                "image_data": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Image data to process"
+                },
+                "prompt": {
+                    "type": "string",
+                    "required": true,
+                    "description": "Text prompt for image analysis"
+                }
+            }
+        },
+        "kws": {
+            "name": "Keyword Spotting",
+            "description": "Detect keywords in audio",
+            "parameters": {
+                "audio_data": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Audio data to analyze"
+                },
+                "keywords": {
+                    "type": "array",
+                    "required": true,
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of keywords to detect"
+                }
+            }
+        },
+        "sys": {
+            "name": "System Commands",
+            "description": "System-level operations",
+            "parameters": {
+                "action": {
+                    "type": "string",
+                    "required": true,
+                    "description": "System action to perform"
+                },
+                "data": {
+                    "type": "object",
+                    "required": false,
+                    "description": "Additional data for the action"
+                }
+            }
+        },
+        "audio": {
+            "name": "Audio Processing",
+            "description": "General audio processing operations",
+            "parameters": {
+                "action": {
+                    "type": "string",
+                    "required": true,
+                    "description": "Audio processing action"
+                },
+                "audio_data": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Audio data to process"
+                }
+            }
+        },
+        "camera": {
+            "name": "Camera Control",
+            "description": "Camera operations and control",
+            "parameters": {
+                "action": {
+                    "type": "string",
+                    "required": true,
+                    "description": "Camera action to perform"
+                },
+                "resolution": {
+                    "type": "object",
+                    "required": false,
+                    "description": "Camera resolution settings"
+                }
+            }
+        },
+        "yolo": {
+            "name": "Object Detection",
+            "description": "YOLO-based object detection",
+            "parameters": {
+                "image_data": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Image data to analyze"
+                },
+                "confidence_threshold": {
+                    "type": "float",
+                    "required": false,
+                    "default": 0.5,
+                    "description": "Detection confidence threshold"
+                }
+            }
+        },
+        "whisper": {
+            "name": "Whisper Speech Recognition",
+            "description": "Whisper-based speech recognition",
+            "parameters": {
+                "audio_data": {
+                    "type": "bytes",
+                    "required": true,
+                    "description": "Audio data to transcribe"
+                },
+                "language": {
+                    "type": "string",
+                    "required": false,
+                    "default": "en",
+                    "description": "Language code for transcription"
+                },
+                "model_type": {
+                    "type": "string",
+                    "required": false,
+                    "default": "base",
+                    "description": "Whisper model type"
+                }
+            }
+        },
+        "melotts": {
+            "name": "Neural TTS",
+            "description": "Melotron-based text-to-speech",
+            "parameters": {
+                "text": {
+                    "type": "string",
+                    "required": true,
+                    "description": "Text to synthesize"
+                },
+                "voice_id": {
+                    "type": "string",
+                    "required": false,
+                    "default": "default",
+                    "description": "Voice ID to use"
+                }
+            }
+        }
+    }
+} 

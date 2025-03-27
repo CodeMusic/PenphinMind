@@ -8,32 +8,33 @@ from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.config import CONFIG
 from .primary_visual_area import PrimaryVisualArea
 from .secondary_visual_area import SecondaryVisualArea
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class IntegrationArea:
     """Integrates visual processing"""
     
     def __init__(self):
-        """Initialize the integration area"""
+        """Initialize the visual integration area"""
+        journaling_manager.recordScope("VisualIntegrationArea.__init__")
         self._initialized = False
         self._processing = False
         self.primary_area = PrimaryVisualArea()
         self.secondary_area = SecondaryVisualArea()
         
-    async def initialize(self) -> None:
-        """Initialize the integration area"""
-        if self._initialized:
-            return
-            
+    async def initialize(self):
+        """Initialize the visual integration area"""
         try:
             await self.primary_area.initialize()
             await self.secondary_area.initialize()
             self._initialized = True
-            logger.info("Visual integration area initialized")
-            
+            journaling_manager.recordInfo("Visual integration area initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize visual integration area: {e}")
+            journaling_manager.recordError(f"Failed to initialize visual integration area: {e}")
             raise
             
     async def process_visual(self, visual_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -53,7 +54,7 @@ class IntegrationArea:
             }
             
         except Exception as e:
-            logger.error(f"Error processing visual input: {e}")
+            journaling_manager.recordError(f"Error processing visual input: {e}")
             return {"status": "error", "message": str(e)}
             
     async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,7 +78,7 @@ class IntegrationArea:
                 raise ValueError(f"Unknown command type: {command_type}")
                 
         except Exception as e:
-            logger.error(f"Error processing command: {e}")
+            journaling_manager.recordError(f"Error processing command: {e}")
             return {"status": "error", "message": str(e)}
             
         finally:
@@ -94,7 +95,7 @@ class IntegrationArea:
             return {"status": "ok", "message": "Display updated"}
             
         except Exception as e:
-            logger.error(f"Error processing display command: {e}")
+            journaling_manager.recordError(f"Error processing display command: {e}")
             return {"status": "error", "message": str(e)}
             
     async def _process_splash(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -104,7 +105,7 @@ class IntegrationArea:
             return {"status": "ok", "message": "Splash screen displayed"}
             
         except Exception as e:
-            logger.error(f"Error processing splash command: {e}")
+            journaling_manager.recordError(f"Error processing splash command: {e}")
             return {"status": "error", "message": str(e)}
             
     async def set_background(self, r: int, g: int, b: int) -> None:
@@ -394,15 +395,15 @@ class IntegrationArea:
                 "status": "ok"
             }
         except Exception as e:
-            logger.error(f"Error processing visual input: {e}")
+            journaling_manager.recordError(f"Error processing visual input: {e}")
             return {"status": "error", "message": str(e)}
             
     async def cleanup(self) -> None:
         """Clean up resources"""
         try:
             self._initialized = False
-            logger.info("Visual integration area cleaned up")
+            journaling_manager.recordInfo("Visual integration area cleaned up")
             
         except Exception as e:
-            logger.error(f"Error cleaning up visual integration area: {e}")
+            journaling_manager.recordError(f"Error cleaning up visual integration area: {e}")
             raise 

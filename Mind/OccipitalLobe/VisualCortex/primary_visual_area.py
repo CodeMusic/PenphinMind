@@ -19,14 +19,19 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class PrimaryVisualArea:
     """Core visual processing and LED matrix control"""
     
     def __init__(self):
         """Initialize the primary visual area"""
+        journaling_manager.recordScope("PrimaryVisualArea.__init__")
         self._initialized = False
         self._processing = False
         self._matrix = None
@@ -40,10 +45,10 @@ class PrimaryVisualArea:
             # Initialize LED matrix
             self._matrix = np.zeros((CONFIG.visual_height, CONFIG.visual_width, 3), dtype=np.uint8)
             self._initialized = True
-            logger.info("Primary visual area initialized")
+            journaling_manager.recordInfo("Primary visual area initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize primary visual area: {e}")
+            journaling_manager.recordError(f"Failed to initialize primary visual area: {e}")
             raise
             
     async def toggle_processing(self, enabled: bool) -> None:
@@ -68,7 +73,7 @@ class PrimaryVisualArea:
             return features
             
         except Exception as e:
-            logger.error(f"Error processing raw visual: {e}")
+            journaling_manager.recordError(f"Error processing raw visual: {e}")
             return {}
             
     def _detect_edges(self, image: np.ndarray) -> np.ndarray:
@@ -85,5 +90,14 @@ class PrimaryVisualArea:
             return edges
             
         except Exception as e:
-            logger.error(f"Error detecting edges: {e}")
-            return np.zeros_like(image[:,:,0]) 
+            journaling_manager.recordError(f"Error detecting edges: {e}")
+            return np.zeros_like(image[:,:,0])
+
+    async def cleanup(self) -> None:
+        """Clean up resources"""
+        try:
+            self._initialized = False
+            journaling_manager.recordInfo("Primary visual area cleaned up")
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up primary visual area: {e}")
+            raise 
