@@ -19,6 +19,7 @@ sys.path.append(project_root)
 from Mind.mind import Mind
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
@@ -231,60 +232,94 @@ async def run_frontal_cortex_test(mind: Mind) -> None:
         logger.error(f"Frontal cortex test error: {e}")
         raise
 
-def parse_args() -> argparse.Namespace:
+def parse_args():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Run PenphinMind system or brain region tests")
-    parser.add_argument(
-        "--unit-test",
-        choices=list(BrainRegion.get_aliases().keys()),
-        help="Run unit tests for a specific brain region. Available regions: vc (visual cortex), ac (auditory cortex), fc (frontal cortex), full (full mind)"
-    )
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Run system in demo mode"
+    parser = argparse.ArgumentParser(
+        description="""PenphinMind - A Neuromorphic AI System
+
+This system implements a bicameral mind architecture with various neural subsystems:
+- Visual Cortex (vc): LED Matrix and visual processing
+- Auditory Cortex (ac): Audio processing and speech
+- Frontal Cortex (fc): Language processing and LLM
+- Full Mind (full): Complete system integration
+
+Each mode provides direct interaction with its respective subsystem.""",
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    # Check if --unit-test is used without a value
-    if "--unit-test" in sys.argv and len(sys.argv) > sys.argv.index("--unit-test") + 1:
-        if sys.argv[sys.argv.index("--unit-test") + 1].startswith("--"):
-            print("\nError: --unit-test requires a brain region suffix")
+    parser.add_argument(
+        '--mode',
+        choices=['vc', 'ac', 'fc', 'full'],
+        help="""Run in specific mode:
+  vc  - Visual Cortex (LED Matrix)
+        Test LED matrix and visual processing
+        Example: python run.py --mode vc
+        
+  ac  - Auditory Cortex (Audio)
+        Test audio processing and speech
+        Example: python run.py --mode ac
+        
+  fc  - Frontal Cortex (LLM)
+        Direct interaction with the LLM system
+        Example: python run.py --mode fc
+        
+  full - Full Mind
+        Run the complete system
+        Example: python run.py --mode full"""
+    )
+    
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help="""Enable debug logging for detailed system information.
+This will show all debug messages and system state changes."""
+    )
+    
+    # Check if --mode is used without a value
+    if "--mode" in sys.argv and len(sys.argv) > sys.argv.index("--mode") + 1:
+        if sys.argv[sys.argv.index("--mode") + 1].startswith("--"):
+            print("\nError: --mode requires a brain region suffix")
             print("Available regions:")
             print("  vc  - Visual Cortex (LED Matrix)")
             print("  ac  - Auditory Cortex (Audio)")
             print("  fc  - Frontal Cortex (LLM)")
             print("  full - Full Mind (All Cortices)")
-            print("\nExample: python run.py --unit-test fc")
+            print("\nExample: python run.py --mode fc")
             sys.exit(1)
             
     return parser.parse_args()
 
-async def main() -> None:
+async def main():
     """Main entry point"""
-    # Parse arguments
     args = parse_args()
     
-    # Initialize mind
-    mind = PenphinMind()
+    # Initialize logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=log_level)
+    logger = logging.getLogger(__name__)
     
     try:
-        # Determine which mode to run
-        if args.unit_test:
-            region = BrainRegion.get_aliases()[args.unit_test]
+        # Set mode in SynapticPathways
+        if args.mode:
+            SynapticPathways.set_mode(args.mode)
             
-            if region == BrainRegion.VISUAL_CORTEX:
-                await run_visual_cortex_test(mind.mind)
-            elif region == BrainRegion.AUDITORY_CORTEX:
-                await run_auditory_cortex_test(mind.mind)
-            elif region == BrainRegion.FRONTAL_CORTEX:
-                await run_frontal_cortex_test(mind.mind)
-            else:
-                await mind.run()
+        penphin = PenphinMind()
+        
+        if args.mode:
+            if args.mode == 'vc':
+                await run_visual_cortex_test(penphin.mind)
+            elif args.mode == 'ac':
+                await run_auditory_cortex_test(penphin.mind)
+            elif args.mode == 'fc':
+                await run_frontal_cortex_test(penphin.mind)
+            elif args.mode == 'full':
+                await penphin.run()
         else:
-            await mind.run()
+            await penphin.run()
             
-    finally:
-        await mind.cleanup()
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main()) 

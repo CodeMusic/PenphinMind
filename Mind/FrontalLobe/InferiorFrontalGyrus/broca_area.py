@@ -43,7 +43,7 @@ class BrocaArea:
             "error": None
         }
         
-    async def initialize(self, test_mode: bool = False) -> None:
+    async def initialize(self) -> None:
         """Initialize Broca's area"""
         journaling_manager.recordScope("BrocaArea.initialize")
         if self._initialized:
@@ -52,7 +52,7 @@ class BrocaArea:
             
         try:
             # Initialize LLM
-            await self._llm.initialize(test_mode)
+            await self._llm.initialize()
             
             # Initialize components
             self._initialized = True

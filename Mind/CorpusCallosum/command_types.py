@@ -26,21 +26,19 @@ class CommandType(Enum):
     WHISPER = "whisper"  # Speech Recognition
     MELOTTS = "melotts"  # Neural TTS
 
-@dataclass
 class BaseCommand:
     """Base class for all neural commands"""
-    command_type: CommandType
-    action: str = "process"  # Default action for all commands
-    
-    def __post_init__(self):
-        """Initialize command timestamp"""
-        journaling_manager.recordScope("BaseCommand.__post_init__")
+    def __init__(self, command_type: CommandType, action: str = "process"):
+        """Initialize base command"""
+        journaling_manager.recordScope("BaseCommand.__init__")
         try:
-            if not isinstance(self.command_type, CommandType):
-                journaling_manager.recordError(f"Invalid command type: {self.command_type}")
+            if not isinstance(command_type, CommandType):
+                journaling_manager.recordError(f"Invalid command type: {command_type}")
                 raise ValueError("Command type must be a CommandType enum")
                 
-            self.timestamp: float = time.time()
+            self.command_type = command_type
+            self.action = action
+            self.timestamp = time.time()
             journaling_manager.recordDebug(f"Command timestamp set to: {self.timestamp}")
             
         except Exception as e:

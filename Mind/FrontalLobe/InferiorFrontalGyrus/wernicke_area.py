@@ -44,7 +44,7 @@ class WernickeArea:
             "error": None
         }
         
-    async def initialize(self, test_mode: bool = False) -> None:
+    async def initialize(self) -> None:
         """Initialize Wernicke's area"""
         journaling_manager.recordScope("WernickeArea.initialize")
         if self._initialized:
@@ -53,7 +53,7 @@ class WernickeArea:
             
         try:
             # Initialize LLM
-            await self._llm.initialize(test_mode)
+            await self._llm.initialize()
             
             # Initialize components
             self._initialized = True

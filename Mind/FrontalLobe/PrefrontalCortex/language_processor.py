@@ -41,7 +41,7 @@ class LanguageProcessor:
             "error": None
         }
         
-    async def initialize(self, test_mode: bool = False) -> None:
+    async def initialize(self) -> None:
         """Initialize the language processor"""
         journaling_manager.recordScope("LanguageProcessor.initialize")
         if self._initialized:
@@ -55,9 +55,9 @@ class LanguageProcessor:
             self._wernicke = WernickeArea()
             
             # Initialize all components
-            await self._llm.initialize(test_mode)
-            await self._broca.initialize(test_mode)
-            await self._wernicke.initialize(test_mode)
+            await self._llm.initialize()
+            await self._broca.initialize()
+            await self._wernicke.initialize()
             
             self._initialized = True
             journaling_manager.recordInfo("Language processor initialized")

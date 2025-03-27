@@ -150,11 +150,12 @@ class Mind:
             return
             
         try:
-            # Initialize synaptic pathways with appropriate test mode
+            # Check if running on Raspberry Pi for logging
             is_raspberry_pi = self._is_raspberry_pi()
-            test_mode = not is_raspberry_pi
-            journaling_manager.recordInfo(f"Running on {'Raspberry Pi' if is_raspberry_pi else 'non-Raspberry Pi'}, test_mode={test_mode}")
-            await SynapticPathways.initialize(test_mode=test_mode)
+            journaling_manager.recordInfo(f"Running on {'Raspberry Pi' if is_raspberry_pi else 'non-Raspberry Pi'}")
+            
+            # Initialize synaptic pathways
+            await SynapticPathways.initialize()
             
             # Initialize all integration areas
             for area in self.temporal_lobe.values():
@@ -173,7 +174,7 @@ class Mind:
                 
             # Initialize language processor
             self._language_processor = LanguageProcessor()
-            await self._language_processor.initialize(test_mode)
+            await self._language_processor.initialize()
                 
             self._initialized = True
             journaling_manager.recordInfo("Mind initialized successfully")

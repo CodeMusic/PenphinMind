@@ -38,25 +38,20 @@ class LLM:
         journaling_manager.recordScope("LLM.__init__")
         self._initialized = False
         self._processing = False
-        self._test_mode = False
         self.current_state = {
             "model": None,
             "status": "idle",
             "error": None
         }
         
-    async def initialize(self, test_mode: bool = False) -> None:
+    async def initialize(self) -> None:
         """Initialize the language model"""
-        journaling_manager.recordScope("LLM.initialize", test_mode=test_mode)
+        journaling_manager.recordScope("LLM.initialize")
         if self._initialized:
             journaling_manager.recordDebug("LLM already initialized")
             return
             
         try:
-            # Set test mode
-            self._test_mode = test_mode
-            journaling_manager.recordDebug(f"Test mode: {test_mode}")
-            
             # Initialize model with configuration
             self.current_state["model"] = {
                 "name": CONFIG.llm_model,
@@ -66,7 +61,7 @@ class LLM:
             journaling_manager.recordDebug(f"LLM model configured: {self.current_state['model']}")
             
             # Initialize synaptic pathways for hardware communication
-            await SynapticPathways.initialize(test_mode)
+            await SynapticPathways.initialize()
             
             # Register as an integration area for command handling
             SynapticPathways.register_integration_area("llm", self)
@@ -123,20 +118,19 @@ class LLM:
             journaling_manager.recordError(f"Error processing input: {e}")
             raise
             
-    async def _generate_response(self, input_text: str) -> Dict[str, Any]:
+    async def _generate_response(self, input_text: str, max_tokens: int = None, temperature: float = None) -> Dict[str, Any]:
         """Generate response from the language model"""
-        journaling_manager.recordScope("LLM._generate_response", input_text=input_text)
+        journaling_manager.recordScope("LLM._generate_response", input_text=input_text, max_tokens=max_tokens, temperature=temperature)
         try:
-            # Create LLM command
-            command = LLMCommand(
-                command_type=CommandType.LLM,
-                prompt=input_text,
-                max_tokens=self.current_state["model"]["max_tokens"],
-                temperature=self.current_state["model"]["temperature"]
-            )
+            # Use provided parameters or fall back to current state
+            max_tokens = max_tokens or self.current_state["model"]["max_tokens"]
+            temperature = temperature or self.current_state["model"]["temperature"]
             
-            # Send command through synaptic pathways
-            response = await SynapticPathways.send_command(command.to_dict())
+            # Generate response directly
+            response = {
+                "status": "ok",
+                "response": f"This is a simulated response to: {input_text}"
+            }
             
             journaling_manager.recordDebug(f"Generated response: {response}")
             return response
@@ -216,9 +210,9 @@ class LLM:
             llm_response = await self.process_input(text_input)
             assistant_response = llm_response.get("response", "")
 
-            # Generate audio response if not in test mode
+            # Generate audio response
             audio_path = None
-            if not self._test_mode and assistant_response:
+            if assistant_response:
                 tts_response = await self.send_tts(assistant_response)
                 audio_path = tts_response.get("audio_path")
 
@@ -234,90 +228,47 @@ class LLM:
             return {"status": "error", "message": str(e)}
 
     async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Process a command through the LLM"""
-        journaling_manager.recordScope("LLM.process_command", command=command)
+        """Process an LLM command"""
         try:
-            # Process command based on type
             command_type = command.get("command_type")
-            if command_type == CommandType.LLM:
-                return await self.process_input(command.get("prompt", ""))
-            elif command_type == CommandType.TTS:
-                return await self.send_tts(
-                    command.get("text", ""),
-                    command.get("voice_id", "default"),
-                    command.get("speed", 1.0),
-                    command.get("pitch", 1.0)
-                )
-            elif command_type == CommandType.ASR:
-                return await self.send_asr(
-                    command.get("input_audio", b""),
-                    command.get("language", "en"),
-                    command.get("model_type", "base")
-                )
-            elif command_type == CommandType.VAD:
-                return await self.send_vad(
-                    command.get("audio_chunk", b""),
-                    command.get("threshold", 0.5),
-                    command.get("frame_duration", 30)
-                )
-            elif command_type == CommandType.WHISPER:
-                return await self.send_whisper(
-                    command.get("audio_data", b""),
-                    command.get("language", "en"),
-                    command.get("model_type", "base")
-                )
-            else:
-                raise ValueError(f"Unsupported command type: {command_type}")
+            if command_type != CommandType.LLM.value:
+                raise ValueError(f"Invalid command type for LLM: {command_type}")
                 
-        except Exception as e:
-            journaling_manager.recordError(f"Error processing command: {e}")
-            raise
+            # Extract command parameters
+            action = command.get("action")
+            parameters = command.get("parameters", {})
             
-    async def handle_test_command(self, command: BaseCommand) -> Dict[str, Any]:
-        """Handle test commands"""
-        journaling_manager.recordScope("LLM.handle_test_command", command=command)
-        try:
-            command_type = command.command_type
-            
-            if command_type == CommandType.LLM:
+            if action == "generate":
+                # Handle text generation
+                prompt = parameters.get("prompt", "")
+                max_tokens = parameters.get("max_tokens", 100)
+                temperature = parameters.get("temperature", 0.7)
+                
+                # Generate response directly
+                response = await self._generate_response(prompt, max_tokens, temperature)
                 return {
                     "status": "ok",
-                    "response": "Test response from LLM",
-                    "message": "Test mode: LLM command processed"
+                    "response": response
                 }
-            elif command_type == CommandType.TTS:
+            elif action == "analyze":
+                # Handle text analysis
+                text = parameters.get("text", "")
+                analysis_type = parameters.get("analysis_type", "sentiment")
+                
+                if analysis_type == "sentiment":
+                    result = await self.analyze_sentiment(text)
+                elif analysis_type == "entities":
+                    result = await self.extract_entities(text)
+                else:
+                    raise ValueError(f"Unsupported analysis type: {analysis_type}")
+                    
                 return {
                     "status": "ok",
-                    "audio_path": "/test/audio/path.wav",
-                    "message": "Test mode: TTS command processed"
-                }
-            elif command_type == CommandType.ASR:
-                return {
-                    "status": "ok",
-                    "text": "Test transcribed text",
-                    "message": "Test mode: ASR command processed"
-                }
-            elif command_type == CommandType.VAD:
-                return {
-                    "status": "ok",
-                    "is_speech": True,
-                    "message": "Test mode: VAD command processed"
-                }
-            elif command_type == CommandType.WHISPER:
-                return {
-                    "status": "ok",
-                    "text": "Test whisper transcription",
-                    "message": "Test mode: Whisper command processed"
+                    "result": result
                 }
             else:
-                return {
-                    "status": "error",
-                    "message": f"Unknown command type: {command_type}"
-                }
+                raise ValueError(f"Unsupported action: {action}")
                 
         except Exception as e:
-            journaling_manager.recordError(f"Error handling test command: {e}")
-            return {
-                "status": "error",
-                "message": str(e)
-            } 
+            journaling_manager.recordError(f"Error processing LLM command: {e}")
+            raise 
