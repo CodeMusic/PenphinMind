@@ -1,5 +1,20 @@
 """
-Motor Integration Area - Processes and integrates motor commands
+Neurological Function:
+    Motor Integration System:
+    - Command processing
+    - Movement planning
+    - Execution coordination
+    - State management
+    - Error handling
+    - Feedback processing
+    - Motor learning
+
+Project Function:
+    Handles motor integration:
+    - Command processing
+    - Movement planning
+    - Execution coordination
+    - State management
 """
 
 import logging
@@ -10,16 +25,26 @@ from ...config import CONFIG
 from .planning_area import PlanningArea
 from .coordination_area import CoordinationArea
 from .pin_definitions import PinDefinitions
+from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class IntegrationArea:
     """Processes and integrates motor commands"""
     
     def __init__(self):
         """Initialize the integration area"""
+        journaling_manager.recordScope("IntegrationArea.__init__")
         self._initialized = False
         self._processing = False
+        self.current_state = {
+            "command": None,
+            "status": "idle",
+            "error": None
+        }
         
         # Register with SynapticPathways
         SynapticPathways.register_integration_area("motor", this)
@@ -30,20 +55,32 @@ class IntegrationArea:
         
     async def initialize(self) -> None:
         """Initialize the integration area"""
+        journaling_manager.recordScope("IntegrationArea.initialize")
         if self._initialized:
+            journaling_manager.recordDebug("Integration area already initialized")
             return
             
         try:
-            # Initialize motor processing components
             self._initialized = True
-            logger.info("Motor integration area initialized")
+            journaling_manager.recordInfo("Integration area initialized")
             
-            # Initialize planning and coordination areas
+            # Initialize motor processing components
             await self.planning.initialize()
             await self.coordination.initialize()
             
         except Exception as e:
-            logger.error(f"Failed to initialize motor integration area: {e}")
+            journaling_manager.recordError(f"Failed to initialize integration area: {e}")
+            raise
+            
+    async def cleanup(self) -> None:
+        """Clean up the integration area"""
+        journaling_manager.recordScope("IntegrationArea.cleanup")
+        try:
+            self._initialized = False
+            journaling_manager.recordInfo("Integration area cleaned up")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up integration area: {e}")
             raise
             
     async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,33 +125,91 @@ class IntegrationArea:
             
     async def execute_movement(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a movement command"""
+        journaling_manager.recordScope("IntegrationArea.execute_movement", movement_data=movement_data)
         try:
+            if not self._initialized:
+                journaling_manager.recordError("Integration area not initialized")
+                raise RuntimeError("Integration area not initialized")
+                
+            if self._processing:
+                journaling_manager.recordError("Already processing a movement")
+                raise RuntimeError("Already processing a movement")
+                
+            self._processing = True
+            self.current_state["command"] = movement_data
+            self.current_state["status"] = "executing"
+            
             # Plan the movement
             movement_plan = await self.planning.plan_movement(movement_data)
+            journaling_manager.recordDebug(f"Movement plan created: {movement_plan}")
             
             # Coordinate the execution
             result = await self.coordination.execute_movement_plan(movement_plan)
+            journaling_manager.recordDebug(f"Movement execution result: {result}")
+            
+            self._processing = False
+            self.current_state["status"] = "completed"
+            journaling_manager.recordInfo("Movement executed successfully")
             
             return result
+            
         except Exception as e:
-            raise Exception(f"Error executing movement: {e}")
+            self._processing = False
+            self.current_state["status"] = "error"
+            self.current_state["error"] = str(e)
+            journaling_manager.recordError(f"Error executing movement: {e}")
+            raise
             
     async def stop_movement(self) -> None:
         """Stop all current movements"""
+        journaling_manager.recordScope("IntegrationArea.stop_movement")
         try:
+            if not self._initialized:
+                journaling_manager.recordError("Integration area not initialized")
+                raise RuntimeError("Integration area not initialized")
+                
             await self.coordination.stop_all_movements()
+            self._processing = False
+            self.current_state["status"] = "stopped"
+            journaling_manager.recordInfo("All movements stopped")
+            
         except Exception as e:
-            raise Exception(f"Error stopping movement: {e}")
+            journaling_manager.recordError(f"Error stopping movement: {e}")
+            raise
             
     async def process_motor_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Process a motor command"""
+        journaling_manager.recordScope("IntegrationArea.process_motor_command", command=command)
         try:
+            if not self._initialized:
+                journaling_manager.recordError("Integration area not initialized")
+                raise RuntimeError("Integration area not initialized")
+                
+            if self._processing:
+                journaling_manager.recordError("Already processing a command")
+                raise RuntimeError("Already processing a command")
+                
+            self._processing = True
+            self.current_state["command"] = command
+            self.current_state["status"] = "processing"
+            
             # Plan the command
             command_plan = await self.planning.plan_command(command)
+            journaling_manager.recordDebug(f"Command plan created: {command_plan}")
             
             # Execute the command
             result = await self.coordination.execute_command(command_plan)
+            journaling_manager.recordDebug(f"Command execution result: {result}")
+            
+            self._processing = False
+            self.current_state["status"] = "completed"
+            journaling_manager.recordInfo("Command processed successfully")
             
             return result
+            
         except Exception as e:
-            raise Exception(f"Error processing motor command: {e}") 
+            self._processing = False
+            self.current_state["status"] = "error"
+            self.current_state["error"] = str(e)
+            journaling_manager.recordError(f"Error processing motor command: {e}")
+            raise 

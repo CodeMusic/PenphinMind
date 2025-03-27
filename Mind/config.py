@@ -9,11 +9,13 @@ from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass
 from enum import Enum
 import os
+from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 # Get the project root directory (where config.py is located)
 PROJECT_ROOT = Path(__file__).parent
 
-logger = logging.getLogger(__name__)
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class AudioOutputType(str, Enum):
     """Audio output device types"""
@@ -25,6 +27,8 @@ class MentalConfiguration:
     Configuration settings for the PenphinMind system
     """
     def __init__(self):
+        journaling_manager.recordScope("MentalConfiguration.__init__")
+        
         # Audio settings
         self.sample_rate = 16000
         self.channels = 1
@@ -55,62 +59,88 @@ class MentalConfiguration:
         # System settings
         self.debug_mode = False
         self.log_level = "INFO"
+        self.log_file = str(PROJECT_ROOT / "logs" / "penphin.log")
         
         # Load environment variables
         self._load_env_vars()
         
+        journaling_manager.recordInfo("Mental configuration initialized")
+        
     def _load_env_vars(self) -> None:
         """Load configuration from environment variables"""
+        journaling_manager.recordScope("MentalConfiguration._load_env_vars")
+        
         # Audio settings
         if "PENPHIN_SAMPLE_RATE" in os.environ:
             self.sample_rate = int(os.environ["PENPHIN_SAMPLE_RATE"])
+            journaling_manager.recordDebug(f"Loaded sample rate from env: {self.sample_rate}")
         if "PENPHIN_CHANNELS" in os.environ:
             self.channels = int(os.environ["PENPHIN_CHANNELS"])
+            journaling_manager.recordDebug(f"Loaded channels from env: {self.channels}")
         if "PENPHIN_CHUNK_SIZE" in os.environ:
             self.chunk_size = int(os.environ["PENPHIN_CHUNK_SIZE"])
+            journaling_manager.recordDebug(f"Loaded chunk size from env: {self.chunk_size}")
             
         # Audio device controls
         if "PENPHIN_AUDIO_VOLUME" in os.environ:
             self.audio_device_controls["volume"] = int(os.environ["PENPHIN_AUDIO_VOLUME"])
+            journaling_manager.recordDebug(f"Loaded audio volume from env: {self.audio_device_controls['volume']}")
         if "PENPHIN_AUDIO_MUTE" in os.environ:
             self.audio_device_controls["mute"] = os.environ["PENPHIN_AUDIO_MUTE"].lower() == "true"
+            journaling_manager.recordDebug(f"Loaded audio mute from env: {self.audio_device_controls['mute']}")
         if "PENPHIN_AUDIO_INPUT" in os.environ:
             self.audio_device_controls["input_device"] = os.environ["PENPHIN_AUDIO_INPUT"]
+            journaling_manager.recordDebug(f"Loaded audio input device from env: {self.audio_device_controls['input_device']}")
         if "PENPHIN_AUDIO_OUTPUT" in os.environ:
             self.audio_device_controls["output_device"] = os.environ["PENPHIN_AUDIO_OUTPUT"]
+            journaling_manager.recordDebug(f"Loaded audio output device from env: {self.audio_device_controls['output_device']}")
         if "PENPHIN_AUDIO_LATENCY" in os.environ:
             self.audio_device_controls["latency"] = float(os.environ["PENPHIN_AUDIO_LATENCY"])
+            journaling_manager.recordDebug(f"Loaded audio latency from env: {self.audio_device_controls['latency']}")
         if "PENPHIN_AUDIO_BUFFER" in os.environ:
             self.audio_device_controls["buffer_size"] = int(os.environ["PENPHIN_AUDIO_BUFFER"])
+            journaling_manager.recordDebug(f"Loaded audio buffer size from env: {self.audio_device_controls['buffer_size']}")
             
         # Visual settings
         if "PENPHIN_VISUAL_HEIGHT" in os.environ:
             self.visual_height = int(os.environ["PENPHIN_VISUAL_HEIGHT"])
+            journaling_manager.recordDebug(f"Loaded visual height from env: {self.visual_height}")
         if "PENPHIN_VISUAL_WIDTH" in os.environ:
             self.visual_width = int(os.environ["PENPHIN_VISUAL_WIDTH"])
+            journaling_manager.recordDebug(f"Loaded visual width from env: {self.visual_width}")
         if "PENPHIN_VISUAL_FPS" in os.environ:
             self.visual_fps = int(os.environ["PENPHIN_VISUAL_FPS"])
+            journaling_manager.recordDebug(f"Loaded visual FPS from env: {self.visual_fps}")
             
         # Motor settings
         if "PENPHIN_MOTOR_SPEED" in os.environ:
             self.motor_speed = int(os.environ["PENPHIN_MOTOR_SPEED"])
+            journaling_manager.recordDebug(f"Loaded motor speed from env: {self.motor_speed}")
         if "PENPHIN_MOTOR_ACCELERATION" in os.environ:
             self.motor_acceleration = int(os.environ["PENPHIN_MOTOR_ACCELERATION"])
+            journaling_manager.recordDebug(f"Loaded motor acceleration from env: {self.motor_acceleration}")
             
         # LLM settings
         if "PENPHIN_LLM_MODEL" in os.environ:
             self.llm_model = os.environ["PENPHIN_LLM_MODEL"]
+            journaling_manager.recordDebug(f"Loaded LLM model from env: {self.llm_model}")
         if "PENPHIN_LLM_TEMPERATURE" in os.environ:
             self.llm_temperature = float(os.environ["PENPHIN_LLM_TEMPERATURE"])
+            journaling_manager.recordDebug(f"Loaded LLM temperature from env: {self.llm_temperature}")
         if "PENPHIN_LLM_MAX_TOKENS" in os.environ:
             self.llm_max_tokens = int(os.environ["PENPHIN_LLM_MAX_TOKENS"])
+            journaling_manager.recordDebug(f"Loaded LLM max tokens from env: {self.llm_max_tokens}")
             
         # System settings
         if "PENPHIN_DEBUG_MODE" in os.environ:
             self.debug_mode = os.environ["PENPHIN_DEBUG_MODE"].lower() == "true"
+            journaling_manager.recordDebug(f"Loaded debug mode from env: {self.debug_mode}")
         if "PENPHIN_LOG_LEVEL" in os.environ:
-            self.log_level = os.environ["PENPHIN_LOG_LEVEL"].upper()
+            self.log_level = os.environ["PENPHIN_LOG_LEVEL"]
+            journaling_manager.recordDebug(f"Loaded log level from env: {self.log_level}")
             
+        journaling_manager.recordInfo("Environment variables loaded successfully")
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary"""
         return {

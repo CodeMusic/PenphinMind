@@ -12,12 +12,12 @@ import signal
 from datetime import datetime
 import time
 
-# Add the Mind package to Python path
+# Add the project root to Python path
 project_root = str(Path(__file__).parent)
 sys.path.append(project_root)
 
-from .Mind.mind import Mind
-from .Mind.config import CONFIG
+from Mind.mind import Mind
+from Mind.config import CONFIG
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent

@@ -18,14 +18,17 @@ import logging
 from typing import Dict, Any, Optional
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...config import CONFIG
+from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
-logger = logging.getLogger(__name__)
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class Motor:
     """Handles motor control functionality"""
     
     def __init__(self):
         """Initialize the motor controller"""
+        journaling_manager.recordScope("Motor.__init__")
         self._initialized = False
         self._processing = False
         self.current_state = {
@@ -36,85 +39,106 @@ class Motor:
         
     async def initialize(self) -> None:
         """Initialize the motor controller"""
+        journaling_manager.recordScope("Motor.initialize")
         if self._initialized:
+            journaling_manager.recordDebug("Motor already initialized")
             return
             
         try:
             self._initialized = True
-            logger.info("Motor controller initialized")
+            journaling_manager.recordInfo("Motor controller initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize motor controller: {e}")
+            journaling_manager.recordError(f"Failed to initialize motor controller: {e}")
             raise
             
-    async def execute_movement(self, command: Dict[str, Any]) -> Dict[str, Any]:
+    async def cleanup(self) -> None:
+        """Clean up the motor controller"""
+        journaling_manager.recordScope("Motor.cleanup")
+        try:
+            if not self._initialized:
+                journaling_manager.recordDebug("Motor not initialized, skipping cleanup")
+                return
+                
+            self._initialized = False
+            self._processing = False
+            journaling_manager.recordInfo("Motor controller cleaned up")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up motor controller: {e}")
+            raise
+            
+    async def execute_movement(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute a movement command
         
         Args:
-            command: Movement command with parameters
+            movement_data: Dictionary containing movement parameters
             
         Returns:
-            Dict[str, Any]: Movement result
+            Dict[str, Any]: Movement execution result
         """
+        journaling_manager.recordScope("Motor.execute_movement", movement_data=movement_data)
         try:
+            if not self._initialized:
+                journaling_manager.recordError("Motor controller not initialized")
+                raise RuntimeError("Motor controller not initialized")
+                
+            if self._processing:
+                journaling_manager.recordDebug("Movement already in progress")
+                return {"status": "busy", "message": "Movement already in progress"}
+                
+            self._processing = True
+            journaling_manager.recordDebug("Starting movement execution")
+            
             # Process movement command
-            movement_type = command.get("type", "linear")
-            target = command.get("target", {})
-            
-            # Update current state
-            self.current_state["position"] = target
-            
-            # Send command through SynapticPathways
             await SynapticPathways.transmit_command({
                 "command_type": "motor",
-                "operation": "move",
-                "parameters": command
+                "operation": "execute",
+                "data": movement_data
             })
             
-            return {
-                "status": "ok",
-                "movement_type": movement_type,
-                "target": target
-            }
+            # Update state
+            self.current_state.update(movement_data)
+            journaling_manager.recordDebug(f"Updated motor state: {self.current_state}")
+            
+            self._processing = False
+            journaling_manager.recordInfo("Movement executed successfully")
+            return {"status": "ok", "message": "Movement executed"}
             
         except Exception as e:
-            logger.error(f"Error executing movement: {e}")
+            self._processing = False
+            journaling_manager.recordError(f"Error executing movement: {e}")
             return {"status": "error", "message": str(e)}
             
-    async def stop_movement(self) -> Dict[str, Any]:
-        """Stop current movement"""
+    async def stop_movement(self) -> None:
+        """Stop all current movements"""
+        journaling_manager.recordScope("Motor.stop_movement")
         try:
+            if not self._initialized:
+                journaling_manager.recordDebug("Motor not initialized, skipping stop")
+                return
+                
+            if not self._processing:
+                journaling_manager.recordDebug("No movement in progress")
+                return
+                
             # Send stop command
             await SynapticPathways.transmit_command({
                 "command_type": "motor",
                 "operation": "stop"
             })
             
-            # Reset velocity and acceleration
-            self.current_state["velocity"] = {"x": 0, "y": 0}
-            self.current_state["acceleration"] = {"x": 0, "y": 0}
+            # Reset state
+            self.current_state = {
+                "position": self.current_state["position"],
+                "velocity": {"x": 0, "y": 0},
+                "acceleration": {"x": 0, "y": 0}
+            }
             
-            return {"status": "ok", "message": "Movement stopped"}
-            
-        except Exception as e:
-            logger.error(f"Error stopping movement: {e}")
-            return {"status": "error", "message": str(e)}
-            
-    async def get_state(self) -> Dict[str, Any]:
-        """Get current motor state"""
-        return {
-            "status": "ok",
-            "state": self.current_state
-        }
-        
-    async def cleanup(self) -> None:
-        """Clean up resources"""
-        try:
-            await self.stop_movement()
-            self._initialized = False
-            logger.info("Motor controller cleaned up")
+            self._processing = False
+            journaling_manager.recordInfo("All movements stopped")
             
         except Exception as e:
-            logger.error(f"Error cleaning up motor controller: {e}")
+            journaling_manager.recordError(f"Error stopping movement: {e}")
             raise 

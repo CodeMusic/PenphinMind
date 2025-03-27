@@ -1,145 +1,125 @@
 """
 Neurological Function:
-    Prefrontal Cortex (PFC) handles executive functions:
-    - Decision making
-    - Planning
-    - Personality expression
-    - Social behavior
+    Language Model System:
+    - Natural language processing
+    - Text generation
+    - Context understanding
+    - Semantic analysis
+    - Response generation
+    - Language comprehension
+    - Cognitive processing
 
 Project Function:
-    Handles language model interactions:
-    - Text generation
-    - Response processing
+    Handles language processing:
+    - Text input processing
+    - Response generation
     - Context management
-    - Personality expression
+    - Model interaction
 """
 
 import logging
 from typing import Dict, Any, Optional
-from ...CorpusCallosum.synaptic_pathways import SynapticPathways
-from ...CorpusCallosum.neural_commands import LLMCommand, CommandType
 from ...config import CONFIG
+from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
-logger = logging.getLogger(__name__)
-
-async def process_prompt(prompt: str, max_tokens: int = 150, temperature: float = 0.7) -> Dict[str, Any]:
-    """
-    Process a prompt through the AX630C neural processor over USB serial
-    
-    Args:
-        prompt: Text to process
-        max_tokens: Maximum tokens to generate
-        temperature: Temperature for generation
-        
-    Returns:
-        Dict[str, Any]: Processed response
-    """
-    try:
-        # Create LLM command
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-        
-        # Send command directly to AX630C
-        response = await command.execute()
-        
-        return {
-            "status": "ok",
-            "response": response.get("text", "")
-        }
-        
-    except Exception as e:
-        logger.error(f"Error processing prompt: {e}")
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class LLM:
     """Handles language model interactions"""
     
     def __init__(self):
-        """Initialize the LLM handler"""
+        """Initialize the language model"""
+        journaling_manager.recordScope("LLM.__init__")
         self._initialized = False
         self._processing = False
-        self.context = []
-        self.personality_traits = {
-            "empathy": 0.8,
-            "curiosity": 0.9,
-            "creativity": 0.7
+        self.current_state = {
+            "model": None,
+            "status": "idle",
+            "error": None
         }
         
     async def initialize(self) -> None:
-        """Initialize the LLM handler"""
+        """Initialize the language model"""
+        journaling_manager.recordScope("LLM.initialize")
         if self._initialized:
+            journaling_manager.recordDebug("LLM already initialized")
             return
             
         try:
+            # Initialize model with configuration
+            self.current_state["model"] = {
+                "name": CONFIG.llm_model,
+                "temperature": CONFIG.llm_temperature,
+                "max_tokens": CONFIG.llm_max_tokens
+            }
+            journaling_manager.recordDebug(f"LLM model configured: {self.current_state['model']}")
+            
             self._initialized = True
-            logger.info("LLM handler initialized")
+            journaling_manager.recordInfo("Language model initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize LLM handler: {e}")
+            journaling_manager.recordError(f"Failed to initialize language model: {e}")
+            raise
+            
+    async def cleanup(self) -> None:
+        """Clean up the language model"""
+        journaling_manager.recordScope("LLM.cleanup")
+        try:
+            self._initialized = False
+            self.current_state["model"] = None
+            journaling_manager.recordInfo("Language model cleaned up")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up language model: {e}")
             raise
             
     async def process_input(self, input_text: str) -> Dict[str, Any]:
-        """
-        Process input text through the language model
-        
-        Args:
-            input_text: Text to process
-            
-        Returns:
-            Dict[str, Any]: Processed response
-        """
+        """Process text input through the language model"""
+        journaling_manager.recordScope("LLM.process_input", input_text=input_text)
         try:
-            # Add input to context
-            self.context.append({"role": "user", "content": input_text})
+            if not self._initialized:
+                journaling_manager.recordError("Language model not initialized")
+                raise RuntimeError("Language model not initialized")
+                
+            if self._processing:
+                journaling_manager.recordError("Already processing input")
+                raise RuntimeError("Already processing input")
+                
+            self._processing = True
+            self.current_state["status"] = "processing"
             
-            # Create LLM command
-            command = LLMCommand(
-                command_type=CommandType.LLM,
-                prompt=input_text,
-                max_tokens=150,
-                temperature=0.7
-            )
+            # Process input through model
+            response = await self._generate_response(input_text)
+            journaling_manager.recordDebug(f"Generated response: {response}")
             
-            # Send command through SynapticPathways
-            response = await SynapticPathways.send_command(command)
+            self._processing = False
+            self.current_state["status"] = "completed"
+            journaling_manager.recordInfo("Input processed successfully")
             
-            # Add response to context
-            if response.get("status") == "ok":
-                self.context.append({"role": "assistant", "content": response.get("response", "")})
-                return {
-                    "status": "ok",
-                    "response": response.get("response", ""),
-                    "context_length": len(self.context)
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": response.get("message", "Unknown error")
-                }
+            return response
             
         except Exception as e:
-            logger.error(f"Error processing input: {e}")
-            return {"status": "error", "message": str(e)}
+            self._processing = False
+            self.current_state["status"] = "error"
+            self.current_state["error"] = str(e)
+            journaling_manager.recordError(f"Error processing input: {e}")
+            raise
             
-    async def clear_context(self) -> None:
-        """Clear the conversation context"""
-        self.context = []
-        logger.info("Conversation context cleared")
-        
-    async def cleanup(self) -> None:
-        """Clean up resources"""
+    async def _generate_response(self, input_text: str) -> Dict[str, Any]:
+        """Generate response from the language model"""
+        journaling_manager.recordScope("LLM._generate_response", input_text=input_text)
         try:
-            await self.clear_context()
-            self._initialized = False
-            logger.info("LLM handler cleaned up")
+            # TODO: Implement actual model interaction
+            # For now, return a mock response
+            response = {
+                "response": f"Processed input: {input_text}",
+                "message": "Response generated successfully"
+            }
+            
+            journaling_manager.recordDebug(f"Generated response: {response}")
+            return response
             
         except Exception as e:
-            logger.error(f"Error cleaning up LLM handler: {e}")
+            journaling_manager.recordError(f"Error generating response: {e}")
             raise 

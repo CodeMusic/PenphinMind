@@ -1,4 +1,5 @@
 """
-Initialize the PenphinOS package so Python recognizes it.
+PenphinMind - Neural operating system for advanced AI interaction
 """
-# ... no other changes needed ... 
+
+__version__ = "0.1.0" 

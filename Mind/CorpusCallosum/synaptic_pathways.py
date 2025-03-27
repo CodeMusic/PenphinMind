@@ -1,5 +1,20 @@
 """
-Synaptic Pathways - Neural communication system
+Neurological Function:
+    Synaptic Pathways System:
+    - Neural communication
+    - Signal transmission
+    - Command routing
+    - Response handling
+    - Error management
+    - State tracking
+    - Connection management
+
+Project Function:
+    Handles neural communication:
+    - Command transmission
+    - Response processing
+    - Error handling
+    - State management
 """
 
 # Standard library imports
@@ -15,19 +30,24 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Callable, Type
 from enum import Enum
+import subprocess
 
 # Third-party imports
 import serial
 import serial.tools.list_ports
 
 # Local imports
-from .neural_commands import (
+from Mind.CorpusCallosum.neural_commands import (
     BaseCommand, CommandType, CommandFactory, CommandSerializer,
     TTSCommand, ASRCommand, LLMCommand, SystemCommand, WhisperCommand, VADCommand
 )
-from ..config import CONFIG
+from Mind.config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 class SerialConnectionError(Exception):
     """Raised when serial connection fails"""
@@ -50,6 +70,17 @@ class SynapticPathways:
     _integration_areas: Dict[str, Any] = {}
     welcome_message = ""
 
+    def __init__(self):
+        """Initialize the synaptic pathways"""
+        journaling_manager.recordScope("SynapticPathways.__init__")
+        self._initialized = False
+        self._processing = False
+        self.current_state = {
+            "connection": None,
+            "status": "idle",
+            "error": None
+        }
+        
     @classmethod
     def register_integration_area(cls, area_type: str, area_instance: Any) -> None:
         """Register an integration area for neural processing"""
@@ -70,29 +101,20 @@ class SynapticPathways:
     # Core initialization and setup
     @classmethod
     async def initialize(cls, test_mode: bool = False) -> None:
-        """Initialize the neural pathways system"""
-        if cls._initialized:
-            return
-            
+        """Initialize the synaptic pathways"""
+        journaling_manager.recordScope("SynapticPathways.initialize", test_mode=test_mode)
         try:
-            # Set test mode
-            cls._test_mode = test_mode
-            logger.info(f"Initializing neural pathways in {'test' if test_mode else 'production'} mode")
-            
-            # Always attempt hardware setup unless in test mode
-            if not test_mode:
-                if await cls._setup_ax630e():
-                    cls._initialized = True
-                    return
-                raise SerialConnectionError("No compatible neural processor found")
+            if test_mode:
+                journaling_manager.recordDebug("Initializing in test mode")
+                # Initialize test mode components
             else:
-                # In test mode, just mark as initialized
-                cls._initialized = True
-                logger.info("Neural pathways initialized in test mode")
-                return
+                journaling_manager.recordDebug("Initializing in production mode")
+                # Initialize production components
                 
+            journaling_manager.recordInfo("Synaptic pathways initialized")
+            
         except Exception as e:
-            logger.error(f"Failed to initialize neural pathways: {e}")
+            journaling_manager.recordError(f"Failed to initialize synaptic pathways: {e}")
             raise
 
     @classmethod
@@ -123,17 +145,37 @@ class SynapticPathways:
             logger.info("Raspberry Pi platform detected, using hardware mode")
 
     @classmethod
-    async def _setup_ax630e(cls) -> bool:
-        """Set up direct connection to neural processor"""
+    def _is_adb_available(cls) -> bool:
+        """Check if an ADB device is connected."""
         try:
-            # Look for AX630 device
-            ports = serial.tools.list_ports.comports()
-            ax630_port = None
-            
+            result = subprocess.run(["adb", "devices"], capture_output=True, text=True)
+            devices = result.stdout.strip().split("\n")[1:]  # Ignore header
+            return any(device.strip() and "device" in device for device in devices)
+        except FileNotFoundError:
+            return False  # ADB not installed
+
+    @classmethod
+    def _is_serial_available(cls) -> bool:
+        """Check if the Serial device is connected."""
+        return cls._serial_connection is not None and cls._serial_connection.is_open
+
+    @classmethod
+    async def _setup_ax630e(cls) -> bool:
+        """Set up connection to neural processor"""
+        try:
             print("\n=== Neural Processor Detection ===")
             print("Scanning for AX630...")
             
-            # Print all available ports for debugging
+            # Check for ADB device first
+            if cls._is_adb_available():
+                print("\n✓ AX630 detected in ADB mode")
+                print("=" * 50)
+                return True
+                
+            # If not in ADB mode, try serial
+            ports = serial.tools.list_ports.comports()
+            ax630_port = None
+            
             print("\nAvailable ports:")
             for port in ports:
                 print(f"Device: {port.device}")
@@ -229,44 +271,80 @@ class SynapticPathways:
             return False
             
     @classmethod
-    async def send_command(cls, command: BaseCommand) -> Dict[str, Any]:
-        """Send a command to the neural processor"""
+    async def send_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a command through the synaptic pathways"""
+        journaling_manager.recordScope("SynapticPathways.send_command", command=command)
         try:
-            if not cls._initialized:
-                raise CommandTransmissionError("Neural pathways not initialized")
-                
-            # Always try to use the real AX630C hardware
-            if not cls._serial_connection:
-                if not await cls._setup_ax630e():
-                    raise SerialConnectionError("Failed to connect to AX630C")
+            # Validate command
+            cls._validate_command(command)
             
-            # Send command directly to hardware
-            command_data = command.to_dict()
-            json_data = json.dumps(command_data) + "\n"
-            cls._serial_connection.write(json_data.encode())
-            response = cls._serial_connection.readline().decode().strip()
+            # Process command
+            response = await cls._process_command(command)
+            journaling_manager.recordDebug(f"Command processed: {response}")
             
-            if not response:
-                raise CommandTransmissionError("No response from neural processor")
-                
-            return json.loads(response)
+            return response
             
         except Exception as e:
-            logger.error(f"Error sending command: {e}")
-            raise
+            journaling_manager.recordError(f"Error sending command: {e}")
+            raise CommandTransmissionError(f"Failed to send command: {e}")
             
     @classmethod
     async def send_system_command(cls, command_type: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Send a system command"""
+        """Send a system command through the synaptic pathways"""
+        journaling_manager.recordScope("SynapticPathways.send_system_command", command_type=command_type, data=data)
         try:
+            # Create system command
             command = SystemCommand(
-                command_type=CommandType.SYSTEM,
+                command_type=CommandType.SYS,
                 action=command_type,
-                data=data or {}
+                parameters=data or {}
             )
-            return await cls.send_command(command)
+            
+            # Send command
+            response = await cls.send_command(command.to_dict())
+            journaling_manager.recordDebug(f"System command processed: {response}")
+            
+            return response
+            
         except Exception as e:
-            logger.error(f"Error sending system command: {e}")
+            journaling_manager.recordError(f"Error sending system command: {e}")
+            raise CommandTransmissionError(f"Failed to send system command: {e}")
+            
+    @classmethod
+    def _validate_command(cls, command: Dict[str, Any]) -> None:
+        """Validate a command before sending"""
+        journaling_manager.recordScope("SynapticPathways._validate_command", command=command)
+        try:
+            required_fields = ["command_type", "action"]
+            for field in required_fields:
+                if field not in command:
+                    journaling_manager.recordError(f"Missing required field: {field}")
+                    raise ValueError(f"Missing required field: {field}")
+                    
+            journaling_manager.recordDebug("Command validated successfully")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error validating command: {e}")
+            raise
+            
+    @classmethod
+    async def _process_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a command through the synaptic pathways"""
+        journaling_manager.recordScope("SynapticPathways._process_command", command=command)
+        try:
+            # TODO: Implement actual command processing
+            # For now, return a mock response
+            response = {
+                "status": "ok",
+                "message": f"Processed command: {command['action']}",
+                "data": command.get("parameters", {})
+            }
+            
+            journaling_manager.recordDebug(f"Command processed: {response}")
+            return response
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error processing command: {e}")
             raise
             
     @classmethod
@@ -279,7 +357,7 @@ class SynapticPathways:
                 max_tokens=max_tokens,
                 temperature=temperature
             )
-            return await cls.send_command(command)
+            return await cls.send_command(command.to_dict())
         except Exception as e:
             logger.error(f"Error sending LLM command: {e}")
             raise
@@ -295,7 +373,7 @@ class SynapticPathways:
                 speed=speed,
                 pitch=pitch
             )
-            return await cls.send_command(command)
+            return await cls.send_command(command.to_dict())
         except Exception as e:
             logger.error(f"Error sending TTS command: {e}")
             raise
@@ -310,7 +388,7 @@ class SynapticPathways:
                 language=language,
                 model_type=model_type
             )
-            return await cls.send_command(command)
+            return await cls.send_command(command.to_dict())
         except Exception as e:
             logger.error(f"Error sending ASR command: {e}")
             raise
@@ -325,7 +403,7 @@ class SynapticPathways:
                 threshold=threshold,
                 frame_duration=frame_duration
             )
-            return await cls.send_command(command)
+            return await cls.send_command(command.to_dict())
         except Exception as e:
             logger.error(f"Error sending VAD command: {e}")
             raise
@@ -340,7 +418,7 @@ class SynapticPathways:
                 language=language,
                 model_type=model_type
             )
-            return await cls.send_command(command)
+            return await cls.send_command(command.to_dict())
         except Exception as e:
             logger.error(f"Error sending Whisper command: {e}")
             raise
@@ -418,12 +496,20 @@ class SynapticPathways:
     # Cleanup
     @classmethod
     async def cleanup(cls) -> None:
-        """Clean up resources"""
-        if cls._serial_connection and cls._serial_connection.is_open:
-            cls._serial_connection.close()
-            cls._serial_connection = None
-        cls._initialized = False
-        logger.info("Neural pathways closed")
+        """Clean up the synaptic pathways"""
+        journaling_manager.recordScope("SynapticPathways.cleanup")
+        try:
+            # Clean up resources
+            if cls._serial_connection and cls._serial_connection.is_open:
+                cls._serial_connection.close()
+                cls._serial_connection = None
+            cls._initialized = False
+            cls._test_mode = False
+            journaling_manager.recordInfo("Synaptic pathways cleaned up")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up synaptic pathways: {e}")
+            raise
 
     @classmethod
     async def _call_llm_api(cls, prompt: str, max_tokens: int = 150, temperature: float = 0.7) -> Dict[str, Any]:

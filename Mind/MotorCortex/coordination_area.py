@@ -1,5 +1,20 @@
 """
-Motor Coordination Area - Coordinates motor movements
+Neurological Function:
+    Motor Coordination System:
+    - Movement planning
+    - Execution coordination
+    - Balance maintenance
+    - Posture control
+    - Movement sequencing
+    - Motor learning
+    - Error correction
+
+Project Function:
+    Handles motor coordination:
+    - Movement planning
+    - Execution coordination
+    - Error handling
+    - State management
 """
 
 import logging
@@ -7,6 +22,10 @@ from typing import Dict, Any, Optional
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import CommandType, SystemCommand
 from ...config import CONFIG
+from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+
+# Initialize journaling manager
+journaling_manager = SystemJournelingManager()
 
 logger = logging.getLogger(__name__)
 
@@ -15,20 +34,39 @@ class CoordinationArea:
     
     def __init__(self):
         """Initialize the coordination area"""
+        journaling_manager.recordScope("CoordinationArea.__init__")
         self._initialized = False
         self._processing = False
+        self.current_state = {
+            "movement": None,
+            "status": "idle",
+            "error": None
+        }
         
     async def initialize(self) -> None:
         """Initialize the coordination area"""
+        journaling_manager.recordScope("CoordinationArea.initialize")
         if self._initialized:
+            journaling_manager.recordDebug("Coordination area already initialized")
             return
             
         try:
             self._initialized = True
-            logger.info("Motor coordination area initialized")
+            journaling_manager.recordInfo("Coordination area initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize motor coordination area: {e}")
+            journaling_manager.recordError(f"Failed to initialize coordination area: {e}")
+            raise
+            
+    async def cleanup(self) -> None:
+        """Clean up the coordination area"""
+        journaling_manager.recordScope("CoordinationArea.cleanup")
+        try:
+            self._initialized = False
+            journaling_manager.recordInfo("Coordination area cleaned up")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error cleaning up coordination area: {e}")
             raise
             
     async def coordinate_movement(self, movement_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -42,21 +80,42 @@ class CoordinationArea:
             return {"status": "error", "message": str(e)}
 
     async def execute_movement_plan(self, movement_plan: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a planned movement sequence"""
+        """Execute a movement plan"""
+        journaling_manager.recordScope("CoordinationArea.execute_movement_plan", movement_plan=movement_plan)
         try:
-            # Initialize movement
-            await self._initialize_movement(movement_plan)
+            if not self._initialized:
+                journaling_manager.recordError("Coordination area not initialized")
+                raise RuntimeError("Coordination area not initialized")
+                
+            if self._processing:
+                journaling_manager.recordError("Already processing a movement")
+                raise RuntimeError("Already processing a movement")
+                
+            self._processing = True
+            self.current_state["movement"] = movement_plan
+            self.current_state["status"] = "executing"
             
-            # Execute sequence
-            result = await self._execute_sequence(movement_plan["sequence"])
+            # Initialize command
+            await self._initialize_command(movement_plan)
             
-            # Finalize movement
-            await self._finalize_movement()
+            # Execute command steps
+            result = await self._execute_command_steps(movement_plan)
+            
+            # Finalize command
+            await self._finalize_command()
+            
+            self._processing = False
+            self.current_state["status"] = "completed"
+            journaling_manager.recordInfo("Movement plan executed successfully")
             
             return result
+            
         except Exception as e:
-            logger.error(f"Error executing movement plan: {e}")
-            return {}
+            self._processing = False
+            self.current_state["status"] = "error"
+            self.current_state["error"] = str(e)
+            journaling_manager.recordError(f"Error executing movement plan: {e}")
+            raise
             
     async def execute_command(self, command_plan: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a motor command"""
@@ -77,13 +136,22 @@ class CoordinationArea:
             
     async def stop_all_movements(self) -> None:
         """Stop all current movements"""
+        journaling_manager.recordScope("CoordinationArea.stop_all_movements")
         try:
+            if not self._initialized:
+                journaling_manager.recordError("Coordination area not initialized")
+                raise RuntimeError("Coordination area not initialized")
+                
             await SynapticPathways.send_system_command(
-                command_type="stop_movements"
+                command_type="stop_all_movements"
             )
             self._processing = False
+            self.current_state["status"] = "stopped"
+            journaling_manager.recordInfo("All movements stopped")
+            
         except Exception as e:
-            logger.error(f"Error stopping movements: {e}")
+            journaling_manager.recordError(f"Error stopping movements: {e}")
+            raise
             
     async def _initialize_movement(self, movement_plan: Dict[str, Any]) -> None:
         """Initialize movement execution"""
@@ -110,41 +178,56 @@ class CoordinationArea:
             
     async def _finalize_movement(self) -> None:
         """Finalize movement execution"""
+        journaling_manager.recordScope("CoordinationArea._finalize_movement")
         try:
             await SynapticPathways.send_system_command(
                 command_type="finalize_movement"
             )
             self._processing = False
+            journaling_manager.recordDebug("Movement finalized")
+            
         except Exception as e:
-            logger.error(f"Error finalizing movement: {e}")
+            journaling_manager.recordError(f"Error finalizing movement: {e}")
+            raise
             
     async def _initialize_command(self, command_plan: Dict[str, Any]) -> None:
         """Initialize command execution"""
+        journaling_manager.recordScope("CoordinationArea._initialize_command", command_plan=command_plan)
         try:
             await SynapticPathways.send_system_command(
                 command_type="initialize_command",
                 data={"plan": command_plan}
             )
+            journaling_manager.recordDebug("Command initialized")
+            
         except Exception as e:
-            logger.error(f"Error initializing command: {e}")
+            journaling_manager.recordError(f"Error initializing command: {e}")
+            raise
             
     async def _execute_command_steps(self, command_plan: Dict[str, Any]) -> Dict[str, Any]:
         """Execute command steps"""
+        journaling_manager.recordScope("CoordinationArea._execute_command_steps", command_plan=command_plan)
         try:
             response = await SynapticPathways.send_system_command(
                 command_type="execute_steps",
                 data={"plan": command_plan}
             )
+            journaling_manager.recordDebug("Command steps executed")
             return response.get("result", {})
+            
         except Exception as e:
-            logger.error(f"Error executing command steps: {e}")
-            return {}
+            journaling_manager.recordError(f"Error executing command steps: {e}")
+            raise
             
     async def _finalize_command(self) -> None:
         """Finalize command execution"""
+        journaling_manager.recordScope("CoordinationArea._finalize_command")
         try:
             await SynapticPathways.send_system_command(
                 command_type="finalize_command"
             )
+            journaling_manager.recordDebug("Command finalized")
+            
         except Exception as e:
-            logger.error(f"Error finalizing command: {e}") 
+            journaling_manager.recordError(f"Error finalizing command: {e}")
+            raise 
