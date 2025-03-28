@@ -15,6 +15,13 @@ import threading
 BAUD_RATE = 115200
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
+WINDOWS_SERIAL_PATTERNS = [
+    "m5stack",
+    "m5 module",
+    "m5module",
+    "cp210x",
+    "silicon labs"
+]
 
 class LLMInterface:
     """Interface for communicating with the LLM hardware"""
@@ -209,21 +216,52 @@ class LLMInterface:
             # Initialize the connection
             if self.connection_type == "serial":
                 print("Setting up serial connection...")
-                self._ser = serial.Serial(
-                    port=self.port,
-                    baudrate=BAUD_RATE,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=0.1,
-                    xonxoff=False,
-                    rtscts=False,
-                    dsrdtr=False
-                )
-                # Clear any existing data
-                while self._ser.in_waiting:
-                    self._ser.read()
-                print("Serial connection established")
+                print(f"Using baud rate: {BAUD_RATE}")
+                
+                try:
+                    self._ser = serial.Serial(
+                        port=self.port,
+                        baudrate=BAUD_RATE,
+                        bytesize=serial.EIGHTBITS,
+                        parity=serial.PARITY_NONE,
+                        stopbits=serial.STOPBITS_ONE,
+                        timeout=0.1,
+                        xonxoff=False,
+                        rtscts=False,
+                        dsrdtr=True  # Enable DTR for reset
+                    )
+                    
+                    # Try to reset the device
+                    print("Attempting device reset...")
+                    self._ser.setDTR(False)
+                    time.sleep(0.5)  # Longer delay for reset
+                    self._ser.setDTR(True)
+                    time.sleep(1.0)  # Give device time to stabilize
+                    
+                    # Clear any existing data
+                    print("Clearing any existing data...")
+                    while self._ser.in_waiting:
+                        data = self._ser.read()
+                        print(f"Cleared data: {data!r}")
+                    
+                    # Try a simple ping to test the connection
+                    print("Testing connection...")
+                    test_command = "AT\r\n"  # Simple AT command
+                    self._ser.write(test_command.encode())
+                    time.sleep(0.5)  # Give device time to respond
+                    
+                    if self._ser.in_waiting:
+                        response = self._ser.read(self._ser.in_waiting)
+                        print(f"Test response: {response!r}")
+                    
+                    print("Serial connection established")
+                    
+                except Exception as e:
+                    print(f"Error setting up serial connection: {e}")
+                    if self._ser:
+                        self._ser.close()
+                        self._ser = None
+                    raise
             
             # Start response thread
             self._start_response_thread()
@@ -253,54 +291,7 @@ class LLMInterface:
                 print(f"Error during ping: {e}")
                 self._initialized = False
                 return
-            
-            # 2. Reset the device
-            print("\nResetting device...")
-            reset_command = {
-                "type": "SYSTEM",
-                "command": "reset",
-                "data": {
-                    "timestamp": int(time.time() * 1000),
-                    "version": "1.0",
-                    "request_id": "sys_reset",
-                    "echo": True
-                }
-            }
-            try:
-                reset_result = self.send_command(reset_command, timeout=15.0)  # Longer timeout for reset
-                if not reset_result or "error" in reset_result:
-                    print("Failed to reset device")
-                    self._initialized = False
-                    return
-            except Exception as e:
-                print(f"Error during reset: {e}")
-                self._initialized = False
-                return
-            
-            # 3. Setup LLM with configuration
-            print("\nSetting up LLM...")
-            setup_command = {
-                "type": "SYSTEM",
-                "command": "setup",
-                "data": {
-                    "timestamp": int(time.time() * 1000),
-                    "version": "1.0",
-                    "request_id": "sys_setup",
-                    "max_token_len": 1023,
-                    "echo": True
-                }
-            }
-            try:
-                setup_result = self.send_command(setup_command)
-                if not setup_result or "error" in setup_result:
-                    print("Failed to setup LLM")
-                    self._initialized = False
-                    return
-            except Exception as e:
-                print(f"Error during setup: {e}")
-                self._initialized = False
-                return
-            
+                
             print(f"Successfully initialized {self.connection_type} connection to {self.port}")
             
         except Exception as e:
@@ -310,10 +301,10 @@ class LLMInterface:
                 print("\nTrying to recover ADB connection...")
                 try:
                     # Kill any existing ADB server
-                    subprocess.run(["adb", "kill-server"], capture_output=True, text=True)
+                    subprocess.run([self.adb_path, "kill-server"], capture_output=True, text=True)
                     time.sleep(1)
                     # Start new ADB server
-                    subprocess.run(["adb", "start-server"], capture_output=True, text=True)
+                    subprocess.run([self.adb_path, "start-server"], capture_output=True, text=True)
                     time.sleep(2)
                     # Try initialization again
                     print("Retrying initialization...")
@@ -412,36 +403,38 @@ class LLMInterface:
     
     def _find_serial_port(self) -> Optional[str]:
         """Find the device port through serial"""
-        if platform.system() == "Darwin":  # macOS
+        if platform.system() == "Windows":
             ports = serial.tools.list_ports.comports()
             
-            # Look for M5Stack USB device patterns
+            print("\nChecking all available ports...")
             for port in ports:
-                # Check for M5Stack USB device patterns
-                if any(pattern in port.description.lower() for pattern in [
-                    "m5stack",
-                    "m5 module",
-                    "m5module",
-                    "cp210x",
-                    "silicon labs"
-                ]):
-                    print(f"\nFound M5Stack device port: {port.device}")
-                    print(f"Device details: {port.description}")
-                    if port.vid is not None and port.pid is not None:
-                        print(f"VID:PID: {port.vid:04x}:{port.pid:04x}")
-                    print(f"Hardware ID: {port.hwid}")
+                print(f"\nChecking port: {port.device}")
+                print(f"Description: {port.description}")
+                if port.vid is not None and port.pid is not None:
+                    print(f"VID:PID: {port.vid:04x}:{port.pid:04x}")
+                print(f"Hardware ID: {port.hwid}")
+                
+                # Check for CH340 device (VID:PID = 1A86:7523)
+                if port.vid == 0x1A86 and port.pid == 0x7523:
+                    print(f"\nFound CH340 device on port: {port.device}")
                     return port.device
                     
-            # If no M5Stack patterns found, try to find any USB CDC device
-            for port in ports:
-                if "USB" in port.description.upper() and "CDC" in port.description.upper():
-                    print(f"\nFound USB CDC device port: {port.device}")
-                    print(f"Device details: {port.description}")
-                    if port.vid is not None and port.pid is not None:
-                        print(f"VID:PID: {port.vid:04x}:{port.pid:04x}")
-                    print(f"Hardware ID: {port.hwid}")
+                # Check for M5Stack USB device patterns
+                if any(pattern.lower() in port.description.lower() for pattern in WINDOWS_SERIAL_PATTERNS):
+                    print(f"\nFound matching device pattern on port: {port.device}")
                     return port.device
-            
+                    
+                # Check for any USB CDC device
+                if "USB" in port.description.upper() and "CDC" in port.description.upper():
+                    print(f"\nFound USB CDC device on port: {port.device}")
+                    return port.device
+                
+                # If we get here and haven't found a match, but it's a CH340 device,
+                # return it anyway (some Windows systems might not report the VID/PID correctly)
+                if "CH340" in port.description.upper():
+                    print(f"\nFound CH340 device by description on port: {port.device}")
+                    return port.device
+                
             print("\nNo suitable serial port found")
             return None
             
