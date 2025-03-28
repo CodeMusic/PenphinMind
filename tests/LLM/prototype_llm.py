@@ -280,23 +280,14 @@ class LLMInterface:
                     else:
                         print(f"Successfully ran: {cmd}")
                 
-                # Check if port is in use
-                print("Checking if port is in use...")
-                check_use = subprocess.run(
-                    ["adb", "shell", f"fuser {self.port}"],
-                    capture_output=True,
-                    text=True
+                # Clear any existing data first
+                print("Clearing any existing data...")
+                subprocess.run(
+                    ["adb", "shell", f"dd if={self.port} of=/dev/null bs=1 count=1000 iflag=nonblock 2>/dev/null || true"],
+                    capture_output=True
                 )
-                if check_use.returncode == 0 and check_use.stdout.strip():
-                    print(f"Port is in use by process: {check_use.stdout.strip()}")
-                    # Try to kill the process
-                    subprocess.run(
-                        ["adb", "shell", f"kill -9 {check_use.stdout.strip()}"],
-                        capture_output=True
-                    )
-                    time.sleep(1)
                 
-                # Try to write to the port
+                # Try to write to the port with verification
                 print("Writing command to port...")
                 write_result = subprocess.run(
                     ["adb", "shell", f"printf '{command_json}' > {self.port}"],
@@ -305,70 +296,83 @@ class LLMInterface:
                 )
                 print(f"Write result: returncode={write_result.returncode}, stderr={write_result.stderr!r}")
                 
+                # Verify the write by reading back
+                print("Verifying write...")
+                verify_result = subprocess.run(
+                    ["adb", "shell", f"dd if={self.port} bs=1 count={len(command_json)} iflag=nonblock 2>/dev/null"],
+                    capture_output=True,
+                    text=True
+                )
+                print(f"Verify result: {verify_result.stdout!r}")
+                
                 # Add a small delay after writing
                 time.sleep(0.1)
                 
-                # Wait for response using M5Module-LLM approach
+                # Try a different reading approach using cat in background
+                print("Starting to read response...")
                 start_time = time.time()
                 buffer = ""
                 last_data_time = time.time()
                 read_count = 0
                 
-                print("Starting to read response...")
-                while True:
-                    # First check if there's any data available
-                    check_data = subprocess.run(
-                        ["adb", "shell", f"dd if={self.port} bs=1 count=1 iflag=nonblock 2>/dev/null"],
-                        capture_output=True,
-                        text=True,
-                        timeout=0.1
-                    )
-                    
-                    if check_data.returncode == 0 and check_data.stdout:
-                        print(f"Found data: {check_data.stdout!r}")
-                        # If we have data, read more bytes
-                        read_result = subprocess.run(
-                            ["adb", "shell", f"dd if={self.port} bs=1 count=100 iflag=nonblock 2>/dev/null"],
-                            capture_output=True,
-                            text=True,
-                            timeout=0.1
-                        )
-                        
-                        if read_result.returncode == 0 and read_result.stdout:
-                            print(f"Read data: {read_result.stdout!r}")
-                            buffer += read_result.stdout
-                            last_data_time = time.time()
-                            read_count += len(read_result.stdout)
+                # Start cat process in background
+                cat_process = subprocess.Popen(
+                    ["adb", "shell", f"cat {self.port}"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                
+                try:
+                    while True:
+                        # Try to read from cat process
+                        if cat_process.poll() is None:  # Process still running
+                            line = cat_process.stdout.readline()
+                            if line:
+                                print(f"Read line: {line!r}")
+                                buffer += line
+                                last_data_time = time.time()
+                                read_count += len(line)
+                                
+                                # Check for complete message
+                                if "\n" in buffer:
+                                    response = buffer.strip()
+                                    print(f"Complete message: {response}")
+                                    try:
+                                        return json.loads(response)
+                                    except json.JSONDecodeError:
+                                        print(f"Invalid JSON response: {response}")
+                                        buffer = ""
+                                        continue
+                
+                        # Check for timeout
+                        if time.time() - start_time > 5:  # 5 second timeout
+                            print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                            print(f"Total bytes read: {read_count}")
+                            raise Exception("Timeout waiting for response")
                             
-                            # Check for complete message
-                            if "\n" in buffer:
+                        # Check for end of message (50ms without data)
+                        if time.time() - last_data_time > 0.05:
+                            if buffer:
                                 response = buffer.strip()
-                                print(f"Complete message: {response}")
+                                print(f"End of message detected: {response}")
                                 try:
                                     return json.loads(response)
                                 except json.JSONDecodeError:
                                     print(f"Invalid JSON response: {response}")
                                     buffer = ""
-                                    continue
-                    
-                    # Check for timeout
-                    if time.time() - start_time > 5:  # 5 second timeout
-                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
-                        print(f"Total bytes read: {read_count}")
-                        raise Exception("Timeout waiting for response")
+                
+                        time.sleep(0.005)  # 5ms delay
                         
-                    # Check for end of message (50ms without data)
-                    if time.time() - last_data_time > 0.05:
-                        if buffer:
-                            response = buffer.strip()
-                            print(f"End of message detected: {response}")
-                            try:
-                                return json.loads(response)
-                            except json.JSONDecodeError:
-                                print(f"Invalid JSON response: {response}")
-                                buffer = ""
-                    
-                    time.sleep(0.005)  # 5ms delay like in M5Module-LLM
+                finally:
+                    # Clean up cat process
+                    cat_process.terminate()
+                    try:
+                        cat_process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        cat_process.kill()
                     
             else:
                 # Use Serial mode
