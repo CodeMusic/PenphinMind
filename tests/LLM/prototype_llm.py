@@ -228,20 +228,18 @@ class LLMInterface:
         # Convert to simpler command structure like M5Module-LLM
         if command["type"] == "SYSTEM":
             if command["command"] == "ping":
-                command_json = json.dumps({"cmd": "ping", "echo": True}) + "\n"
+                command_json = json.dumps({"cmd": "ping"}) + "\n"
             elif command["command"] == "set_mode":
                 command_json = json.dumps({
                     "cmd": "set_mode",
-                    "mode": command["data"]["mode"],
-                    "echo": True
+                    "mode": command["data"]["mode"]
                 }) + "\n"
             else:
                 raise ValueError(f"Unsupported system command: {command['command']}")
         elif command["type"] == "LLM" and command["command"] == "generate":
             command_json = json.dumps({
                 "cmd": "generate",
-                "prompt": command["data"]["prompt"],
-                "echo": True
+                "prompt": command["data"]["prompt"]
             }) + "\n"
         else:
             raise ValueError(f"Unsupported command type: {command['type']}")
@@ -262,10 +260,13 @@ class LLMInterface:
                 )
                 print(f"Current permissions: {check_perms.stdout.strip()}")
                 
-                # Try to configure the port
-                print("Configuring port...")
+                # Configure port with recommended settings
+                print("Configuring port with recommended settings...")
                 setup_commands = [
-                    f"stty -F {self.port} {BAUD_RATE} cs8 -cstopb -parenb raw -echo -icanon min 1 time 0"
+                    f"stty -F {self.port} {BAUD_RATE} raw -echo -crtscts -ixon -ixoff",
+                    f"echo 0 > /sys/class/tty/{os.path.basename(self.port)}/device/power/control",
+                    "sleep 1",
+                    f"echo 1 > /sys/class/tty/{os.path.basename(self.port)}/device/power/control"
                 ]
                 
                 for cmd in setup_commands:
@@ -278,6 +279,22 @@ class LLMInterface:
                         print(f"Warning: Failed to run {cmd}: {result.stderr}")
                     else:
                         print(f"Successfully ran: {cmd}")
+                
+                # Check if port is in use
+                print("Checking if port is in use...")
+                check_use = subprocess.run(
+                    ["adb", "shell", f"fuser {self.port}"],
+                    capture_output=True,
+                    text=True
+                )
+                if check_use.returncode == 0 and check_use.stdout.strip():
+                    print(f"Port is in use by process: {check_use.stdout.strip()}")
+                    # Try to kill the process
+                    subprocess.run(
+                        ["adb", "shell", f"kill -9 {check_use.stdout.strip()}"],
+                        capture_output=True
+                    )
+                    time.sleep(1)
                 
                 # Try to write to the port
                 print("Writing command to port...")
@@ -296,14 +313,9 @@ class LLMInterface:
                 buffer = ""
                 last_data_time = time.time()
                 read_count = 0
-                check_count = 0
                 
                 print("Starting to read response...")
                 while True:
-                    check_count += 1
-                    if check_count % 100 == 0:
-                        print(f"Still waiting for data... (checks: {check_count}, time: {time.time() - start_time:.2f}s)")
-                    
                     # First check if there's any data available
                     check_data = subprocess.run(
                         ["adb", "shell", f"dd if={self.port} bs=1 count=1 iflag=nonblock 2>/dev/null"],
@@ -313,6 +325,7 @@ class LLMInterface:
                     )
                     
                     if check_data.returncode == 0 and check_data.stdout:
+                        print(f"Found data: {check_data.stdout!r}")
                         # If we have data, read more bytes
                         read_result = subprocess.run(
                             ["adb", "shell", f"dd if={self.port} bs=1 count=100 iflag=nonblock 2>/dev/null"],
@@ -322,6 +335,7 @@ class LLMInterface:
                         )
                         
                         if read_result.returncode == 0 and read_result.stdout:
+                            print(f"Read data: {read_result.stdout!r}")
                             buffer += read_result.stdout
                             last_data_time = time.time()
                             read_count += len(read_result.stdout)
@@ -329,6 +343,7 @@ class LLMInterface:
                             # Check for complete message
                             if "\n" in buffer:
                                 response = buffer.strip()
+                                print(f"Complete message: {response}")
                                 try:
                                     return json.loads(response)
                                 except json.JSONDecodeError:
@@ -339,12 +354,14 @@ class LLMInterface:
                     # Check for timeout
                     if time.time() - start_time > 5:  # 5 second timeout
                         print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                        print(f"Total bytes read: {read_count}")
                         raise Exception("Timeout waiting for response")
                         
                     # Check for end of message (50ms without data)
                     if time.time() - last_data_time > 0.05:
                         if buffer:
                             response = buffer.strip()
+                            print(f"End of message detected: {response}")
                             try:
                                 return json.loads(response)
                             except json.JSONDecodeError:
@@ -371,18 +388,14 @@ class LLMInterface:
                 buffer = ""
                 last_data_time = time.time()
                 read_count = 0
-                check_count = 0
                 
                 print("Starting to read response...")
                 while True:
-                    check_count += 1
-                    if check_count % 100 == 0:
-                        print(f"Still waiting for data... (checks: {check_count}, time: {time.time() - start_time:.2f}s)")
-                    
                     # Check if there's any data available
                     if self._ser.in_waiting:
                         # Read all available data
                         data = self._ser.read(self._ser.in_waiting)
+                        print(f"Read data: {data!r}")
                         buffer += data.decode()
                         last_data_time = time.time()
                         read_count += len(data)
@@ -390,6 +403,7 @@ class LLMInterface:
                         # Check for complete message
                         if "\n" in buffer:
                             response = buffer.strip()
+                            print(f"Complete message: {response}")
                             try:
                                 return json.loads(response)
                             except json.JSONDecodeError:
@@ -400,12 +414,14 @@ class LLMInterface:
                     # Check for timeout
                     if time.time() - start_time > 5:  # 5 second timeout
                         print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                        print(f"Total bytes read: {read_count}")
                         raise Exception("Timeout waiting for response")
                         
                     # Check for end of message (50ms without data)
                     if time.time() - last_data_time > 0.05:
                         if buffer:
                             response = buffer.strip()
+                            print(f"End of message detected: {response}")
                             try:
                                 return json.loads(response)
                             except json.JSONDecodeError:
@@ -504,46 +520,75 @@ class LLMInterface:
             # Clean up current connection first
             self.cleanup()
             
-            # Wait for device to switch modes
-            print("Waiting for device to switch modes...")
-            time.sleep(5)  # Give device time to switch
-            
-            # Try to find port in new mode with retries
-            max_retries = 3
-            retry_delay = 2
-            for attempt in range(max_retries):
-                print(f"\nAttempt {attempt + 1} to find port in {mode} mode...")
+            # For WiFi mode, we need to use a different approach
+            if mode == "wifi":
+                print("WiFi mode requires device to be in WiFi mode first")
+                print("Please ensure the device is in WiFi mode before continuing")
+                time.sleep(5)  # Give user time to switch device mode
                 
-                if mode == "serial":
-                    if self._is_serial_available():
-                        self.port = self._find_serial_port()
-                        if self.port:
-                            self.connection_type = "serial"
-                            print(f"Found serial port: {self.port}")
-                            break
+                # Try to find WiFi port
+                if self._is_adb_available():
+                    # Try to find WiFi-specific port
+                    result = subprocess.run(
+                        ["adb", "shell", "ip addr show wlan0"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
+                        if ip_match:
+                            wifi_ip = ip_match.group(1)
+                            self.port = f"{wifi_ip}:{BAUD_RATE}"  # Use IP:port format
+                            self.connection_type = "wifi"
+                            print(f"Found WiFi connection at {self.port}")
                         else:
-                            print("No suitable serial port found")
+                            raise Exception("No WiFi IP address found")
                     else:
-                        print("No serial ports available")
-                else:  # adb or wifi
-                    if self._is_adb_available():
-                        self.port = self._find_adb_port()
-                        if self.port:
-                            self.connection_type = "adb"
-                            print(f"Found ADB port: {self.port}")
-                            break
-                        else:
-                            print("No suitable ADB port found")
-                    else:
-                        print("ADB not available")
+                        raise Exception("Failed to get WiFi information")
+                else:
+                    raise Exception("ADB not available for WiFi mode")
+                    
+            else:
+                # For Serial and ADB modes, wait for device to switch
+                print("Waiting for device to switch modes...")
+                time.sleep(5)  # Give device time to switch
                 
-                if attempt < max_retries - 1:
-                    print(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-            
-            if not self.port:
-                raise Exception(f"Failed to find port in {mode} mode after {max_retries} attempts")
+                # Try to find port in new mode with retries
+                max_retries = 3
+                retry_delay = 2
+                for attempt in range(max_retries):
+                    print(f"\nAttempt {attempt + 1} to find port in {mode} mode...")
+                    
+                    if mode == "serial":
+                        if self._is_serial_available():
+                            self.port = self._find_serial_port()
+                            if self.port:
+                                self.connection_type = "serial"
+                                print(f"Found serial port: {self.port}")
+                                break
+                            else:
+                                print("No suitable serial port found")
+                        else:
+                            print("No serial ports available")
+                    else:  # adb
+                        if self._is_adb_available():
+                            self.port = self._find_adb_port()
+                            if self.port:
+                                self.connection_type = "adb"
+                                print(f"Found ADB port: {self.port}")
+                                break
+                            else:
+                                print("No suitable ADB port found")
+                        else:
+                            print("ADB not available")
+                    
+                    if attempt < max_retries - 1:
+                        print(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                
+                if not self.port:
+                    raise Exception(f"Failed to find port in {mode} mode after {max_retries} attempts")
             
             # Initialize new connection
             if self.connection_type == "serial":
