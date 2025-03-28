@@ -440,7 +440,7 @@ class LLMInterface:
             
         return None
         
-    def send_command(self, command: Dict[str, Any], timeout: float = 2.0) -> Dict[str, Any]:
+    def send_command(self, command: Dict[str, Any], timeout: float = 1.0) -> Dict[str, Any]:
         """Send a command to the LLM hardware"""
         if not self._initialized:
             raise RuntimeError("LLM interface not initialized")
@@ -493,7 +493,74 @@ class LLMInterface:
         print(f"\nSending command: {command_json.strip()}")
         
         try:
-            if self.connection_type == "adb":
+            if self.connection_type == "serial":
+                print("🔌 Using Serial mode")
+                if not self._ser:
+                    raise Exception("Serial connection not initialized")
+                    
+                # Clear any existing data first
+                print("Clearing any existing data...")
+                while self._ser.in_waiting:
+                    data = self._ser.read()
+                    print(f"Cleared data: {data!r}")
+                    
+                # Write command
+                print("Writing command...")
+                self._ser.write(command_json.encode())
+                print("Command written successfully")
+                
+                # Wait for response with more detailed debugging
+                start_time = time.time()
+                buffer = ""
+                got_message = False
+                last_data_time = time.time()
+                
+                print("\nWaiting for response...")
+                try:
+                    while True:
+                        if self._ser.in_waiting:
+                            char = self._ser.read(1)
+                            print(f"Received byte: {char!r}")
+                            try:
+                                char_decoded = char.decode('utf-8')
+                                buffer += char_decoded
+                                got_message = True
+                                last_data_time = time.time()
+                                print(f"Current buffer: {buffer!r}")
+                                
+                                # Return immediately if we see a newline
+                                if char_decoded == "\n":
+                                    response = buffer.strip()
+                                    print(f"Complete message: {response}")
+                                    return self.parse_response(response)
+                            except UnicodeDecodeError:
+                                print(f"Failed to decode byte: {char!r}")
+                        
+                        # Check if we have a complete message (50ms without new data)
+                        if got_message and time.time() - last_data_time > 0.05:
+                            if buffer:
+                                response = buffer.strip()
+                                print(f"End of message detected: {response}")
+                                return self.parse_response(response)
+                            break
+                        
+                        # Check for timeout
+                        if time.time() - start_time > timeout:
+                            print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                            return {
+                                "error": {
+                                    "code": -2,
+                                    "message": "Timeout waiting for response"
+                                }
+                            }
+                        
+                        time.sleep(0.005)  # 5ms delay
+                        
+                except KeyboardInterrupt:
+                    print("\nInterrupted by user")
+                    raise  # Re-raise to be caught by outer try/except
+                
+            else:
                 # Use ADB mode (USB or Wi-Fi)
                 print("📡 Using ADB mode")
                 
@@ -569,59 +636,6 @@ class LLMInterface:
                     
                     # Check for timeout (use 2000ms like M5Module-LLM)
                     if time.time() - start_time > 2.0:
-                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
-                        return {
-                            "error": {
-                                "code": -2,
-                                "message": "Timeout waiting for response"
-                            }
-                        }
-                    
-                    time.sleep(0.005)  # 5ms delay
-                
-            else:
-                # Use Serial mode
-                print("🔌 Using Serial mode")
-                if not self._ser:
-                    raise Exception("Serial connection not initialized")
-                    
-                # Clear any existing data first
-                while self._ser.in_waiting:
-                    self._ser.read()
-                    
-                # Write command
-                self._ser.write(command_json.encode())
-                print("Command written successfully")
-                
-                # Wait for response
-                start_time = time.time()
-                buffer = ""
-                got_message = False
-                last_data_time = time.time()
-                
-                while True:
-                    if self._ser.in_waiting:
-                        char = self._ser.read(1).decode()
-                        buffer += char
-                        got_message = True
-                        last_data_time = time.time()
-                        
-                        # Return immediately if we see a newline
-                        if char == "\n":
-                            response = buffer.strip()
-                            print(f"Complete message: {response}")
-                            return self.parse_response(response)
-                    
-                    # Check if we have a complete message (50ms without new data)
-                    if got_message and time.time() - last_data_time > 0.05:
-                        if buffer:
-                            response = buffer.strip()
-                            print(f"End of message detected: {response}")
-                            return self.parse_response(response)
-                        break
-                    
-                    # Check for timeout
-                    if time.time() - start_time > timeout:
                         print(f"Timeout waiting for response. Buffer: {buffer!r}")
                         return {
                             "error": {
@@ -883,13 +897,13 @@ def main():
         current_mode = llm.connection_type or "auto-detect"
         
         while True:
-            print("\n=== M5Module-LLM Interface ===")
-            print("1. Send ping command")
-            print("2. Generate text")
-            print("3. Change connection mode")
-            print("4. Exit")
-            
             try:
+                print("\n=== M5Module-LLM Interface ===")
+                print("1. Send ping command")
+                print("2. Generate text")
+                print("3. Change connection mode")
+                print("4. Exit")
+                
                 choice = input("\nSelect an option (1-4): ").strip()
                 
                 if choice == "1":
@@ -904,8 +918,12 @@ def main():
                             "echo": True
                         }
                     }
-                    response = llm.send_command(ping_command)
-                    print(f"Ping response: {response}")
+                    try:
+                        response = llm.send_command(ping_command)
+                        print(f"Ping response: {response}")
+                    except KeyboardInterrupt:
+                        print("\nPing command interrupted by user")
+                        continue
                     
                 elif choice == "2":
                     prompt = input("\n💭 Enter your prompt: ").strip()
@@ -921,8 +939,12 @@ def main():
                                 "request_id": f"generate_{int(time.time())}"
                             }
                         }
-                        response = llm.send_command(command)
-                        print(f"\nResponse: {response}")
+                        try:
+                            response = llm.send_command(command)
+                            print(f"\nResponse: {response}")
+                        except KeyboardInterrupt:
+                            print("\nGenerate command interrupted by user")
+                            continue
                     
                 elif choice == "3":
                     print("\n🔄 Available connection modes:")
@@ -959,14 +981,18 @@ def main():
                 else:
                     print("\n❌ Invalid choice. Please select 1-4.")
                     
+            except KeyboardInterrupt:
+                print("\nOperation interrupted by user")
+                continue
             except Exception as e:
                 print(f"\n❌ Error: {e}")
                 print("Returning to main menu...")
                 continue
         
+    except KeyboardInterrupt:
+        print("\n\n👋 Goodbye!")
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
-        sys.exit(1)
     finally:
         if 'llm' in locals():
             llm.cleanup()
