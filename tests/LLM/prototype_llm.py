@@ -33,7 +33,7 @@ class LLMInterface:
             return
             
         try:
-            print("\nInitializing LLM interface...")
+            print("\n🔍 Initializing LLM interface...")
             print(f"Preferred mode: {self.preferred_mode if self.preferred_mode else 'auto-detect'}")
             
             # Try to find the device port based on preferred mode
@@ -93,8 +93,45 @@ class LLMInterface:
             self._initialized = True
             print(f"Successfully initialized {self.connection_type} connection to {self.port}")
             
+            # Send initial ping command without checking response
+            print("\nSending initial ping command...")
+            ping_command = {
+                "type": "SYSTEM",
+                "command": "ping",
+                "data": {
+                    "timestamp": int(time.time() * 1000),
+                    "version": "1.0",
+                    "request_id": "initial_ping",
+                    "echo": True
+                }
+            }
+            try:
+                self.send_command(ping_command)
+            except Exception as e:
+                print(f"Initial ping failed but continuing: {e}")
+            
+            # Add a delay after initialization
+            time.sleep(1)
+            
+            return
+            
         except Exception as e:
             print(f"Failed to initialize: {e}")
+            if self.connection_type == "adb":
+                print("\nTrying to recover ADB connection...")
+                try:
+                    # Kill any existing ADB server
+                    subprocess.run(["adb", "kill-server"], capture_output=True, text=True)
+                    time.sleep(1)
+                    # Start new ADB server
+                    subprocess.run(["adb", "start-server"], capture_output=True, text=True)
+                    time.sleep(2)
+                    # Try initialization again
+                    print("Retrying initialization...")
+                    self.initialize()
+                    return
+                except Exception as retry_error:
+                    print(f"Recovery failed: {retry_error}")
             raise
             
     def _find_device_port(self) -> Optional[str]:
@@ -228,18 +265,35 @@ class LLMInterface:
         # Convert to simpler command structure like M5Module-LLM
         if command["type"] == "SYSTEM":
             if command["command"] == "ping":
-                command_json = json.dumps({"cmd": "ping"}) + "\n"
+                command_json = json.dumps({
+                    "request_id": "sys_ping",
+                    "work_id": "sys",
+                    "action": "ping",
+                    "object": "None",
+                    "data": "None"
+                }) + "\n"
             elif command["command"] == "set_mode":
                 command_json = json.dumps({
-                    "cmd": "set_mode",
-                    "mode": command["data"]["mode"]
+                    "request_id": "sys_mode",
+                    "work_id": "sys",
+                    "action": "set_mode",
+                    "object": "None",
+                    "data": command["data"]["mode"]
                 }) + "\n"
             else:
                 raise ValueError(f"Unsupported system command: {command['command']}")
         elif command["type"] == "LLM" and command["command"] == "generate":
+            # Match M5Module-LLM inference format
             command_json = json.dumps({
-                "cmd": "generate",
-                "prompt": command["data"]["prompt"]
+                "request_id": command["data"].get("request_id", "generate"),
+                "work_id": "llm",  # Fixed work_id for LLM
+                "action": "inference",
+                "object": "llm.utf-8.stream",
+                "data": {
+                    "delta": command["data"]["prompt"],
+                    "index": 0,
+                    "finish": True
+                }
             }) + "\n"
         else:
             raise ValueError(f"Unsupported command type: {command['type']}")
@@ -282,98 +336,85 @@ class LLMInterface:
                 
                 # Clear any existing data first
                 print("Clearing any existing data...")
-                subprocess.run(
+                clear_result = subprocess.run(
                     ["adb", "shell", f"dd if={self.port} of=/dev/null bs=1 count=1000 iflag=nonblock 2>/dev/null || true"],
-                    capture_output=True
+                    capture_output=True,
+                    text=True
                 )
+                print(f"Buffer clear result: {clear_result.stdout!r}")
                 
-                # Try to write to the port with verification
+                # Try a second clear to ensure buffer is empty
+                print("Double checking buffer is clear...")
+                clear_result2 = subprocess.run(
+                    ["adb", "shell", f"dd if={self.port} of=/dev/null bs=1 count=1000 iflag=nonblock 2>/dev/null || true"],
+                    capture_output=True,
+                    text=True
+                )
+                print(f"Second buffer clear result: {clear_result2.stdout!r}")
+                
+                # Add a small delay after clearing
+                time.sleep(0.1)
+                
+                # Write command
                 print("Writing command to port...")
                 write_result = subprocess.run(
-                    ["adb", "shell", f"printf '{command_json}' > {self.port}"],
+                    ["adb", "shell", f"echo -n '{command_json}' > {self.port}"],
                     capture_output=True,
                     text=True
                 )
                 print(f"Write result: returncode={write_result.returncode}, stderr={write_result.stderr!r}")
                 
-                # Verify the write by reading back
-                print("Verifying write...")
-                verify_result = subprocess.run(
-                    ["adb", "shell", f"dd if={self.port} bs=1 count={len(command_json)} iflag=nonblock 2>/dev/null"],
-                    capture_output=True,
-                    text=True
-                )
-                print(f"Verify result: {verify_result.stdout!r}")
-                
                 # Add a small delay after writing
                 time.sleep(0.1)
                 
-                # Try a different reading approach using cat in background
+                # Read response using Arduino-like approach
                 print("Starting to read response...")
                 start_time = time.time()
                 buffer = ""
+                got_message = False
                 last_data_time = time.time()
-                read_count = 0
                 
-                # Start cat process in background
-                cat_process = subprocess.Popen(
-                    ["adb", "shell", f"cat {self.port}"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True
-                )
-                
-                try:
-                    while True:
-                        # Try to read from cat process
-                        if cat_process.poll() is None:  # Process still running
-                            line = cat_process.stdout.readline()
-                            if line:
-                                print(f"Read line: {line!r}")
-                                buffer += line
-                                last_data_time = time.time()
-                                read_count += len(line)
-                                
-                                # Check for complete message
-                                if "\n" in buffer:
-                                    response = buffer.strip()
-                                    print(f"Complete message: {response}")
-                                    try:
-                                        return json.loads(response)
-                                    except json.JSONDecodeError:
-                                        print(f"Invalid JSON response: {response}")
-                                        buffer = ""
-                                        continue
-                
-                        # Check for timeout
-                        if time.time() - start_time > 5:  # 5 second timeout
-                            print(f"Timeout waiting for response. Buffer: {buffer!r}")
-                            print(f"Total bytes read: {read_count}")
-                            raise Exception("Timeout waiting for response")
-                            
-                        # Check for end of message (50ms without data)
-                        if time.time() - last_data_time > 0.05:
-                            if buffer:
-                                response = buffer.strip()
-                                print(f"End of message detected: {response}")
-                                try:
-                                    return json.loads(response)
-                                except json.JSONDecodeError:
-                                    print(f"Invalid JSON response: {response}")
-                                    buffer = ""
-                
-                        time.sleep(0.005)  # 5ms delay
-                        
-                finally:
-                    # Clean up cat process
-                    cat_process.terminate()
-                    try:
-                        cat_process.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        cat_process.kill()
+                while True:
+                    # Read one character at a time like Arduino
+                    read_result = subprocess.run(
+                        ["adb", "shell", f"dd if={self.port} bs=1 count=1 iflag=nonblock 2>/dev/null"],
+                        capture_output=True,
+                        text=True
+                    )
                     
+                    if read_result.returncode == 0 and read_result.stdout:
+                        got_message = True
+                        char = read_result.stdout
+                        print(f"Read char: {char!r}")
+                        buffer += char
+                        last_data_time = time.time()
+                        
+                        # Return immediately if we see a complete message
+                        if char == "\n":
+                            response = buffer.strip()
+                            print(f"Complete message: {response}")
+                            return parse_response(response)
+                    
+                    # Check if we have a complete message (50ms without new data)
+                    if got_message and time.time() - last_data_time > 0.05:
+                        if buffer:
+                            response = buffer.strip()
+                            print(f"End of message detected: {response}")
+                            return parse_response(response)
+                        break
+                    
+                    # Check for timeout
+                    if time.time() - start_time > 5:  # 5 second timeout
+                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                        return {
+                            "error": {
+                                "code": -2,
+                                "message": "Timeout waiting for response"
+                            }
+                        }
+                    
+                    time.sleep(0.005)  # 5ms delay like in M5Module-LLM
+                
             else:
                 # Use Serial mode
                 print("🔌 Using Serial mode")
@@ -387,42 +428,35 @@ class LLMInterface:
                 self._ser.write(command_json.encode())
                 print("Command written successfully")
                 
-                # Wait for response using M5Module-LLM approach
+                # Read response using M5Module-LLM approach
+                print("Starting to read response...")
                 start_time = time.time()
                 buffer = ""
+                got_message = False
                 last_data_time = time.time()
-                read_count = 0
                 
-                print("Starting to read response...")
                 while True:
                     # Check if there's any data available
                     if self._ser.in_waiting:
-                        # Read all available data
-                        data = self._ser.read(self._ser.in_waiting)
-                        print(f"Read data: {data!r}")
-                        buffer += data.decode()
+                        got_message = True
+                        # Read one character at a time
+                        char = self._ser.read(1).decode()
+                        print(f"Read char: {char!r}")
+                        buffer += char
                         last_data_time = time.time()
-                        read_count += len(data)
                         
-                        # Check for complete message
-                        if "\n" in buffer:
+                        # Return immediately if we see a newline
+                        if char == "\n":
                             response = buffer.strip()
                             print(f"Complete message: {response}")
                             try:
                                 return json.loads(response)
                             except json.JSONDecodeError:
                                 print(f"Invalid JSON response: {response}")
-                                buffer = ""
-                                continue
+                                return {"error": "Invalid JSON response"}
                     
-                    # Check for timeout
-                    if time.time() - start_time > 5:  # 5 second timeout
-                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
-                        print(f"Total bytes read: {read_count}")
-                        raise Exception("Timeout waiting for response")
-                        
-                    # Check for end of message (50ms without data)
-                    if time.time() - last_data_time > 0.05:
+                    # Check if we have a complete message (50ms without new data)
+                    if got_message and time.time() - last_data_time > 0.05:
                         if buffer:
                             response = buffer.strip()
                             print(f"End of message detected: {response}")
@@ -430,13 +464,19 @@ class LLMInterface:
                                 return json.loads(response)
                             except json.JSONDecodeError:
                                 print(f"Invalid JSON response: {response}")
-                                buffer = ""
+                                return {"error": "Invalid JSON response"}
+                        break
+                    
+                    # Check for timeout
+                    if time.time() - start_time > 5:  # 5 second timeout
+                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                        raise Exception("Timeout waiting for response")
                     
                     time.sleep(0.005)  # 5ms delay like in M5Module-LLM
                     
         except Exception as e:
             print(f"Error sending command: {e}")
-            return f"Error: {e}"
+            return {"error": str(e)}
             
     def cleanup(self) -> None:
         """Clean up the connection"""
@@ -644,153 +684,131 @@ class LLMInterface:
             print(f"Error changing device mode: {e}")
             raise
 
+    def check_connection(self) -> bool:
+        """Check connection like M5Module-LLM"""
+        try:
+            # Send ping command
+            ping_command = {
+                "type": "SYSTEM",
+                "command": "ping",
+                "data": {
+                    "timestamp": int(time.time() * 1000),
+                    "version": "1.0",
+                    "request_id": "connection_check",
+                    "echo": True
+                }
+            }
+            response = self.send_command(ping_command)
+            
+            # Check for OK response
+            if isinstance(response, dict) and response.get("error", {}).get("code") == 0:
+                print("Connection check successful")
+                return True
+            else:
+                print(f"Connection check failed: {response}")
+                return False
+                
+        except Exception as e:
+            print(f"Connection check error: {e}")
+            return False
+
 def main():
     """Main function"""
     try:
         # First initialize to detect current mode
-        print("Detecting current mode...")
+        print("\n🔍 Detecting current mode...")
         llm = LLMInterface()
         llm.initialize()
         current_mode = llm.connection_type or "auto-detect"
         
         while True:
-            # Prompt for desired mode
-            print("\nAvailable modes:")
-            if current_mode == "serial":
-                print("1. Serial (direct USB connection) (CURRENT)")
-            else:
-                print("1. Serial (direct USB connection)")
-                
-            if current_mode == "adb":
-                print("2. ADB (Android Debug Bridge) (CURRENT)")
-            else:
-                print("2. ADB (Android Debug Bridge)")
-                
-            if current_mode == "wifi":
-                print("3. WiFi (wireless connection) (CURRENT)")
-            else:
-                print("3. WiFi (wireless connection)")
+            print("\n=== M5Module-LLM Interface ===")
+            print("1. Send ping command")
+            print("2. Generate text")
+            print("3. Change connection mode")
+            print("4. Exit")
             
-            mode_input = input(f"\nSelect mode (1-3) [{current_mode}]: ").strip()
-            
-            if not mode_input:  # Empty input, use current mode
-                print(f"Using current mode: {current_mode}")
-                mode = current_mode
-                break
-                
             try:
-                mode_num = int(mode_input)
-                if mode_num == 1:
-                    mode = "serial"
-                elif mode_num == 2:
-                    mode = "adb"
-                elif mode_num == 3:
-                    mode = "wifi"
-                else:
-                    print("Invalid selection. Please enter 1, 2, or 3.")
-                    continue
-                    
-                # If selecting a different mode, change the device's mode
-                if mode != current_mode:
-                    print(f"\nChanging device mode from {current_mode} to {mode}...")
-                    try:
-                        llm.set_device_mode(mode)
-                        print(f"Successfully switched to {mode} mode")
-                        break
-                    except Exception as e:
-                        print(f"\n❌ Error: Failed to switch to {mode} mode: {e}")
-                        print("Returning to mode selection menu...")
-                        # Clean up and reinitialize in current mode
-                        llm.cleanup()
-                        llm = LLMInterface(current_mode)
-                        llm.initialize()
-                        continue
-                break
+                choice = input("\nSelect an option (1-4): ").strip()
                 
-            except ValueError:
-                print("Please enter a number (1-3)")
+                if choice == "1":
+                    print("\n📡 Sending ping command...")
+                    ping_command = {
+                        "type": "SYSTEM",
+                        "command": "ping",
+                        "data": {
+                            "timestamp": int(time.time() * 1000),
+                            "version": "1.0",
+                            "request_id": "ping_test",
+                            "echo": True
+                        }
+                    }
+                    response = llm.send_command(ping_command)
+                    print(f"Ping response: {response}")
+                    
+                elif choice == "2":
+                    prompt = input("\n💭 Enter your prompt: ").strip()
+                    if prompt:
+                        print("\n🤖 Generating response...")
+                        command = {
+                            "type": "LLM",
+                            "command": "generate",
+                            "data": {
+                                "prompt": prompt,
+                                "timestamp": int(time.time() * 1000),
+                                "version": "1.0",
+                                "request_id": f"generate_{int(time.time())}"
+                            }
+                        }
+                        response = llm.send_command(command)
+                        print(f"\nResponse: {response}")
+                    
+                elif choice == "3":
+                    print("\n🔄 Available connection modes:")
+                    print(f"1. Serial (direct USB) {' (CURRENT)' if current_mode == 'serial' else ''}")
+                    print(f"2. ADB (Android Debug Bridge) {' (CURRENT)' if current_mode == 'adb' else ''}")
+                    print(f"3. WiFi {' (CURRENT)' if current_mode == 'wifi' else ''}")
+                    
+                    mode_choice = input("\nSelect mode (1-3): ").strip()
+                    if mode_choice == "1":
+                        new_mode = "serial"
+                    elif mode_choice == "2":
+                        new_mode = "adb"
+                    elif mode_choice == "3":
+                        new_mode = "wifi"
+                    else:
+                        print("Invalid mode selection")
+                        continue
+                        
+                    if new_mode != current_mode:
+                        print(f"\n🔄 Switching to {new_mode} mode...")
+                        try:
+                            llm.set_device_mode(new_mode)
+                            current_mode = new_mode
+                            print(f"✅ Successfully switched to {new_mode} mode")
+                        except Exception as e:
+                            print(f"❌ Error switching mode: {e}")
+                    else:
+                        print(f"\nAlready in {current_mode} mode")
+                    
+                elif choice == "4":
+                    print("\n👋 Goodbye!")
+                    break
+                    
+                else:
+                    print("\n❌ Invalid choice. Please select 1-4.")
+                    
             except Exception as e:
-                print(f"Error changing device mode: {e}")
-                print("Using current mode:", current_mode)
-                mode = current_mode
-                break
-        
-        # Clean up initial connection
-        llm.cleanup()
-        
-        # Initialize with selected mode
-        print(f"\nInitializing with {mode} mode...")
-        llm = LLMInterface(mode)
-        llm.initialize()
-        
-        # Send initial ping command
-        print("\nSending initial ping command...")
-        ping_command = {
-            "type": "SYSTEM",
-            "command": "ping",
-            "data": {
-                "timestamp": int(time.time() * 1000),
-                "version": "1.0",
-                "request_id": "initial_ping",
-                "echo": True
-            }
-        }
-        response = llm.send_command(ping_command)
-        print(f"Initial ping response: {response}")
-        
-        # Interactive mode
-        print("\nEntering interactive mode. Commands:")
-        print("  'exit' - quit")
-        print("  'device serial' - set device to serial mode")
-        print("  'device adb' - set device to ADB mode")
-        print("  'device wifi' - set device to WiFi mode")
-        
-        while True:
-            # Get user input
-            user_input = input("\nYou: ").strip()
-            
-            # Handle device mode commands
-            if user_input.lower() == 'exit':
-                break
-            elif user_input.lower().startswith('device '):
-                mode = user_input.lower().split()[1]
-                try:
-                    llm.set_device_mode(mode)
-                    print(f"Successfully switched to {mode} mode")
-                except Exception as e:
-                    print(f"\n❌ Error: Failed to switch to {mode} mode: {e}")
-                    print("Returning to mode selection menu...")
-                    # Clean up and reinitialize in current mode
-                    llm.cleanup()
-                    llm = LLMInterface(current_mode)
-                    llm.initialize()
-                    continue
+                print(f"\n❌ Error: {e}")
+                print("Returning to main menu...")
                 continue
                 
-            # Create LLM command
-            command = {
-                "type": "LLM",
-                "command": "generate",
-                "data": {
-                    "prompt": user_input,
-                    "timestamp": int(time.time() * 1000),
-                    "version": "1.0",
-                    "request_id": f"chat_{int(time.time())}"
-                }
-            }
-            
-            # Send command and get response
-            try:
-                response = llm.send_command(command)
-                print(f"\nAssistant: {response}")
-            except Exception as e:
-                print(f"Error: {e}")
-                
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"\n❌ Fatal error: {e}")
         sys.exit(1)
     finally:
-        llm.cleanup()
+        if 'llm' in locals():
+            llm.cleanup()
 
 if __name__ == "__main__":
     main() 
