@@ -23,6 +23,7 @@ class LLMInterface:
         self.port = None
         self.connection_type = None
         self._initialized = False
+        self._ser = None
         
     def initialize(self) -> None:
         """Initialize the connection to the LLM hardware"""
@@ -36,6 +37,23 @@ class LLMInterface:
             if not self.port:
                 raise Exception("No suitable device port found")
                 
+            # Initialize serial connection
+            if self.connection_type == "serial":
+                self._ser = serial.Serial(
+                    port=self.port,
+                    baudrate=BAUD_RATE,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=1,
+                    xonxoff=False,  # Disable software flow control
+                    rtscts=False,   # Disable hardware flow control
+                    dsrdtr=False    # Disable DSR/DTR flow control
+                )
+                # Clear any existing data like in M5Module-LLM
+                while self._ser.in_waiting:
+                    self._ser.read()
+                    
             self._initialized = True
             print(f"Initialized connection to {self.port}")
             
@@ -112,10 +130,40 @@ class LLMInterface:
     def _find_serial_port(self) -> Optional[str]:
         """Find the device port through serial"""
         if platform.system() == "Darwin":  # macOS
+            # First try to list all available ports
             ports = serial.tools.list_ports.comports()
+            print("\nAvailable ports:")
             for port in ports:
-                if "usbserial" in port.device.lower() or "tty.usbserial" in port.device.lower():
+                print(f"  - {port.device}: {port.description}")
+                print(f"    VID:PID: {port.vid:04x}:{port.pid:04x}")
+                print(f"    Hardware ID: {port.hwid}")
+                
+            # Look for M5Stack USB device patterns
+            for port in ports:
+                # Check for M5Stack USB device patterns
+                if any(pattern in port.description.lower() for pattern in [
+                    "m5stack",
+                    "m5 module",
+                    "m5module",
+                    "cp210x",
+                    "silicon labs"
+                ]):
+                    print(f"\nFound M5Stack device port: {port.device}")
+                    print(f"Device details: {port.description}")
+                    print(f"Hardware ID: {port.hwid}")
                     return port.device
+                    
+            # If no M5Stack patterns found, try to find any USB CDC device
+            for port in ports:
+                if "USB" in port.description.upper() and "CDC" in port.description.upper():
+                    print(f"\nFound USB CDC device port: {port.device}")
+                    print(f"Device details: {port.description}")
+                    print(f"Hardware ID: {port.hwid}")
+                    return port.device
+                    
+            print("\nNo suitable serial port found")
+            return None
+            
         return None
         
     def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -123,7 +171,17 @@ class LLMInterface:
         if not self._initialized:
             raise RuntimeError("LLM interface not initialized")
             
-        command_json = json.dumps(command) + "\n"
+        # Convert to simpler command structure like M5Module-LLM
+        if command["type"] == "SYSTEM" and command["command"] == "ping":
+            command_json = json.dumps({"cmd": "ping"}) + "\n"
+        elif command["type"] == "LLM" and command["command"] == "generate":
+            command_json = json.dumps({
+                "cmd": "generate",
+                "prompt": command["data"]["prompt"]
+            }) + "\n"
+        else:
+            raise ValueError(f"Unsupported command type: {command['type']}")
+            
         print(f"\nSending command: {command_json.strip()}")
         
         try:
@@ -131,9 +189,18 @@ class LLMInterface:
                 # Use ADB mode (USB or Wi-Fi)
                 print("📡 Using ADB mode")
                 
-                # First ensure the port is accessible and properly configured
+                # First check and fix permissions
+                print(f"Checking permissions for {self.port}...")
+                check_perms = subprocess.run(
+                    ["adb", "shell", f"ls -l {self.port}"],
+                    capture_output=True,
+                    text=True
+                )
+                print(f"Current permissions: {check_perms.stdout.strip()}")
+                
+                # Try to configure the port
+                print("Configuring port...")
                 setup_commands = [
-                    f"chmod 666 {self.port}",
                     f"stty -F {self.port} {BAUD_RATE} cs8 -cstopb -parenb raw -echo -icanon min 1 time 0"
                 ]
                 
@@ -145,8 +212,11 @@ class LLMInterface:
                     )
                     if result.returncode != 0:
                         print(f"Warning: Failed to run {cmd}: {result.stderr}")
+                    else:
+                        print(f"Successfully ran: {cmd}")
                 
-                # Send command through ADB
+                # Try to write to the port
+                print("Writing command to port...")
                 result = subprocess.run(
                     ["adb", "shell", f"echo -n '{command_json}' > {self.port}"],
                     capture_output=True,
@@ -155,50 +225,133 @@ class LLMInterface:
                 
                 if result.returncode != 0:
                     raise Exception(f"Failed to send command: {result.stderr}")
+                else:
+                    print("Command written successfully")
                 
-                # Wait for response
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    print(f"\nAttempt {attempt + 1} to read response:")
+                # Wait for response using M5Module-LLM approach
+                start_time = time.time()
+                buffer = ""
+                last_data_time = time.time()
+                read_count = 0
+                
+                print("Starting to read response...")
+                while True:
+                    # Check for data
+                    result = subprocess.run(
+                        ["adb", "shell", f"dd if={self.port} bs=1 count=1 2>/dev/null"],
+                        capture_output=True,
+                        text=True
+                    )
                     
-                    # Try to read response using dd for better control
-                    try:
-                        result = subprocess.run(
-                            ["adb", "shell", f"dd if={self.port} bs=1 count=1024 2>/dev/null"],
-                            capture_output=True,
-                            text=True,
-                            timeout=2
-                        )
+                    read_count += 1
+                    if read_count % 100 == 0:
+                        print(f"Read {read_count} bytes, buffer: {buffer}")
+                    
+                    if result.returncode == 0 and result.stdout:
+                        buffer += result.stdout
+                        last_data_time = time.time()
+                        print(f"Received byte: {result.stdout!r}")
                         
-                        if result.returncode == 0 and result.stdout.strip():
-                            response = result.stdout.strip()
+                        # Check for complete message
+                        if "\n" in buffer:
+                            response = buffer.strip()
                             print(f"Response received: {response}")
-                            
                             try:
                                 return json.loads(response)
                             except json.JSONDecodeError:
                                 print(f"Invalid JSON response: {response}")
+                                buffer = ""
                                 continue
-                    except subprocess.TimeoutExpired:
-                        print(f"Timeout while reading response")
-                        continue
                     
-                    time.sleep(1)  # Wait before next attempt
-                
-                raise Exception("No valid response received after multiple attempts")
+                    # Check for timeout
+                    if time.time() - start_time > 5:  # 5 second timeout
+                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                        raise Exception("Timeout waiting for response")
+                        
+                    # Check for end of message (50ms without data)
+                    if time.time() - last_data_time > 0.05:
+                        if buffer:
+                            response = buffer.strip()
+                            print(f"Response received: {response}")
+                            try:
+                                return json.loads(response)
+                            except json.JSONDecodeError:
+                                print(f"Invalid JSON response: {response}")
+                                buffer = ""
+                    
+                    time.sleep(0.005)  # 5ms delay like in M5Module-LLM
                     
             else:
                 # Use Serial mode
                 print("🔌 Using Serial mode")
-                with serial.Serial(self.port, BAUD_RATE, timeout=2) as ser:
-                    ser.write(command_json.encode())
-                    time.sleep(0.5)  # Wait for response
-                    response = ser.readline().decode().strip()
-                    return response
+                if not self._ser:
+                    raise Exception("Serial connection not initialized")
+                    
+                # Clear any existing data
+                self._ser.reset_input_buffer()
+                
+                # Write command
+                self._ser.write(command_json.encode())
+                print("Command written successfully")
+                
+                # Wait for response using M5Module-LLM approach
+                start_time = time.time()
+                buffer = ""
+                last_data_time = time.time()
+                read_count = 0
+                
+                print("Starting to read response...")
+                while True:
+                    if self._ser.in_waiting:
+                        char = self._ser.read().decode()
+                        buffer += char
+                        last_data_time = time.time()
+                        read_count += 1
+                        
+                        if read_count % 100 == 0:
+                            print(f"Read {read_count} bytes, buffer: {buffer}")
+                            
+                        print(f"Received byte: {char!r}")
+                        
+                        # Check for complete message
+                        if char == "\n":
+                            response = buffer.strip()
+                            print(f"Response received: {response}")
+                            try:
+                                return json.loads(response)
+                            except json.JSONDecodeError:
+                                print(f"Invalid JSON response: {response}")
+                                buffer = ""
+                                continue
+                    
+                    # Check for timeout
+                    if time.time() - start_time > 5:  # 5 second timeout
+                        print(f"Timeout waiting for response. Buffer: {buffer!r}")
+                        raise Exception("Timeout waiting for response")
+                        
+                    # Check for end of message (50ms without data)
+                    if time.time() - last_data_time > 0.05:
+                        if buffer:
+                            response = buffer.strip()
+                            print(f"Response received: {response}")
+                            try:
+                                return json.loads(response)
+                            except json.JSONDecodeError:
+                                print(f"Invalid JSON response: {response}")
+                                buffer = ""
+                    
+                    time.sleep(0.005)  # 5ms delay like in M5Module-LLM
                     
         except Exception as e:
             print(f"Error sending command: {e}")
             return f"Error: {e}"
+            
+    def cleanup(self) -> None:
+        """Clean up the connection"""
+        if self._ser:
+            self._ser.close()
+            self._ser = None
+        self._initialized = False
             
 def main():
     """Main function"""
@@ -267,6 +420,8 @@ def main():
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
+    finally:
+        llm.cleanup()
 
 if __name__ == "__main__":
     main() 
