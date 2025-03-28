@@ -10,6 +10,8 @@ import serial.tools.list_ports
 import serial
 import os
 import threading
+import paramiko
+import socket
 
 # Constants
 BAUD_RATE = 115200
@@ -179,7 +181,47 @@ class LLMInterface:
             print(f"Preferred mode: {self.preferred_mode if self.preferred_mode else 'auto-detect'}")
             
             # Try to find the device port based on preferred mode
-            if self.preferred_mode == "serial":
+            if self.preferred_mode == "wifi":
+                print("Attempting WiFi connection...")
+                wifi_ip = None
+                
+                # First try to get IP through ADB
+                if self._is_adb_available():
+                    print("Trying to get IP through ADB...")
+                    result = subprocess.run(
+                        ["adb", "shell", "ip addr show wlan0"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
+                        if ip_match:
+                            wifi_ip = ip_match.group(1)
+                            print(f"Found WiFi IP through ADB: {wifi_ip}")
+                
+                # If ADB lookup failed, use known IP
+                if not wifi_ip:
+                    print("Using known IP address...")
+                    wifi_ip = "10.0.0.177"
+                    print(f"Using WiFi IP: {wifi_ip}")
+                
+                # Use SSH to find the LLM service port
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                print(f"\nConnecting to {wifi_ip}:22...")
+                ssh.connect(wifi_ip, port=22, username="root", password="123456")
+                
+                # Find the LLM service port
+                service_port = self._find_llm_port(ssh)
+                ssh.close()
+                
+                self.port = f"{wifi_ip}:{service_port}"  # Use IP:port format
+                self.connection_type = "wifi"
+                print(f"Found WiFi connection at {self.port}")
+                self._initialized = True
+                return
+                    
+            elif self.preferred_mode == "serial":
                 print("Attempting serial connection...")
                 if self._is_serial_available():
                     self.port = self._find_serial_port()
@@ -493,7 +535,43 @@ class LLMInterface:
         print(f"\nSending command: {command_json.strip()}")
         
         try:
-            if self.connection_type == "serial":
+            if self.connection_type == "wifi":
+                print("📡 Using WiFi mode")
+                # Parse IP and port from self.port
+                ip, port = self.port.split(":")
+                port = int(port)
+                
+                # Connect to the LLM service
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(timeout)
+                    print(f"Connecting to {ip}:{port}...")
+                    s.connect((ip, port))
+                    
+                    # Send command
+                    print("Sending command...")
+                    s.sendall(command_json.encode())
+                    print("Command sent successfully")
+                    
+                    # Wait for response
+                    buffer = ""
+                    while True:
+                        try:
+                            data = s.recv(1).decode()
+                            if not data:
+                                break
+                            buffer += data
+                            if data == "\n":
+                                break
+                        except socket.timeout:
+                            break
+                    
+                    print(f"Received response: {buffer.strip()}")
+                    try:
+                        return json.loads(buffer.strip())
+                    except json.JSONDecodeError:
+                        return {"error": "Failed to parse response", "raw": buffer.strip()}
+                        
+            elif self.connection_type == "serial":
                 print("🔌 Using Serial mode")
                 if not self._ser:
                     raise Exception("Serial connection not initialized")
@@ -757,7 +835,16 @@ class LLMInterface:
                         ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
                         if ip_match:
                             wifi_ip = ip_match.group(1)
-                            self.port = f"{wifi_ip}:{BAUD_RATE}"  # Use IP:port format
+                            # Use SSH to find the LLM service port
+                            ssh = paramiko.SSHClient()
+                            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                            ssh.connect(wifi_ip, port=22, username="root", password="123456")
+                            
+                            # Find the LLM service port
+                            service_port = self._find_llm_port(ssh)
+                            ssh.close()
+                            
+                            self.port = f"{wifi_ip}:{service_port}"  # Use IP:port format
                             self.connection_type = "wifi"
                             print(f"Found WiFi connection at {self.port}")
                         else:
@@ -859,6 +946,61 @@ class LLMInterface:
             print(f"Error changing device mode: {e}")
             raise
 
+    def _find_llm_port(self, ssh) -> int:
+        """Find the port where the LLM service is running"""
+        print("\nChecking for LLM service port...")
+        
+        # First try to find the port from the process
+        stdin, stdout, stderr = ssh.exec_command("lsof -i -P -n | grep llm_llm")
+        for line in stdout:
+            print(f"Found port info: {line.strip()}")
+            # Look for port number in the output
+            if ":" in line:
+                port = line.split(":")[-1].split()[0]
+                print(f"Found LLM service port: {port}")
+                return int(port)
+        
+        # If we couldn't find it through lsof, try netstat
+        print("\nTrying netstat to find port...")
+        stdin, stdout, stderr = ssh.exec_command("netstat -tulpn | grep llm_llm")
+        for line in stdout:
+            print(f"Found port info: {line.strip()}")
+            # Look for port number in the output
+            if ":" in line:
+                port = line.split(":")[-1].split()[0]
+                print(f"Found LLM service port: {port}")
+                return int(port)
+        
+        # If we still can't find it, try to get the port from the process arguments
+        print("\nChecking process arguments...")
+        stdin, stdout, stderr = ssh.exec_command("ps aux | grep llm_llm")
+        for line in stdout:
+            if "llm_llm" in line and not "grep" in line:
+                print(f"Found process: {line.strip()}")
+                # Try to find port in process arguments
+                if "--port" in line:
+                    port = line.split("--port")[1].split()[0]
+                    print(f"Found port in arguments: {port}")
+                    return int(port)
+        
+        # If we get here, try common ports
+        print("\nTrying common ports...")
+        common_ports = [10001, 8080, 80, 443, 5000, 8000, 3000]  # Put 10001 first since we know it works
+        for port in common_ports:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(1)
+                    # Get the IP from the SSH connection
+                    ip = ssh.get_transport().getpeername()[0]
+                    result = s.connect_ex((ip, port))
+                    if result == 0:
+                        print(f"Port {port} is open and accepting connections")
+                        return port
+            except Exception as e:
+                print(f"Error checking port {port}: {e}")
+        
+        raise Exception("Could not find LLM service port")
+
     def check_connection(self) -> bool:
         """Check connection like M5Module-LLM"""
         try:
@@ -890,9 +1032,36 @@ class LLMInterface:
 def main():
     """Main function"""
     try:
-        # First initialize to detect current mode
-        print("\n🔍 Detecting current mode...")
-        llm = LLMInterface()
+        # First ask for connection mode
+        print("\n=== M5Module-LLM Connection Mode ===")
+        print("1. Serial (direct USB)")
+        print("2. ADB (Android Debug Bridge)")
+        print("3. WiFi")
+        
+        while True:
+            try:
+                mode_choice = input("\nSelect connection mode (1-3): ").strip()
+                if mode_choice == "1":
+                    preferred_mode = "serial"
+                    break
+                elif mode_choice == "2":
+                    preferred_mode = "adb"
+                    break
+                elif mode_choice == "3":
+                    preferred_mode = "wifi"
+                    break
+                else:
+                    print("\n❌ Invalid choice. Please select 1-3.")
+            except KeyboardInterrupt:
+                print("\n\n👋 Goodbye!")
+                return
+            except Exception as e:
+                print(f"\n❌ Error: {e}")
+                continue
+        
+        # Initialize with preferred mode
+        print(f"\n🔍 Initializing in {preferred_mode} mode...")
+        llm = LLMInterface(preferred_mode=preferred_mode)
         llm.initialize()
         current_mode = llm.connection_type or "auto-detect"
         

@@ -90,8 +90,24 @@ def send_command(command: dict, timeout: float = 5.0) -> dict:
             s.settimeout(timeout)
             s.connect((LLM_IP, service_port))
             
-            # Convert JSON to string and send it
-            command_str = json.dumps(command) + "\n"
+            # Convert command to the format expected by the service
+            if command["type"] == "LLM" and command["command"] == "generate":
+                command_json = {
+                    "request_id": command["data"]["request_id"],
+                    "work_id": "llm",
+                    "action": "inference",
+                    "object": "llm.utf-8.stream",
+                    "data": {
+                        "delta": command["data"]["prompt"],
+                        "index": 0,
+                        "finish": True
+                    }
+                }
+            else:
+                command_json = command
+            
+            # Convert to string and send it
+            command_str = json.dumps(command_json) + "\n"
             print(f"Sending command: {command_str.strip()}")
             s.sendall(command_str.encode())
             
@@ -146,14 +162,13 @@ def test_generate():
     print("\n=== Testing Generate ===")
     prompt = "What is the capital of France?"
     generate_command = {
-        "request_id": f"generate_{int(time.time())}",
-        "work_id": "llm",
-        "action": "inference",
-        "object": "llm.utf-8.stream",
+        "type": "LLM",
+        "command": "generate",
         "data": {
-            "delta": prompt,
-            "index": 0,
-            "finish": True
+            "prompt": prompt,
+            "timestamp": int(time.time() * 1000),
+            "version": "1.0",
+            "request_id": f"generate_{int(time.time())}"
         }
     }
     response = send_command(generate_command)
