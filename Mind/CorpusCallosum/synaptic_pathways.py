@@ -154,7 +154,7 @@ class SynapticPathways:
                 cls.welcome_message = "Welcome to PenphinMind."
                 journaling_manager.recordInfo("Using Serial connection")
                 return
-            
+        
         # If we get here, the specified connection type is not available
         cls._connection_type = None
         cls.welcome_message = "Welcome to PenphinMind."
@@ -284,25 +284,25 @@ class SynapticPathways:
             # Only handle the specified connection type
             if cls._connection_type == "wifi":
                 # WiFi connection is already set up in set_device_mode
-                return True
+                                    return True
             elif cls._connection_type == "serial":
                 if not cls._is_serial_available():
                     journaling_manager.recordError("No serial ports available")
                     return False
-                    
+                
                 cls._serial_port = cls._find_serial_port()
                 if not cls._serial_port:
                     journaling_manager.recordError("No suitable serial port found")
                     return False
-                    
+                
                 # Open serial connection
                 try:
                     cls._serial_connection = serial.Serial(
                         port=cls._serial_port,
-                        baudrate=115200,
+                    baudrate=115200,
                         timeout=2.0,
-                        write_timeout=5.0
-                    )
+                    write_timeout=5.0
+                )
                     return True
                 except serial.SerialException as e:
                     journaling_manager.recordError(f"Serial connection error: {str(e)}")
@@ -359,7 +359,7 @@ class SynapticPathways:
                     action="inference",
                     object="llm.utf-8.stream",
                     data={
-                        "delta": command.get("data", {}).get("prompt", ""),
+                        "delta": command.get("data", {}).get("prompt", ""),  # Get prompt directly from data
                         "index": 0,
                         "finish": True
                     }
