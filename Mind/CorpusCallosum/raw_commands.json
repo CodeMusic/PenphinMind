@@ -126,6 +126,41 @@
                         }
                     }
                 }
+            },
+            "command_formats": {
+                "setup": {
+                    "request_id": "llm_setup",
+                    "work_id": "llm",
+                    "action": "setup",
+                    "object": "llm.setup",
+                    "data": {
+                        "model": "qwen2.5-0.5b",
+                        "response_format": "llm.utf-8",
+                        "input": "llm.utf-8",
+                        "enoutput": true,
+                        "enkws": false,
+                        "max_token_len": 127,
+                        "prompt": "You are a helpful assistant."
+                    }
+                },
+                "inference": {
+                    "request_id": "llm_inference",
+                    "work_id": "llm",
+                    "action": "inference",
+                    "object": "llm.utf-8",
+                    "data": {
+                        "delta": "What is the capital of France?",
+                        "index": 0,
+                        "finish": true
+                    }
+                },
+                "exit": {
+                    "request_id": "llm_exit",
+                    "work_id": "llm",
+                    "action": "exit",
+                    "object": "None",
+                    "data": null
+                }
             }
         },
         "VLM": {

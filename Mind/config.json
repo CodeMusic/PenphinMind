@@ -5,7 +5,7 @@
             "elevenlabs": ""
         },
         "logging": {
-            "level": "SCOPE",
+            "level": "ERROR",
             "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         },
         "llm_service": {

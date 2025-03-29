@@ -84,7 +84,10 @@ class SynapticPathways:
         "temperature": "N/A",
         "timestamp": 0
     }
-
+    # Store available models
+    available_models = []
+    default_llm_model = ""
+    
     def __init__(self):
         """Initialize the synaptic pathways"""
         journaling_manager.recordScope("SynapticPathways.__init__")
@@ -337,78 +340,92 @@ class SynapticPathways:
 
     @classmethod
     async def send_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a command to the hardware"""
-        try:
-            # Log connection state
-            journaling_manager.recordInfo(f"Current connection type: {cls._connection_type}")
-            journaling_manager.recordInfo(f"Operational mode: {cls._mode}")
-            journaling_manager.recordInfo(f"Connection port: {cls._serial_port}")
+        """Send a command to the appropriate processor"""
+        journaling_manager.recordInfo(f"\nProcessing command: {command}")
+        
+        command_type = command.get("type", "")
+        command_action = command.get("command", "")
+        
+        # Handle LLM commands
+        if command_type == "LLM":
+            # Get a timestamp for request ID
+            request_id = command.get("data", {}).get("request_id", f"llm_{int(time.time())}")
             
-            # Get command type
-            command_type_str = command.get("type", "").upper()  # Convert to uppercase for enum lookup
-            try:
-                command_type = CommandType[command_type_str]  # Use uppercase for enum lookup
-            except KeyError:
-                raise ValueError(f"Invalid command type: {command_type_str}")
-                
-            # For LLM commands, format according to M5Stack API
-            if command_type == CommandType.LLM and command.get("command") == "generate":
-                # Extract prompt from data field
-                data = command.get("data", {})
-                prompt = None
-                
-                # Handle different prompt locations based on input format
-                if isinstance(data, dict) and "prompt" in data:
-                    prompt = data["prompt"]
-                elif isinstance(data, str):
-                    prompt = data
-                else:
-                    prompt = ""
-                    journaling_manager.recordWarning(f"Could not extract prompt from command: {command}")
-                
-                # Create command in M5Stack API format
-                request_id = data.get("request_id", f"generate_{int(time.time())}")
-                max_tokens = data.get("max_tokens", 100)
-                temperature = data.get("temperature", 0.7)
-                
-                # Remove any special characters and sanitize the prompt
-                if isinstance(prompt, str):
-                    # Trim whitespace and ensure it's not empty
-                    prompt = prompt.strip()
-                    if not prompt:
-                        prompt = "Hello"  # Default prompt if empty
-                
-                # Format command with proper data structure
-                command_obj = {
+            # Generate a work ID if none provided
+            work_id = f"llm.{int(time.time())}"
+            
+            if command_action == "setup":
+                # Setup LLM with specified parameters
+                setup_data = command.get("data", {})
+                setup_command = {
                     "request_id": request_id,
-                    "work_id": "llm",
+                    "work_id": work_id,
+                    "action": "setup",
+                    "object": "llm.setup",
+                    "data": {
+                        "model": setup_data.get("model", "qwen2.5-0.5b"),
+                        "response_format": setup_data.get("response_format", "llm.utf-8"),
+                        "input": setup_data.get("input", "llm.utf-8"),
+                        "enoutput": setup_data.get("enoutput", True),
+                        "enkws": setup_data.get("enkws", False),
+                        "max_token_len": setup_data.get("max_token_len", 127),
+                        "prompt": setup_data.get("prompt", "You are a helpful assistant.")
+                    }
+                }
+                return await cls.transmit_json(setup_command)
+                
+            elif command_action == "generate":
+                # Inference with user input
+                prompt = command.get("data", {}).get("prompt", "")
+                inference_command = {
+                    "request_id": request_id,
+                    "work_id": work_id,
                     "action": "inference",
-                    "object": "llm.utf-8.stream",
-                    "data": prompt  # Send prompt as plain text string
+                    "object": "llm.utf-8",
+                    "data": {
+                        "delta": prompt,
+                        "index": 0,
+                        "finish": True
+                    }
+                }
+                return await cls.transmit_json(inference_command)
+                
+            elif command_action == "exit":
+                # Exit LLM session
+                exit_command = {
+                    "request_id": request_id,
+                    "work_id": work_id,
+                    "action": "exit"
+                }
+                return await cls.transmit_json(exit_command)
+                
+            elif command_action == "status":
+                # Get LLM status
+                status_command = {
+                    "request_id": request_id,
+                    "work_id": work_id,
+                    "action": "taskinfo"
+                }
+                return await cls.transmit_json(status_command)
+            
+            else:
+                # Unknown command
+                return {
+                    "error": {
+                        "code": 1,
+                        "message": f"Unknown LLM command: {command_action}"
+                    }
                 }
                 
-                journaling_manager.recordInfo(f"Formatted LLM command: {command_obj}")
-            else:
-                # Create command object using CommandFactory for other types
-                command_obj = CommandFactory.create_command(
-                    command_type=command_type,
-                    action=command.get("command", "process"),
-                    parameters=command.get("data", {})
-                )
-                command_obj = command_obj.to_dict()
-            
-            # Transmit command to hardware
-            journaling_manager.recordInfo(f"Transmitting command to hardware: {command_obj}")
-            response = await cls.transmit_json(command_obj)
-            
-            # Parse response format
-            parsed_response = cls._parse_response(response)
-            return parsed_response
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Unexpected error in send_command: {str(e)}")
-            journaling_manager.recordError(f"Full error details:\n{traceback.format_exc()}")
-            raise
+        # Handle other command types...
+        # This would be implemented for other command types
+        
+        return {
+            "error": {
+                "code": 1,
+                "message": f"Unknown command type: {command_type}"
+            }
+        }
 
     @classmethod
     async def send_system_command(cls, command_type: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -741,6 +758,27 @@ class SynapticPathways:
             try:
                 model_info_response = await cls.transmit_json(model_info_command)
                 journaling_manager.recordInfo(f"Model info response: {model_info_response}")
+                
+                # Parse and store available models
+                if model_info_response and not model_info_response.get("error", {}).get("code", 0):
+                    models_data = model_info_response.get("data", [])
+                    if isinstance(models_data, list):
+                        cls.available_models = models_data
+                        
+                        # Find LLM models and set default if found
+                        llm_models = [model for model in models_data 
+                                     if model.get("type", "").lower() == "llm" or 
+                                     (isinstance(model.get("capabilities", []), list) and 
+                                      any(cap in ["text_generation", "chat"] for cap in model.get("capabilities", [])))]
+                        
+                        if llm_models:
+                            # Use the first LLM model as default
+                            cls.default_llm_model = llm_models[0].get("mode", cls.default_llm_model)
+                            journaling_manager.recordInfo(f"Set default LLM model to: {cls.default_llm_model}")
+                        else:
+                            journaling_manager.recordInfo(f"No LLM models found, using default: {cls.default_llm_model}")
+                    else:
+                        journaling_manager.recordError(f"Unexpected models data format: {models_data}")
             except Exception as e:
                 journaling_manager.recordError(f"Model info check failed: {e}")
             
@@ -1431,6 +1469,11 @@ class SynapticPathways:
         """
         journaling_manager.recordInfo("\nGetting available models...")
         
+        # Return cached models if available
+        if cls.available_models:
+            journaling_manager.recordInfo(f"Using cached models ({len(cls.available_models)} available)")
+            return cls.available_models
+        
         try:
             # Prepare command to get models
             model_info_command = {
@@ -1450,7 +1493,21 @@ class SynapticPathways:
                 models_data = response.get("data", [])
                 
                 if isinstance(models_data, list):
-                    return models_data
+                    # Cache the models for future use
+                    cls.available_models = models_data
+                    
+                    # Find LLM models and set default if found
+                    llm_models = [model for model in models_data 
+                                if model.get("type", "").lower() == "llm" or 
+                                (isinstance(model.get("capabilities", []), list) and 
+                                any(cap in ["text_generation", "chat"] for cap in model.get("capabilities", [])))]
+                    
+                    if llm_models:
+                        # Use the first LLM model as default
+                        cls.default_llm_model = llm_models[0].get("mode", cls.default_llm_model)
+                        journaling_manager.recordInfo(f"Set default LLM model to: {cls.default_llm_model}")
+                    
+                    return cls.available_models
                 else:
                     journaling_manager.recordError(f"Unexpected models data format: {models_data}")
                     return []

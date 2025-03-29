@@ -80,11 +80,15 @@ async def display_model_list() -> str:
     print("\nAvailable Models:")
     print("----------------")
     
-    # Get and display models
+    # Get and display models - use cached models when available
     models = await SynapticPathways.get_available_models()
     
     # Log the models for debugging
-    journaling_manager.recordInfo(f"Retrieved models: {models}")
+    using_cached = len(SynapticPathways.available_models) > 0
+    journaling_manager.recordInfo(f"Retrieved models (cached: {using_cached}): {models}")
+    
+    if using_cached:
+        print(f"[Using cached model information - {len(models)} models available]")
     
     if not models:
         print("No models available or failed to retrieve model information.")
@@ -158,6 +162,8 @@ async def display_model_details(model: Dict[str, Any]):
     
     # Log the model data for debugging
     journaling_manager.recordInfo(f"Displaying details for model: {model}")
+    print("[Using cached model information]")
+    print()
     
     # Get model identifier
     model_name = str(model.get('mode', model.get('model', "Unknown")))
@@ -264,6 +270,41 @@ async def start_chat():
     print("Type 'exit' to return to main menu")
     print("Type 'reset' to reset the LLM\n")
     
+    # Initialize LLM with setup command
+    llm_work_id = f"llm.{int(time.time())}"
+    setup_command = {
+        "request_id": f"setup_{int(time.time())}",
+        "work_id": llm_work_id,
+        "action": "setup",
+        "object": "llm.setup",
+        "data": {
+            "model": SynapticPathways.default_llm_model,
+            "response_format": "llm.utf-8", 
+            "input": "llm.utf-8", 
+            "enoutput": True,
+            "enkws": False,
+            "max_token_len": 127,
+            "prompt": "You are a helpful assistant."
+        }
+    }
+    
+    # Log which model we're using
+    journaling_manager.recordInfo(f"Using LLM model: {SynapticPathways.default_llm_model}")
+    
+    # Send setup command
+    print("Initializing LLM...")
+    setup_response = await SynapticPathways.transmit_json(setup_command)
+    journaling_manager.recordInfo(f"LLM setup response: {setup_response}")
+    
+    if setup_response and setup_response.get("error", {}).get("code", 1) == 0:
+        print("LLM initialized successfully.\n")
+    else:
+        error_msg = setup_response.get("error", {}).get("message", "Unknown error")
+        print(f"Error initializing LLM: {error_msg}")
+        print("Press Enter to return to main menu...")
+        input()
+        return
+    
     chat_history = []
     running = True
     
@@ -273,14 +314,43 @@ async def start_chat():
         
         # Check for exit command
         if user_input.lower() in ("exit", "quit", "menu"):
+            # Clean up LLM resources before exiting
+            exit_command = {
+                "request_id": f"exit_{int(time.time())}",
+                "work_id": llm_work_id,
+                "action": "exit"
+            }
+            await SynapticPathways.transmit_json(exit_command)
             break
             
         # Check for reset command
         if user_input.lower() == "reset":
             print("\nResetting LLM...")
+            
+            # First exit current LLM session
+            exit_command = {
+                "request_id": f"exit_{int(time.time())}",
+                "work_id": llm_work_id,
+                "action": "exit"
+            }
+            await SynapticPathways.transmit_json(exit_command)
+            
+            # Reset the system
             result = await SynapticPathways.clear_and_reset()
             hw_info = SynapticPathways.format_hw_info()
             print(hw_info)
+            
+            # Reinitialize LLM with new work_id
+            llm_work_id = f"llm.{int(time.time())}"
+            setup_command["request_id"] = f"setup_{int(time.time())}"
+            setup_command["work_id"] = llm_work_id
+            
+            # Make sure we're using the latest model (in case it changed)
+            setup_command["data"]["model"] = SynapticPathways.default_llm_model
+            journaling_manager.recordInfo(f"Reinitializing with LLM model: {SynapticPathways.default_llm_model}")
+            
+            setup_response = await SynapticPathways.transmit_json(setup_command)
+            
             print("LLM has been reset.\n")
             continue
         
@@ -294,38 +364,49 @@ async def start_chat():
         print("\nAI: ", end="", flush=True)
         
         try:
-            # Create LLM command
-            llm_command = {
-                "type": "LLM",
-                "command": "generate",
+            # Create LLM inference command
+            inference_command = {
+                "request_id": f"inference_{int(time.time())}",
+                "work_id": llm_work_id,
+                "action": "inference",
+                "object": "llm.utf-8",
                 "data": {
-                    "request_id": f"chat_{int(time.time())}",
-                    "prompt": user_input
+                    "delta": user_input,
+                    "index": 0,
+                    "finish": True
                 }
             }
             
-            # Send to LLM
-            response = await SynapticPathways.send_command(llm_command)
+            # Send inference command
+            response = await SynapticPathways.transmit_json(inference_command)
+            journaling_manager.recordInfo(f"LLM inference response: {response}")
             
             # Check for errors
-            if response.get("error") and response["error"].get("code", 0) != 0:
-                error_message = response["error"].get("message", "Unknown error")
+            if response and response.get("error", {}).get("code", 1) != 0:
+                error_message = response.get("error", {}).get("message", "Unknown error")
                 print(f"Error generating response: {error_message}")
                 continue
                 
             # Extract response
-            if isinstance(response.get("data"), str):
-                ai_response = response.get("data", "")
-                print(ai_response)
-            elif isinstance(response.get("data"), dict):
-                ai_response = response["data"].get("text", "")
-                print(ai_response)
-            else:
-                print("No valid response received.")
-                continue
+            if "data" in response:
+                data = response["data"]
+                if isinstance(data, dict) and "delta" in data:
+                    # Handle streaming format response
+                    ai_response = data.get("delta", "")
+                    print(ai_response)
+                elif isinstance(data, str):
+                    # Handle direct string response
+                    ai_response = data
+                    print(ai_response)
+                else:
+                    # Unknown format
+                    print("No valid response received.")
+                    continue
                 
-            # Add AI response to history
-            chat_history.append({"role": "assistant", "content": ai_response})
+                # Add AI response to history
+                chat_history.append({"role": "assistant", "content": ai_response})
+            else:
+                print("No data in response.")
             
         except Exception as e:
             journaling_manager.recordError(f"Error in chat: {e}")

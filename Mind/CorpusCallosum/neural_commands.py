@@ -124,7 +124,11 @@ class LLMCommand(BaseCommand):
             "work_id": self.work_id,
             "action": self.action,
             "object": self.object,
-            "data": self.prompt  # Send prompt as plain text string
+            "data": {
+                "delta": self.prompt,
+                "index": 0,
+                "finish": True
+            }
         }
 
     def _parse_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
