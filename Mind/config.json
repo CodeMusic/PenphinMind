@@ -11,7 +11,16 @@
         "llm_service": {
             "ip": "10.0.0.194",
             "port": 10001,
-            "timeout": 5.0
+            "timeout": 5.0,
+            "setup": {
+                "system_message": "You are PenphinOS, a bicameral AI assistant.",
+                "enkws": true,
+                "model": "default",
+                "enoutput": true,
+                "version": "1.0",
+                "max_token_len": 2048,
+                "wake_word": "hey penphin"
+            }
         }
     },
     "temporal_lobe": {

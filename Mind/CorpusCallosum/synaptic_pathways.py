@@ -359,7 +359,7 @@ class SynapticPathways:
                     action="inference",
                     object="llm.utf-8.stream",
                     data={
-                        "text": command.get("data", ""),  # Get the text directly from data
+                        "delta": command.get("data", ""),  # Get text directly from data
                         "index": 0,
                         "finish": True
                     }
@@ -671,6 +671,52 @@ class SynapticPathways:
             )
             response = await cls.transmit_json(ping_command)
             journaling_manager.recordInfo(f"Connection test response: {response}")
+            
+            # Initialize the LLM with setup parameters
+            journaling_manager.recordInfo("\nSetting up LLM...")
+            setup_command = {
+                "request_id": "sys_setup",
+                "work_id": "sys",
+                "action": "setup",
+                "object": "None",
+                "data": json.dumps(CONFIG.llm_service.get("setup", {
+                    "system_message": "You are a helpful assistant.",
+                    "enkws": True,
+                    "model": "default",
+                    "enoutput": True,
+                    "version": "1.0",
+                    "max_token_len": 2048,
+                    "wake_word": "hey penphin"
+                }))
+            }
+            setup_response = await cls.transmit_json(setup_command)
+            journaling_manager.recordInfo(f"LLM setup response: {setup_response}")
+            
+            # If setup failed, try alternative initialization commands
+            if "error" in str(setup_response):
+                journaling_manager.recordInfo("Setup command failed, trying alternatives...")
+                for action in ["init", "config", "initialize"]:
+                    journaling_manager.recordInfo(f"Trying {action} command...")
+                    alt_command = {
+                        "request_id": f"sys_{action}",
+                        "work_id": "sys",
+                        "action": action,
+                        "object": "None",
+                        "data": json.dumps({
+                            "system_message": "You are a helpful assistant.",
+                            "enkws": True,
+                            "model": "default",
+                            "enoutput": True,
+                            "version": "1.0",
+                            "max_token_len": 2048,
+                            "wake_word": "hey penphin"
+                        })
+                    }
+                    alt_response = await cls.transmit_json(alt_command)
+                    journaling_manager.recordInfo(f"{action.capitalize()} response: {alt_response}")
+                    if "error" not in str(alt_response):
+                        journaling_manager.recordInfo(f"Successfully initialized with {action} command")
+                        break
             
         except Exception as e:
             journaling_manager.recordError(f"Error initializing {mode} connection: {e}")

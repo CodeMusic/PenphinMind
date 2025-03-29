@@ -177,6 +177,24 @@ class SystemCommand(BaseCommand):
                 "object": "None",
                 "data": "None"
             }
+        # For setup command, use specific format
+        elif self.action == "setup":
+            return {
+                "request_id": "sys_setup",
+                "work_id": "sys",
+                "action": "setup",
+                "object": "None",
+                "data": json.dumps(self.parameters)
+            }
+        # For other initialization commands (fallbacks)
+        elif self.action in ["init", "config", "initialize"]:
+            return {
+                "request_id": f"sys_{self.action}",
+                "work_id": "sys",
+                "action": self.action,
+                "object": "None",
+                "data": json.dumps(self.parameters)
+            }
             
         # For other commands, use standard format
         data = super().to_dict()

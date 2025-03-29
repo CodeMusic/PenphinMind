@@ -170,12 +170,37 @@
                 "action": {
                     "type": "string",
                     "required": true,
-                    "description": "System action to perform"
+                    "description": "System action to perform",
+                    "enum": ["ping", "setup", "init", "config", "initialize", "status", "reset"]
                 },
                 "data": {
                     "type": "object",
                     "required": false,
                     "description": "Additional data for the action"
+                }
+            },
+            "command_formats": {
+                "setup": {
+                    "request_id": "sys_setup", 
+                    "work_id": "sys",
+                    "action": "setup",
+                    "object": "None",
+                    "data": {
+                        "system_message": "You are a helpful assistant.",
+                        "enkws": true,
+                        "model": "default",
+                        "enoutput": true,
+                        "version": "1.0",
+                        "max_token_len": 2048,
+                        "wake_word": "hey penphin"
+                    }
+                },
+                "ping": {
+                    "request_id": "sys_ping",
+                    "work_id": "sys",
+                    "action": "ping",
+                    "object": "None",
+                    "data": "None"
                 }
             }
         },
