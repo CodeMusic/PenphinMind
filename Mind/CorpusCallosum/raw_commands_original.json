@@ -79,52 +79,22 @@
             "name": "Large Language Model",
             "description": "Process text through language model",
             "parameters": {
-                "request_id": {
+                "prompt": {
                     "type": "string",
                     "required": true,
-                    "description": "Unique request identifier"
+                    "description": "Input text prompt"
                 },
-                "work_id": {
-                    "type": "string",
-                    "required": true,
-                    "default": "llm",
-                    "description": "Work identifier"
+                "max_tokens": {
+                    "type": "integer",
+                    "required": false,
+                    "default": 1000,
+                    "description": "Maximum tokens to generate"
                 },
-                "action": {
-                    "type": "string",
-                    "required": true,
-                    "default": "inference",
-                    "description": "Action to perform"
-                },
-                "object": {
-                    "type": "string",
-                    "required": true,
-                    "default": "llm.utf-8.stream",
-                    "description": "Object to process"
-                },
-                "data": {
-                    "type": "object",
-                    "required": true,
-                    "description": "Command data",
-                    "parameters": {
-                        "delta": {
-                            "type": "string",
-                            "required": true,
-                            "description": "Input text prompt"
-                        },
-                        "index": {
-                            "type": "integer",
-                            "required": true,
-                            "default": 0,
-                            "description": "Response index"
-                        },
-                        "finish": {
-                            "type": "boolean",
-                            "required": true,
-                            "default": true,
-                            "description": "Whether this is the final response"
-                        }
-                    }
+                "temperature": {
+                    "type": "float",
+                    "required": false,
+                    "default": 0.7,
+                    "description": "Sampling temperature"
                 }
             }
         },

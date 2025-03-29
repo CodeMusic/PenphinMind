@@ -39,19 +39,31 @@ class ASRCommand(BaseCommand):
 @dataclass
 class TTSCommand(BaseCommand):
     """Text-to-Speech command"""
-    text: str
-    voice_id: str = "default"
-    speed: float = 1.0
-    pitch: float = 1.0
+    def __init__(self, command_type: CommandType, text: str = None, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0, **kwargs):
+        journaling_manager.recordScope("TTSCommand.__init__")
+        super().__init__(command_type)
+        # Extract text from parameters if not directly provided
+        self.text = text or kwargs.get('parameters', {}).get('text', '')
+        self.voice_id = voice_id
+        self.speed = speed
+        self.pitch = pitch
+        journaling_manager.recordDebug(f"TTS command initialized with voice: {self.voice_id}, speed: {self.speed}, pitch: {self.pitch}")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert command to dictionary"""
+        journaling_manager.recordScope("TTSCommand.to_dict")
+        # Use the exact format from prototype
         return {
-            "command_type": self.command_type.value,
-            "text": self.text,
-            "voice_id": self.voice_id,
-            "speed": self.speed,
-            "pitch": self.pitch
+            "request_id": "tts_process",
+            "work_id": "tts",
+            "action": "process",
+            "object": "tts.utf-8",
+            "data": {
+                "text": self.text,
+                "voice_id": self.voice_id,
+                "speed": self.speed,
+                "pitch": self.pitch
+            }
         }
 
 class VADCommand(BaseCommand):
@@ -78,23 +90,27 @@ class VADCommand(BaseCommand):
 
 class LLMCommand(BaseCommand):
     """Command for language model operations"""
-    def __init__(self, command_type: CommandType, action: str, parameters: Dict[str, Any] = None):
+    def __init__(self, command_type: CommandType, request_id: str, work_id: str = "llm", action: str = "inference", object: str = "llm.utf-8.stream", data: Dict[str, Any] = None):
         journaling_manager.recordScope("LLMCommand.__init__")
         super().__init__(command_type)
+        self.request_id = request_id
+        self.work_id = work_id
         self.action = action
-        self.parameters = parameters or {}
+        self.object = object
+        self.data = data or {}
         journaling_manager.recordDebug(f"LLM command initialized with action: {self.action}")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert command to dictionary format"""
         journaling_manager.recordScope("LLMCommand.to_dict")
-        data = super().to_dict()
-        data.update({
+        # Use the exact format from raw_commands.json
+        return {
+            "request_id": self.request_id,
+            "work_id": self.work_id,
             "action": self.action,
-            "parameters": self.parameters
-        })
-        journaling_manager.recordDebug(f"Converted LLM command to dict: {data}")
-        return data
+            "object": self.object,
+            "data": self.data
+        }
 
 class VLMCommand(BaseCommand):
     """Vision Language Model commands"""
@@ -152,6 +168,17 @@ class SystemCommand(BaseCommand):
     def to_dict(self) -> Dict[str, Any]:
         """Convert system command to dictionary"""
         journaling_manager.recordScope("SystemCommand.to_dict")
+        # For ping command, use the exact format from prototype
+        if self.action == "ping":
+            return {
+                "request_id": "sys_ping",
+                "work_id": "sys",
+                "action": "ping",
+                "object": "None",
+                "data": "None"
+            }
+            
+        # For other commands, use standard format
         data = super().to_dict()
         data.update({
             "action": self.action,
@@ -400,8 +427,8 @@ class CommandFactory:
             if not command_class:
                 raise ValueError(f"Unknown command type: {command_type}")
                 
-            # Create command instance
-            return command_class(**kwargs)
+            # Create command instance with command_type
+            return command_class(command_type=command_type, **kwargs)
             
         except Exception as e:
             journaling_manager.recordError(f"Error creating command: {e}")

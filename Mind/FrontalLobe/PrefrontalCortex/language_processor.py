@@ -81,23 +81,15 @@ class LanguageProcessor:
             self._processing = True
             self.current_state["status"] = "processing"
             
-            # First, comprehend the input through Wernicke's area
-            comprehension = await self._wernicke.extract_meaning(input_text)
-            
-            # Then, process through LLM for response generation
+            # Process through LLM for response generation
             llm_response = await self._llm.process_input(input_text)
-            
-            # Finally, generate speech through Broca's area
-            speech = await self._broca.generate_speech(llm_response.get("response", ""))
             
             self._processing = False
             self.current_state["status"] = "completed"
             journaling_manager.recordInfo("Input processed successfully")
             
             return {
-                "comprehension": comprehension,
-                "response": llm_response,
-                "speech": speech
+                "response": llm_response
             }
             
         except Exception as e:

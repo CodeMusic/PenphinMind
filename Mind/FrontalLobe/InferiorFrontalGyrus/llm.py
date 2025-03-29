@@ -26,6 +26,7 @@ from ...CorpusCallosum.neural_commands import (
     LLMCommand, TTSCommand, ASRCommand, VADCommand, WhisperCommand,
     CommandType, BaseCommand, SystemCommand
 )
+import time
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -126,11 +127,25 @@ class LLM:
             max_tokens = max_tokens or self.current_state["model"]["max_tokens"]
             temperature = temperature or self.current_state["model"]["temperature"]
             
-            # Generate response directly
-            response = {
-                "status": "ok",
-                "response": f"This is a simulated response to: {input_text}"
+            # Create LLM command with proper parameters
+            command = {
+                "type": "LLM",
+                "command": "generate",
+                "data": {
+                    "action": "inference",
+                    "parameters": {
+                        "prompt": input_text,
+                        "timestamp": int(time.time() * 1000),
+                        "version": "1.0",
+                        "request_id": f"generate_{int(time.time())}",
+                        "max_tokens": max_tokens,
+                        "temperature": temperature
+                    }
+                }
             }
+            
+            # Send command through synaptic pathways
+            response = await SynapticPathways.send_command(command)
             
             journaling_manager.recordDebug(f"Generated response: {response}")
             return response

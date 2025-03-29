@@ -33,8 +33,10 @@ class CommandLoader:
                 raise FileNotFoundError(f"Command definitions file not found: {json_path}")
                 
             with open(json_path, 'r') as f:
-                definitions = json.load(f)
+                data = json.load(f)
                 
+            # Get command definitions from command_types key
+            definitions = data.get("command_types", {})
             journaling_manager.recordDebug(f"Loaded {len(definitions)} command definitions")
             return definitions
             

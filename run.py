@@ -269,6 +269,15 @@ Each mode provides direct interaction with its respective subsystem.""",
     )
     
     parser.add_argument(
+        '--connection',
+        choices=['serial', 'adb', 'wifi'],
+        help="""Select connection mode:
+  serial - Direct USB connection
+  adb    - Android Debug Bridge
+  wifi   - WiFi connection"""
+    )
+    
+    parser.add_argument(
         '--debug',
         action='store_true',
         help="""Enable debug logging for detailed system information.
@@ -302,6 +311,11 @@ async def main():
         # Set mode in SynapticPathways
         if args.mode:
             SynapticPathways.set_mode(args.mode)
+            
+        # Set connection mode if specified
+        if args.connection:
+            print(f"\n🔍 Setting connection mode to {args.connection}...")
+            await SynapticPathways.set_device_mode(args.connection)
             
         penphin = PenphinMind()
         

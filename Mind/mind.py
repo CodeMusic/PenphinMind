@@ -319,9 +319,7 @@ class Mind:
             journaling_manager.recordInfo("Successfully processed input")
             return {
                 "status": "ok",
-                "comprehension": response.get("comprehension", {}),
-                "response": response.get("response", {}),
-                "speech": response.get("speech", {})
+                "response": response.get("response", {})
             }
             
         except Exception as e:

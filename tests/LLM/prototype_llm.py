@@ -546,29 +546,37 @@ class LLMInterface:
                     s.settimeout(timeout)
                     print(f"Connecting to {ip}:{port}...")
                     s.connect((ip, port))
+                    print("Connected successfully")
                     
                     # Send command
                     print("Sending command...")
+                    print(f"Command bytes: {command_json.encode()}")
                     s.sendall(command_json.encode())
                     print("Command sent successfully")
                     
                     # Wait for response
                     buffer = ""
+                    print("Waiting for response...")
                     while True:
                         try:
                             data = s.recv(1).decode()
                             if not data:
+                                print("No more data received")
                                 break
                             buffer += data
+                            print(f"Received byte: {data!r}")
                             if data == "\n":
+                                print("Received newline, ending read")
                                 break
                         except socket.timeout:
+                            print("Socket timeout")
                             break
                     
                     print(f"Received response: {buffer.strip()}")
                     try:
                         return json.loads(buffer.strip())
                     except json.JSONDecodeError:
+                        print(f"Failed to parse JSON: {buffer.strip()}")
                         return {"error": "Failed to parse response", "raw": buffer.strip()}
                         
             elif self.connection_type == "serial":

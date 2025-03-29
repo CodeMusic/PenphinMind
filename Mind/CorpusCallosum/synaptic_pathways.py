@@ -23,8 +23,6 @@ import json
 import logging
 import os
 import platform
-import pwd
-import grp
 import stat
 import time
 from pathlib import Path
@@ -33,6 +31,9 @@ from enum import Enum
 import subprocess
 import re
 import traceback
+import threading
+import socket
+import paramiko
 
 # Third-party imports
 import serial
@@ -43,6 +44,7 @@ from Mind.CorpusCallosum.neural_commands import (
     BaseCommand, CommandType, CommandFactory, CommandSerializer,
     TTSCommand, ASRCommand, LLMCommand, SystemCommand, WhisperCommand, VADCommand
 )
+from Mind.CorpusCallosum.command_loader import CommandLoader
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager, SystemJournelingLevel
 
@@ -72,6 +74,10 @@ class SynapticPathways:
     welcome_message = ""
     _connection_type = None
     _serial_port = None
+    _response_buffer = ""
+    _response_callback = None
+    _response_thread = None
+    _stop_thread = False
 
     def __init__(self):
         """Initialize the synaptic pathways"""
@@ -108,16 +114,17 @@ class SynapticPathways:
         """Initialize the synaptic pathways"""
         journaling_manager.recordScope("SynapticPathways.initialize")
         try:
-            # Detect platform for hardware connection
-            cls._detect_platform()
-            
-            # Only try to connect if we have a valid platform
-            if cls._connection_type:
-                if not await cls._setup_ax630e():
-                    raise SerialConnectionError("Failed to connect to neural processor")
-            else:
-                raise SerialConnectionError("No valid hardware platform detected")
-                    
+            # Skip if already initialized
+            if cls._initialized:
+                journaling_manager.recordInfo("Synaptic pathways already initialized")
+                return
+                
+            # Only try to connect if we have a valid connection type
+            if not cls._connection_type:
+                raise SerialConnectionError("No connection type specified")
+                
+            # Initialize the specified connection mode
+            await cls.set_device_mode(cls._connection_type)
             journaling_manager.recordInfo("Synaptic pathways initialized")
             
         except Exception as e:
@@ -132,24 +139,26 @@ class SynapticPathways:
         journaling_manager.recordInfo(f"Platform: {platform.platform()}")
         journaling_manager.recordInfo(f"Machine: {platform.machine()}")
         
-        # Check for ADB connection first
-        if cls._is_adb_available():
-            cls._connection_type = "adb"
+        # Use the connection type specified by command line argument
+        if cls._connection_type == "wifi":
             cls.welcome_message = "Welcome to PenphinMind."
-            journaling_manager.recordInfo("ADB connection detected")
+            journaling_manager.recordInfo("Using WiFi connection")
             return
+        elif cls._connection_type == "adb":
+            if cls._is_adb_available():
+                cls.welcome_message = "Welcome to PenphinMind."
+                journaling_manager.recordInfo("Using ADB connection")
+                return
+        elif cls._connection_type == "serial":
+            if cls._is_serial_available():
+                cls.welcome_message = "Welcome to PenphinMind."
+                journaling_manager.recordInfo("Using Serial connection")
+                return
             
-        # Then check for Serial connection
-        if cls._is_serial_available():
-            cls._connection_type = "serial"
-            cls.welcome_message = "Welcome to PenphinMind."
-            journaling_manager.recordInfo("Serial connection detected")
-            return
-            
-        # If no hardware connection found
+        # If we get here, the specified connection type is not available
         cls._connection_type = None
         cls.welcome_message = "Welcome to PenphinMind."
-        journaling_manager.recordInfo("No hardware connection detected")
+        journaling_manager.recordInfo(f"Specified connection type {cls._connection_type} not available")
 
     @classmethod
     def _is_adb_available(cls) -> bool:
@@ -270,285 +279,113 @@ class SynapticPathways:
     async def _setup_ax630e(cls) -> bool:
         """Set up connection to neural processor"""
         try:
-            journaling_manager.recordInfo("\n=== Neural Processor Detection ===")
-            journaling_manager.recordInfo("Scanning for AX630...")
+            journaling_manager.recordInfo("\n=== Neural Processor Connection ===")
             
-            # Try ADB first
-            if cls._is_adb_available():
-                journaling_manager.recordInfo("\n✓ AX630 detected in ADB mode")
-                journaling_manager.recordInfo("=" * 50)
-                
-                # Get device info
-                devices = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True)
-                journaling_manager.recordInfo("\nADB Devices List:")
-                journaling_manager.recordInfo(devices.stdout)
-                
-                # Find the correct serial port through ADB
-                serial_port = None
+            # Only handle the specified connection type
+            if cls._connection_type == "wifi":
+                # WiFi connection is already set up in set_device_mode
+                return True
+            elif cls._connection_type == "serial":
+                if not cls._is_serial_available():
+                    journaling_manager.recordError("No serial ports available")
+                    return False
+                    
+                cls._serial_port = cls._find_serial_port()
+                if not cls._serial_port:
+                    journaling_manager.recordError("No suitable serial port found")
+                    return False
+                    
+                # Open serial connection
                 try:
-                    if platform.system() == "Darwin":  # macOS
-                        # On macOS, try to find the port through ADB
-                        result = subprocess.run(
-                            ["adb", "shell", "getprop | grep tty"],
-                            capture_output=True,
-                            text=True
-                        )
-                        if result.returncode == 0:
-                            journaling_manager.recordInfo("Device properties:")
-                            journaling_manager.recordInfo(result.stdout)
-                            
-                            # Look for serial port in properties
-                            for line in result.stdout.split('\n'):
-                                if "tty" in line:
-                                    # Extract port from property
-                                    port_match = re.search(r'/dev/tty\S+', line)
-                                    if port_match:
-                                        serial_port = port_match.group(0)
-                                        journaling_manager.recordInfo(f"Found AX630 port through ADB: {serial_port}")
-                                        break
-                            
-                            if not serial_port:
-                                # Try to find port through USB device list
-                                result = subprocess.run(
-                                    ["adb", "shell", "ls -l /dev/tty*"],
-                                    capture_output=True,
-                                    text=True
-                                )
-                                if result.returncode == 0:
-                                    journaling_manager.recordInfo("Available ports:")
-                                    journaling_manager.recordInfo(result.stdout)
-                                    
-                                    # Look for serial port in device list
-                                    for line in result.stdout.split('\n'):
-                                        if "ttyUSB" in line or "ttyACM" in line:
-                                            port_match = re.search(r'/dev/tty\S+', line)
-                                            if port_match:
-                                                serial_port = port_match.group(0)
-                                                journaling_manager.recordInfo(f"Found AX630 port in device list: {serial_port}")
-                                                break
-                except Exception as e:
-                    journaling_manager.recordError(f"Error finding serial port: {e}")
-                    journaling_manager.recordError(f"Error details: {traceback.format_exc()}")
-                
-                if not serial_port:
-                    journaling_manager.recordError("No suitable serial port found through ADB")
-                    return False
-                
-                # Test connection with a simple command
-                ping_command = {
-                    "type": "SYSTEM",
-                    "command": "ping",
-                    "data": {
-                        "timestamp": int(time.time() * 1000),
-                        "version": "1.0",
-                        "request_id": "ping_test",
-                        "echo": True
-                    }
-                }
-                
-                # Send command through ADB
-                json_data = json.dumps(ping_command) + "\n"
-                journaling_manager.recordInfo(f"\nSending ping command to {serial_port}:")
-                journaling_manager.recordInfo(f"Command: {json_data.strip()}")
-                
-                # First ensure the port is accessible
-                result = subprocess.run(
-                    ["adb", "shell", f"chmod 666 {serial_port}"],
-                    capture_output=True,
-                    text=True
-                )
-                if result.returncode != 0:
-                    journaling_manager.recordError(f"Failed to set port permissions: {result.stderr}")
-                    return False
-                
-                # Send the command
-                result = subprocess.run(
-                    ["adb", "shell", f"echo '{json_data}' > {serial_port}"],
-                    capture_output=True,
-                    text=True
-                )
-                
-                if result.returncode != 0:
-                    journaling_manager.recordError(f"Failed to send ping command: {result.stderr}")
+                    cls._serial_connection = serial.Serial(
+                        port=cls._serial_port,
+                        baudrate=115200,
+                        timeout=2.0,
+                        write_timeout=5.0
+                    )
+                    return True
+                except serial.SerialException as e:
+                    journaling_manager.recordError(f"Serial connection error: {str(e)}")
                     return False
                     
-                # Wait for response with timeout
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    journaling_manager.recordInfo(f"\nAttempt {attempt + 1} to read response:")
-                    # Try multiple methods to read response
-                    methods = [
-                        f"cat {serial_port}",
-                        f"dd if={serial_port} bs=1024 count=1",
-                        f"hexdump -C {serial_port} -n 1024"
-                    ]
+            elif cls._connection_type == "adb":
+                if not cls._is_adb_available():
+                    journaling_manager.recordError("ADB not available")
+                    return False
                     
-                    for method in methods:
-                        journaling_manager.recordInfo(f"Trying: {method}")
-                        result = subprocess.run(
-                            ["adb", "shell", method],
-                            capture_output=True,
-                            text=True,
-                            timeout=2  # 2 second timeout
-                        )
-                        
-                        if result.returncode == 0 and result.stdout.strip():
-                            response = result.stdout.strip()
-                            journaling_manager.recordInfo(f"Response received: {response}")
-                            
-                            try:
-                                response_data = json.loads(response)
-                                if (response_data.get("type") == "SYSTEM" and 
-                                    response_data.get("command") == "ping" and 
-                                    response_data.get("data", {}).get("echo") == True):
-                                    journaling_manager.recordInfo("Received valid command echo, connection successful")
-                                    cls._connection_type = "adb"
-                                    cls._serial_port = serial_port
-                                    cls._initialized = True
-                                    return True
-                            except json.JSONDecodeError:
-                                journaling_manager.recordError(f"Invalid JSON response: {response}")
-                                continue
+                cls._serial_port = cls._find_adb_port()
+                if not cls._serial_port:
+                    journaling_manager.recordError("No suitable ADB port found")
+                    return False
                     
-                    time.sleep(1)  # Wait before next attempt
+                return True
                 
-                journaling_manager.recordError("No valid response received after multiple attempts")
-                return False
-                
-            # If ADB failed, try serial
-            journaling_manager.recordInfo("\nADB connection failed, trying serial connection...")
-            
-            # Initialize serial connection
-            serial_port = None
-            if platform.system() == "Darwin":  # macOS
-                ports = serial.tools.list_ports.comports()
-                for port in ports:
-                    if "usbserial" in port.device.lower() or "tty.usbserial" in port.device.lower():
-                        serial_port = port.device
-                        journaling_manager.recordInfo(f"Using serial port: {serial_port}")
-                        break
-            else:  # Linux
-                if os.path.exists("/dev/ttyUSB0"):
-                    serial_port = "/dev/ttyUSB0"
-                elif os.path.exists("/dev/ttyS0"):
-                    serial_port = "/dev/ttyS0"
-            
-            if not serial_port:
-                journaling_manager.recordError("No suitable serial port found")
-                return False
-                
-            # Open serial connection
-            try:
-                ser = serial.Serial(
-                    port=serial_port,
-                    baudrate=115200,
-                    timeout=2.0,  # 2 second timeout
-                    write_timeout=5.0
-                )
-                
-                # Store the serial connection
-                cls._serial_connection = ser
-                cls._connection_type = "serial"
-                cls._serial_port = serial_port
-                
-                # Test connection with a simple command
-                ping_command = {
-                    "type": "SYSTEM",
-                    "command": "ping",
-                    "data": {
-                        "timestamp": int(time.time() * 1000),
-                        "version": "1.0",
-                        "request_id": "ping_test",
-                        "echo": True
-                    }
-                }
-                
-                # Send command
-                json_data = json.dumps(ping_command) + "\n"
-                journaling_manager.recordInfo(f"Sending ping command: {json_data.strip()}")
-                ser.write(json_data.encode())
-                ser.flush()  # Ensure data is sent
-                
-                # Wait for response with timeout
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    try:
-                        response = ser.readline().decode().strip()
-                        if response:
-                            journaling_manager.recordInfo(f"Response received: {response}")
-                            try:
-                                response_data = json.loads(response)
-                                if (response_data.get("type") == "SYSTEM" and 
-                                    response_data.get("command") == "ping" and 
-                                    response_data.get("data", {}).get("echo") == True):
-                                    journaling_manager.recordInfo("Received valid command echo, connection successful")
-                                    cls._initialized = True
-                                    return True
-                            except json.JSONDecodeError:
-                                journaling_manager.recordError(f"Invalid JSON response: {response}")
-                                continue
-                    except serial.SerialTimeoutException:
-                        journaling_manager.recordError(f"Timeout on attempt {attempt + 1}")
-                        continue
-                    
-                    time.sleep(1)  # Wait before next attempt
-                
-                journaling_manager.recordError("No valid response received after multiple attempts")
-                ser.close()
-                cls._serial_connection = None
-                return False
-                    
-            except serial.SerialException as e:
-                journaling_manager.recordError(f"Serial connection error: {str(e)}")
-                journaling_manager.recordError(f"Error details: {traceback.format_exc()}")
-                if 'ser' in locals() and ser.is_open:
-                    ser.close()
-                cls._serial_connection = None
+            else:
+                journaling_manager.recordError(f"Unsupported connection type: {cls._connection_type}")
                 return False
                 
         except Exception as e:
             journaling_manager.recordError(f"Connection error: {str(e)}")
             journaling_manager.recordError(f"Error details: {traceback.format_exc()}")
-            if 'ser' in locals() and ser.is_open:
-                ser.close()
-            cls._serial_connection = None
             return False
 
     @classmethod
     async def send_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a command through the synaptic pathways"""
-        journaling_manager.recordScope("SynapticPathways.send_command", command=command)
+        """Send a command to the hardware"""
         try:
-            # Ensure neural pathways are initialized
-            if not cls._initialized:
-                journaling_manager.recordInfo("Neural pathways not initialized, initializing now")
-                await cls.initialize()
-                
             # Log connection state
             journaling_manager.recordInfo(f"Current connection type: {cls._connection_type}")
             journaling_manager.recordInfo(f"Operational mode: {cls._mode}")
-            journaling_manager.recordInfo(f"Serial port: {cls._serial_port}")
-            journaling_manager.recordInfo(f"Serial connection: {'open' if cls._serial_connection and cls._serial_connection.is_open else 'closed'}")
+            journaling_manager.recordInfo(f"Connection port: {cls._serial_port}")
             
-            # Create command object first
-            command_type = command.pop("command_type")  # Remove command_type from dict
-            command_obj = CommandFactory.create_command(
-                command_type=CommandType(command_type),
-                **command
-            )
-            journaling_manager.recordInfo(f"Created command object: {command_obj.__class__.__name__}")
+            # Load command definitions
+            command_loader = CommandLoader()
+            command_definitions = command_loader._load_command_definitions()
             
-            # Validate command object
-            cls._validate_command(command_obj)
+            # Get command type and validate against definitions
+            command_type_str = command.get("type", "").upper()  # Convert to uppercase for enum lookup
+            try:
+                command_type = CommandType[command_type_str]  # Use uppercase for enum lookup
+            except KeyError:
+                raise ValueError(f"Invalid command type: {command_type_str}")
+                
+            # For LLM commands, use the prototype format
+            if command_type == CommandType.LLM and command.get("command") == "generate":
+                # Create command object using LLMCommand class
+                command_obj = LLMCommand(
+                    command_type=command_type,
+                    request_id=command.get("data", {}).get("request_id", f"generate_{int(time.time())}"),
+                    work_id="llm",
+                    action="inference",
+                    object="llm.utf-8.stream",
+                    data={
+                        "delta": command.get("data", {}).get("prompt", ""),
+                        "index": 0,
+                        "finish": True
+                    }
+                ).to_dict()
+                # Validate against command definitions
+                command_loader.validate_command(command_type_str, command_obj)
+            else:
+                # Create command object using CommandFactory for other types
+                command_obj = CommandFactory.create_command(
+                    command_type=command_type,
+                    action=command.get("command", "process"),
+                    parameters=command.get("data", {})
+                )
+                command_obj = command_obj.to_dict()
+            
+            # Validate command against its definition using the uppercase command type
+            command_loader.validate_command(command_type_str, command_obj)
             
             # Transmit command to hardware
             journaling_manager.recordInfo("Transmitting command to hardware")
             return await cls.transmit_json(command_obj)
             
         except Exception as e:
-            journaling_manager.recordError(f"Unexpected error in send_command: {e}")
-            journaling_manager.recordError("Full error details:", exc_info=True)
-            raise CommandTransmissionError(f"Failed to send command: {e}")
+            journaling_manager.recordError(f"Unexpected error in send_command: {str(e)}")
+            journaling_manager.recordError(f"Full error details:\n{traceback.format_exc()}")
+            raise
 
     @classmethod
     async def send_system_command(cls, command_type: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -636,7 +473,7 @@ class SynapticPathways:
             raise
 
     @classmethod
-    async def transmit_json(cls, command: BaseCommand) -> Dict[str, Any]:
+    async def transmit_json(cls, command: Union[BaseCommand, Dict[str, Any]]) -> Dict[str, Any]:
         """Transmit a command as JSON"""
         try:
             if not cls._initialized:
@@ -645,15 +482,80 @@ class SynapticPathways:
                 
             # Log connection state
             journaling_manager.recordInfo(f"Transmitting command using {cls._connection_type} connection")
-            journaling_manager.recordInfo(f"Command type: {command.command_type}")
+            
+            # Get command data and type
+            if isinstance(command, BaseCommand):
+                command_data = command.to_dict()
+                command_type = command.command_type
+            else:
+                command_data = command
+                command_type = command.get("command_type")
+                
+            journaling_manager.recordInfo(f"Command type: {command_type}")
             
             # Send command based on connection type
-            if cls._connection_type == "adb":
+            if cls._connection_type == "wifi":
+                # Parse IP and port from self._serial_port
+                ip, port = cls._serial_port.split(":")
+                port = int(port)
+                
+                # Connect to the LLM service
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(5.0)  # 5 second timeout
+                    journaling_manager.recordInfo(f"Connecting to {ip}:{port}...")
+                    s.connect((ip, port))
+                    journaling_manager.recordInfo("Connected successfully")
+                    
+                    # Send command
+                    json_data = json.dumps(command_data) + "\n"
+                    journaling_manager.recordInfo(f"Sending command: {json_data.strip()}")
+                    s.sendall(json_data.encode())
+                    journaling_manager.recordInfo("Command sent successfully")
+                    
+                    # Wait for response
+                    buffer = ""
+                    journaling_manager.recordInfo("Waiting for response...")
+                    while True:
+                        try:
+                            data = s.recv(1).decode()
+                            if not data:
+                                journaling_manager.recordInfo("No more data received")
+                                break
+                            buffer += data
+                            
+                            # For chat responses, print characters as they arrive
+                            if command_type == CommandType.LLM and command_data.get("action") == "inference":
+                                print(data, end="", flush=True)
+                            
+                            if data == "\n":
+                                journaling_manager.recordInfo("Received newline, ending read")
+                                break
+                        except socket.timeout:
+                            journaling_manager.recordError("Socket timeout")
+                            break
+                    
+                    journaling_manager.recordInfo(f"Received response: {buffer.strip()}")
+                    try:
+                        response = json.loads(buffer.strip())
+                        # Parse response like the prototype
+                        if response.get("work_id") == "llm" and response.get("action") == "inference":
+                            return {
+                                "status": "ok",
+                                "response": response.get("data", {}).get("delta", ""),
+                                "finished": response.get("data", {}).get("finish", False),
+                                "index": response.get("data", {}).get("index", 0)
+                            }
+                        return response
+                    except json.JSONDecodeError:
+                        journaling_manager.recordError(f"Failed to parse JSON: {buffer.strip()}")
+                        return {"error": "Failed to parse response", "raw": buffer.strip()}
+                        
+            elif cls._connection_type == "adb":
                 if not cls._serial_port:
                     journaling_manager.recordError("No serial port configured for ADB")
                     raise SerialConnectionError("No serial port configured for ADB")
                     
-                command_data = command.to_dict()
+                command_data = command_data
                 json_data = json.dumps(command_data) + "\n"
                 journaling_manager.recordDebug(f"Sending command through ADB: {json_data.strip()}")
                 
@@ -717,7 +619,7 @@ class SynapticPathways:
                         journaling_manager.recordError("Serial connection still not available after setup")
                         raise SerialConnectionError("Failed to establish serial connection")
                 
-                command_data = command.to_dict()
+                command_data = command_data
                 json_data = json.dumps(command_data) + "\n"
                 journaling_manager.recordDebug(f"Sending command through serial: {json_data.strip()}")
                 
@@ -790,4 +692,409 @@ class SynapticPathways:
             journaling_manager.recordInfo("Neural pathways connections closed")
         except Exception as e:
             journaling_manager.recordError(f"Error closing neural pathways connections: {e}")
+            raise
+
+    @classmethod
+    def _start_response_thread(cls):
+        """Start thread to continuously read responses"""
+        cls._stop_thread = False
+        cls._response_thread = threading.Thread(target=cls._read_responses)
+        cls._response_thread.daemon = True
+        cls._response_thread.start()
+
+    @classmethod
+    def _stop_response_thread(cls):
+        """Stop the response reading thread"""
+        cls._stop_thread = True
+        if cls._response_thread:
+            cls._response_thread.join()
+
+    @classmethod
+    def _read_responses(cls):
+        """Continuously read responses from the serial port"""
+        while not cls._stop_thread:
+            if cls._connection_type == "serial" and cls._serial_connection and cls._serial_connection.is_open:
+                try:
+                    if cls._serial_connection.in_waiting:
+                        char = cls._serial_connection.read().decode('utf-8')
+                        cls._response_buffer += char
+                        
+                        # Check for complete JSON response
+                        if char == '\n' and cls._response_buffer.strip():
+                            try:
+                                response = json.loads(cls._response_buffer.strip())
+                                if cls._response_callback:
+                                    cls._response_callback(response.get('data', ''))
+                            except json.JSONDecodeError:
+                                journaling_manager.recordError(f"Error decoding JSON: {cls._response_buffer}")
+                            finally:
+                                cls._response_buffer = ""
+                except Exception as e:
+                    journaling_manager.recordError(f"Error reading from serial: {e}")
+            elif cls._connection_type == "adb":
+                try:
+                    # Read one character at a time using ADB
+                    read_result = subprocess.run(
+                        ["adb", "shell", f"dd if={cls._serial_port} bs=1 count=1 iflag=nonblock 2>/dev/null"],
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    if read_result.returncode == 0 and read_result.stdout:
+                        char = read_result.stdout
+                        cls._response_buffer += char
+                        
+                        # Check for complete JSON response
+                        if char == '\n' and cls._response_buffer.strip():
+                            try:
+                                response = json.loads(cls._response_buffer.strip())
+                                if cls._response_callback:
+                                    cls._response_callback(response.get('data', ''))
+                            except json.JSONDecodeError:
+                                journaling_manager.recordError(f"Error decoding JSON: {cls._response_buffer}")
+                            finally:
+                                cls._response_buffer = ""
+                except Exception as e:
+                    journaling_manager.recordError(f"Error reading from ADB: {e}")
+            time.sleep(0.01)
+
+    @classmethod
+    async def set_device_mode(cls, mode: str) -> None:
+        """Initialize the connection in the requested mode (serial, adb, or wifi)"""
+        if mode not in ["serial", "adb", "wifi"]:
+            raise ValueError("Invalid mode. Use 'serial', 'adb', or 'wifi'")
+            
+        journaling_manager.recordInfo(f"\nInitializing {mode} connection...")
+        
+        try:
+            # Clean up current connection first
+            await cls.cleanup()
+            
+            # For WiFi mode
+            if mode == "wifi":
+                journaling_manager.recordInfo("Setting up WiFi connection...")
+                
+                # Use known IP address
+                wifi_ip = "10.0.0.177"
+                journaling_manager.recordInfo(f"Using WiFi IP: {wifi_ip}")
+                
+                # Use SSH to find the LLM service port
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                journaling_manager.recordInfo(f"\nConnecting to {wifi_ip}:22...")
+                ssh.connect(wifi_ip, port=22, username="root", password="123456")
+                
+                # Find the LLM service port
+                service_port = cls._find_llm_port(ssh)
+                ssh.close()
+                
+                cls._serial_port = f"{wifi_ip}:{service_port}"  # Use IP:port format
+                cls._connection_type = "wifi"
+                journaling_manager.recordInfo(f"Found WiFi connection at {cls._serial_port}")
+                
+            else:
+                # For Serial and ADB modes
+                journaling_manager.recordInfo(f"Setting up {mode} connection...")
+                
+                if mode == "serial":
+                    if cls._is_serial_available():
+                        cls._serial_port = cls._find_serial_port()
+                        if cls._serial_port:
+                            cls._connection_type = "serial"
+                            journaling_manager.recordInfo(f"Found serial port: {cls._serial_port}")
+                        else:
+                            raise Exception("No suitable serial port found")
+                    else:
+                        raise Exception("No serial ports available")
+                else:  # adb
+                    if cls._is_adb_available():
+                        cls._serial_port = cls._find_adb_port()
+                        if cls._serial_port:
+                            cls._connection_type = "adb"
+                            journaling_manager.recordInfo(f"Found ADB port: {cls._serial_port}")
+                        else:
+                            raise Exception("No suitable ADB port found")
+                    else:
+                        raise Exception("ADB not available")
+            
+            # Initialize new connection
+            if cls._connection_type == "serial":
+                journaling_manager.recordInfo("Setting up serial connection...")
+                cls._serial_connection = serial.Serial(
+                    port=cls._serial_port,
+                    baudrate=115200,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=1,
+                    xonxoff=False,
+                    rtscts=False,
+                    dsrdtr=False
+                )
+                while cls._serial_connection.in_waiting:
+                    cls._serial_connection.read()
+                journaling_manager.recordInfo("Serial connection established")
+            
+            cls._initialized = True
+            journaling_manager.recordInfo(f"Successfully initialized {cls._connection_type} connection with port {cls._serial_port}")
+            
+            # Test the connection
+            journaling_manager.recordInfo("\nTesting connection...")
+            # Create a proper SystemCommand object with sys_ping request_id
+            ping_command = SystemCommand(
+                command_type=CommandType.SYS,
+                action="ping",
+                parameters={
+                    "timestamp": int(time.time() * 1000),
+                    "version": "1.0",
+                    "request_id": "sys_ping",  # Changed to match prototype
+                    "echo": True
+                }
+            )
+            response = await cls.transmit_json(ping_command)
+            journaling_manager.recordInfo(f"Connection test response: {response}")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error initializing {mode} connection: {e}")
+            raise
+
+    @classmethod
+    def _find_llm_port(cls, ssh) -> int:
+        """Find the port where the LLM service is running"""
+        journaling_manager.recordInfo("\nChecking for LLM service port...")
+        
+        # First try to find the port from the process
+        stdin, stdout, stderr = ssh.exec_command("lsof -i -P -n | grep llm_llm")
+        for line in stdout:
+            journaling_manager.recordInfo(f"Found port info: {line.strip()}")
+            # Look for port number in the output
+            if ":" in line:
+                port = line.split(":")[-1].split()[0]
+                journaling_manager.recordInfo(f"Found LLM service port: {port}")
+                return int(port)
+        
+        # If we couldn't find it through lsof, try netstat
+        journaling_manager.recordInfo("\nTrying netstat to find port...")
+        stdin, stdout, stderr = ssh.exec_command("netstat -tulpn | grep llm_llm")
+        for line in stdout:
+            journaling_manager.recordInfo(f"Found port info: {line.strip()}")
+            # Look for port number in the output
+            if ":" in line:
+                port = line.split(":")[-1].split()[0]
+                journaling_manager.recordInfo(f"Found LLM service port: {port}")
+                return int(port)
+        
+        # If we still can't find it, try to get the port from the process arguments
+        journaling_manager.recordInfo("\nChecking process arguments...")
+        stdin, stdout, stderr = ssh.exec_command("ps aux | grep llm_llm")
+        for line in stdout:
+            if "llm_llm" in line and not "grep" in line:
+                journaling_manager.recordInfo(f"Found process: {line.strip()}")
+                # Try to find port in process arguments
+                if "--port" in line:
+                    port = line.split("--port")[1].split()[0]
+                    journaling_manager.recordInfo(f"Found port in arguments: {port}")
+                    return int(port)
+        
+        # If we get here, try common ports
+        journaling_manager.recordInfo("\nTrying common ports...")
+        common_ports = [10001, 8080, 80, 443, 5000, 8000, 3000]  # Put 10001 first since we know it works
+        for port in common_ports:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(1)
+                    # Get the IP from the SSH connection
+                    ip = ssh.get_transport().getpeername()[0]
+                    result = s.connect_ex((ip, port))
+                    if result == 0:
+                        journaling_manager.recordInfo(f"Port {port} is open and accepting connections")
+                        return port
+            except Exception as e:
+                journaling_manager.recordError(f"Error checking port {port}: {e}")
+        
+        raise Exception("Could not find LLM service port")
+
+    @classmethod
+    async def transmit_json(cls, command: Union[BaseCommand, Dict[str, Any]]) -> Dict[str, Any]:
+        """Transmit a command as JSON"""
+        try:
+            if not cls._initialized:
+                journaling_manager.recordError("Neural pathways not initialized")
+                raise CommandTransmissionError("Neural pathways not initialized")
+                
+            # Log connection state
+            journaling_manager.recordInfo(f"Transmitting command using {cls._connection_type} connection")
+            
+            # Get command data and type
+            if isinstance(command, BaseCommand):
+                command_data = command.to_dict()
+                command_type = command.command_type
+            else:
+                command_data = command
+                command_type = command.get("command_type")
+                
+            journaling_manager.recordInfo(f"Command type: {command_type}")
+            
+            # Send command based on connection type
+            if cls._connection_type == "wifi":
+                # Parse IP and port from self._serial_port
+                ip, port = cls._serial_port.split(":")
+                port = int(port)
+                
+                # Connect to the LLM service
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(5.0)  # 5 second timeout
+                    journaling_manager.recordInfo(f"Connecting to {ip}:{port}...")
+                    s.connect((ip, port))
+                    journaling_manager.recordInfo("Connected successfully")
+                    
+                    # Send command
+                    json_data = json.dumps(command_data) + "\n"
+                    journaling_manager.recordInfo(f"Sending command: {json_data.strip()}")
+                    s.sendall(json_data.encode())
+                    journaling_manager.recordInfo("Command sent successfully")
+                    
+                    # Wait for response
+                    buffer = ""
+                    journaling_manager.recordInfo("Waiting for response...")
+                    while True:
+                        try:
+                            data = s.recv(1).decode()
+                            if not data:
+                                journaling_manager.recordInfo("No more data received")
+                                break
+                            buffer += data
+                            
+                            # For chat responses, print characters as they arrive
+                            if command_type == CommandType.LLM and command_data.get("action") == "inference":
+                                print(data, end="", flush=True)
+                            
+                            if data == "\n":
+                                journaling_manager.recordInfo("Received newline, ending read")
+                                break
+                        except socket.timeout:
+                            journaling_manager.recordError("Socket timeout")
+                            break
+                    
+                    journaling_manager.recordInfo(f"Received response: {buffer.strip()}")
+                    try:
+                        response = json.loads(buffer.strip())
+                        # Parse response like the prototype
+                        if response.get("work_id") == "llm" and response.get("action") == "inference":
+                            return {
+                                "status": "ok",
+                                "response": response.get("data", {}).get("delta", ""),
+                                "finished": response.get("data", {}).get("finish", False),
+                                "index": response.get("data", {}).get("index", 0)
+                            }
+                        return response
+                    except json.JSONDecodeError:
+                        journaling_manager.recordError(f"Failed to parse JSON: {buffer.strip()}")
+                        return {"error": "Failed to parse response", "raw": buffer.strip()}
+                        
+            elif cls._connection_type == "adb":
+                if not cls._serial_port:
+                    journaling_manager.recordError("No serial port configured for ADB")
+                    raise SerialConnectionError("No serial port configured for ADB")
+                    
+                command_data = command_data
+                json_data = json.dumps(command_data) + "\n"
+                journaling_manager.recordDebug(f"Sending command through ADB: {json_data.strip()}")
+                
+                # Send command through ADB
+                result = subprocess.run(
+                    ["adb", "shell", f"echo '{json_data}' > {cls._serial_port}"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    journaling_manager.recordError(f"ADB command failed: {result.stderr}")
+                    raise CommandTransmissionError(f"Failed to send command: {result.stderr}")
+                    
+                # Wait for response with timeout
+                max_attempts = 3
+                for attempt in range(max_attempts):
+                    journaling_manager.recordInfo(f"\nAttempt {attempt + 1} to read response:")
+                    # Try multiple methods to read response
+                    methods = [
+                        f"cat {cls._serial_port}",
+                        f"dd if={cls._serial_port} bs=1024 count=1",
+                        f"hexdump -C {cls._serial_port} -n 1024"
+                    ]
+                    
+                    for method in methods:
+                        journaling_manager.recordInfo(f"Trying: {method}")
+                        result = subprocess.run(
+                            ["adb", "shell", method],
+                            capture_output=True,
+                            text=True,
+                            timeout=2  # 2 second timeout
+                        )
+                        
+                        if result.returncode == 0 and result.stdout.strip():
+                            response = result.stdout.strip()
+                            journaling_manager.recordInfo(f"Response received: {response}")
+                            
+                            try:
+                                response_data = json.loads(response)
+                                return response_data
+                            except json.JSONDecodeError:
+                                journaling_manager.recordError(f"Invalid JSON response: {response}")
+                                continue
+                    
+                    time.sleep(1)  # Wait before next attempt
+                
+                journaling_manager.recordError("No valid response received after multiple attempts")
+                raise CommandTransmissionError("No response from neural processor")
+                
+            else:  # Serial connection
+                # Ensure we have a valid serial connection
+                if not cls._serial_connection or not cls._serial_connection.is_open:
+                    journaling_manager.recordInfo("No valid serial connection, attempting to initialize")
+                    if not await cls._setup_ax630e():
+                        journaling_manager.recordError("Failed to establish serial connection")
+                        raise SerialConnectionError("Failed to connect to AX630C")
+                    
+                    # Double check connection after setup
+                    if not cls._serial_connection or not cls._serial_connection.is_open:
+                        journaling_manager.recordError("Serial connection still not available after setup")
+                        raise SerialConnectionError("Failed to establish serial connection")
+                
+                command_data = command_data
+                json_data = json.dumps(command_data) + "\n"
+                journaling_manager.recordDebug(f"Sending command through serial: {json_data.strip()}")
+                
+                try:
+                    cls._serial_connection.write(json_data.encode())
+                    cls._serial_connection.flush()  # Ensure data is sent
+                    
+                    # Wait for response with timeout
+                    max_attempts = 3
+                    for attempt in range(max_attempts):
+                        try:
+                            response = cls._serial_connection.readline().decode().strip()
+                            if response:
+                                try:
+                                    response_data = json.loads(response)
+                                    return response_data
+                                except json.JSONDecodeError:
+                                    journaling_manager.recordError(f"Invalid JSON response: {response}")
+                                    continue
+                        except serial.SerialTimeoutException:
+                            journaling_manager.recordError(f"Timeout on attempt {attempt + 1}")
+                            continue
+                        
+                        time.sleep(1)  # Wait before next attempt
+                    
+                    raise CommandTransmissionError("No response from neural processor")
+                    
+                except serial.SerialException as e:
+                    journaling_manager.recordError(f"Serial communication error: {str(e)}")
+                    journaling_manager.recordError(f"Error details: {traceback.format_exc()}")
+                    raise SerialConnectionError(f"Serial communication failed: {str(e)}")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error in transmit_json: {str(e)}")
+            journaling_manager.recordError(f"Error details: {traceback.format_exc()}")
             raise 
