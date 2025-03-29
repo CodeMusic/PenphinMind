@@ -27,6 +27,7 @@ from ...CorpusCallosum.neural_commands import (
     CommandType, BaseCommand, SystemCommand
 )
 import time
+import traceback
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -119,40 +120,94 @@ class LLM:
             journaling_manager.recordError(f"Error processing input: {e}")
             raise
             
-    async def _generate_response(self, input_text: str, max_tokens: int = None, temperature: float = None) -> Dict[str, Any]:
-        """Generate response from the language model"""
-        journaling_manager.recordScope("LLM._generate_response", input_text=input_text, max_tokens=max_tokens, temperature=temperature)
+    async def _generate_response(self, prompt, system_prompt=None, max_tokens=None, temperature=None) -> Dict[str, Any]:
+        """Generate a response from the LLM using the current configuration"""
         try:
             # Use provided parameters or fall back to current state
-            max_tokens = max_tokens or self.current_state["model"]["max_tokens"]
-            temperature = temperature or self.current_state["model"]["temperature"]
+            max_tokens = max_tokens if max_tokens is not None else self.current_state["model"]["max_tokens"]
+            temperature = temperature if temperature is not None else self.current_state["model"]["temperature"]
             
-            # Create LLM command with proper parameters
+            # Create unique request ID for this generation
+            request_id = f"generate_{int(time.time())}"
+            
+            # Structure the command in M5Stack API format
             command = {
                 "type": "LLM",
                 "command": "generate",
                 "data": {
-                    "action": "inference",
-                    "parameters": {
-                        "prompt": input_text,
-                        "timestamp": int(time.time() * 1000),
-                        "version": "1.0",
-                        "request_id": f"generate_{int(time.time())}",
-                        "max_tokens": max_tokens,
-                        "temperature": temperature
-                    }
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "request_id": request_id
                 }
             }
+            
+            journaling_manager.recordInfo(f"Sending LLM inference command: {command}")
             
             # Send command through synaptic pathways
             response = await SynapticPathways.send_command(command)
             
-            journaling_manager.recordDebug(f"Generated response: {response}")
-            return response
+            journaling_manager.recordDebug(f"LLM response: {response}")
+            
+            # Check for errors
+            if not response or isinstance(response, dict) and response.get("error"):
+                error_code = response.get("error", {}).get("code", "unknown")
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                journaling_manager.recordError(f"LLM generation error: {error_code} - {error_message}")
+                return {
+                    "text": f"Error: {error_message}",
+                    "error": True,
+                    "request_id": request_id,
+                    "finished": True
+                }
+            
+            # Parse the response based on M5Stack API format
+            if isinstance(response, dict):
+                # Check if it's an error response
+                if "error" in response:
+                    error_code = response.get("error", {}).get("code", "unknown")
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    journaling_manager.recordError(f"LLM generation error: {error_code} - {error_message}")
+                    return {
+                        "text": f"Error: {error_message}",
+                        "error": True,
+                        "request_id": request_id,
+                        "finished": True
+                    }
+                
+                # Check if the response has data field
+                if "data" in response:
+                    data = response["data"]
+                    # Data could be a string or a dictionary
+                    if isinstance(data, str):
+                        return {
+                            "text": data,
+                            "request_id": request_id,
+                            "finished": True
+                        }
+                    elif isinstance(data, dict):
+                        return {
+                            "text": data.get("generated_text", ""),
+                            "request_id": request_id,
+                            "finished": data.get("finished", True)
+                        }
+            
+            # Fallback for other response formats
+            journaling_manager.recordWarning(f"Unknown response format: {response}")
+            return {
+                "text": str(response) if response else "",
+                "request_id": request_id,
+                "finished": True
+            }
             
         except Exception as e:
-            journaling_manager.recordError(f"Error generating response: {e}")
-            raise
+            journaling_manager.recordError(f"Error in LLM response generation: {e}")
+            journaling_manager.recordError(traceback.format_exc())
+            return {
+                "text": f"Error: {str(e)}",
+                "error": True,
+                "finished": True
+            }
             
     async def send_tts(self, text: str, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0) -> Dict[str, Any]:
         """Send a TTS command"""
@@ -223,7 +278,7 @@ class LLM:
 
             # Process text through LLM
             llm_response = await self.process_input(text_input)
-            assistant_response = llm_response.get("response", "")
+            assistant_response = llm_response.get("text", "")
 
             # Generate audio response
             audio_path = None
@@ -253,18 +308,45 @@ class LLM:
             action = command.get("action")
             parameters = command.get("parameters", {})
             
-            if action == "generate":
+            if action == "generate" or action == "inference":
                 # Handle text generation
-                prompt = parameters.get("prompt", "")
-                max_tokens = parameters.get("max_tokens", 100)
-                temperature = parameters.get("temperature", 0.7)
+                prompt = None
                 
-                # Generate response directly
-                response = await self._generate_response(prompt, max_tokens, temperature)
+                # Extract prompt from different possible locations
+                if "prompt" in parameters:
+                    prompt = parameters["prompt"]
+                elif "data" in command and isinstance(command["data"], dict) and "prompt" in command["data"]:
+                    prompt = command["data"]["prompt"]
+                elif "data" in command and isinstance(command["data"], str):
+                    prompt = command["data"]
+                else:
+                    journaling_manager.recordWarning(f"No prompt found in command: {command}")
+                    prompt = ""
+                
+                # Get other parameters
+                max_tokens = parameters.get("max_tokens", 100)
+                if "data" in command and isinstance(command["data"], dict) and "max_tokens" in command["data"]:
+                    max_tokens = command["data"]["max_tokens"]
+                    
+                temperature = parameters.get("temperature", 0.7)
+                if "data" in command and isinstance(command["data"], dict) and "temperature" in command["data"]:
+                    temperature = command["data"]["temperature"]
+                
+                # Generate response
+                response = await self._generate_response(prompt, max_tokens=max_tokens, temperature=temperature)
+                
+                # Format response according to M5Stack API
                 return {
-                    "status": "ok",
-                    "response": response
+                    "request_id": command.get("request_id", response.get("request_id", f"resp_{int(time.time())}")),
+                    "work_id": "llm",
+                    "data": {
+                        "text": response.get("text", "")
+                    },
+                    "error": {"code": 0, "message": ""} if not response.get("error") else {"code": -1, "message": response.get("text", "Error")},
+                    "object": "llm.utf-8.stream",
+                    "created": int(time.time())
                 }
+                
             elif action == "analyze":
                 # Handle text analysis
                 text = parameters.get("text", "")
@@ -277,13 +359,29 @@ class LLM:
                 else:
                     raise ValueError(f"Unsupported analysis type: {analysis_type}")
                     
+                # Format response according to M5Stack API
                 return {
-                    "status": "ok",
-                    "result": result
+                    "request_id": command.get("request_id", f"analyze_{int(time.time())}"),
+                    "work_id": "llm",
+                    "data": result,
+                    "error": {"code": 0, "message": ""},
+                    "object": "llm.utf-8",
+                    "created": int(time.time())
                 }
+                
             else:
                 raise ValueError(f"Unsupported action: {action}")
                 
         except Exception as e:
             journaling_manager.recordError(f"Error processing LLM command: {e}")
-            raise 
+            journaling_manager.recordError(traceback.format_exc())
+            
+            # Return error in M5Stack API format
+            return {
+                "request_id": command.get("request_id", f"error_{int(time.time())}"),
+                "work_id": "llm",
+                "data": None,
+                "error": {"code": -1, "message": str(e)},
+                "object": "llm",
+                "created": int(time.time())
+            } 

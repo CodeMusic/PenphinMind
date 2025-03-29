@@ -78,6 +78,12 @@ class SynapticPathways:
     _response_callback = None
     _response_thread = None
     _stop_thread = False
+    current_hw_info = {
+        "cpu_load": "N/A",
+        "memory_usage": "N/A",
+        "temperature": "N/A",
+        "timestamp": 0
+    }
 
     def __init__(self):
         """Initialize the synaptic pathways"""
@@ -338,49 +344,66 @@ class SynapticPathways:
             journaling_manager.recordInfo(f"Operational mode: {cls._mode}")
             journaling_manager.recordInfo(f"Connection port: {cls._serial_port}")
             
-            # Load command definitions
-            command_loader = CommandLoader()
-            command_definitions = command_loader._load_command_definitions()
-            
-            # Get command type and validate against definitions
+            # Get command type
             command_type_str = command.get("type", "").upper()  # Convert to uppercase for enum lookup
             try:
                 command_type = CommandType[command_type_str]  # Use uppercase for enum lookup
             except KeyError:
                 raise ValueError(f"Invalid command type: {command_type_str}")
                 
-            # For LLM commands, use the prototype format
+            # For LLM commands, format according to M5Stack API
             if command_type == CommandType.LLM and command.get("command") == "generate":
-                # Create command object using LLMCommand class
-                command_obj = LLMCommand(
-                    command_type=command_type,
-                    request_id=command.get("data", {}).get("request_id", f"generate_{int(time.time())}"),
-                    work_id="llm",
-                    action="inference",
-                    object="llm.utf-8.stream",
-                    data={
-                        "delta": command.get("data", ""),  # Get text directly from data
-                        "index": 0,
-                        "finish": True
-                    }
-                ).to_dict()
-                # Validate against command definitions
-                command_loader.validate_command(command_type_str, command_obj)
+                # Extract prompt from data field
+                data = command.get("data", {})
+                prompt = None
+                
+                # Handle different prompt locations based on input format
+                if isinstance(data, dict) and "prompt" in data:
+                    prompt = data["prompt"]
+                elif isinstance(data, str):
+                    prompt = data
+                else:
+                    prompt = ""
+                    journaling_manager.recordWarning(f"Could not extract prompt from command: {command}")
+                
+                # Create command in M5Stack API format
+                request_id = data.get("request_id", f"generate_{int(time.time())}")
+                max_tokens = data.get("max_tokens", 100)
+                temperature = data.get("temperature", 0.7)
+                
+                # Remove any special characters and sanitize the prompt
+                if isinstance(prompt, str):
+                    # Trim whitespace and ensure it's not empty
+                    prompt = prompt.strip()
+                    if not prompt:
+                        prompt = "Hello"  # Default prompt if empty
+                
+                # Format command with proper data structure
+                command_obj = {
+                    "request_id": request_id,
+                    "work_id": "llm",
+                    "action": "inference",
+                    "object": "llm.utf-8.stream",
+                    "data": prompt  # Send prompt as plain text string
+                }
+                
+                journaling_manager.recordInfo(f"Formatted LLM command: {command_obj}")
             else:
                 # Create command object using CommandFactory for other types
                 command_obj = CommandFactory.create_command(
-                        command_type=command_type,
-                        action=command.get("command", "process"),
-                        parameters=command.get("data", {})
+                    command_type=command_type,
+                    action=command.get("command", "process"),
+                    parameters=command.get("data", {})
                 )
                 command_obj = command_obj.to_dict()
             
-            # Validate command against its definition using the uppercase command type
-            command_loader.validate_command(command_type_str, command_obj)
-            
             # Transmit command to hardware
-            journaling_manager.recordInfo("Transmitting command to hardware")
-            return await cls.transmit_json(command_obj)
+            journaling_manager.recordInfo(f"Transmitting command to hardware: {command_obj}")
+            response = await cls.transmit_json(command_obj)
+            
+            # Parse response format
+            parsed_response = cls._parse_response(response)
+            return parsed_response
             
         except Exception as e:
             journaling_manager.recordError(f"Unexpected error in send_command: {str(e)}")
@@ -392,15 +415,28 @@ class SynapticPathways:
         """Send a system command through the synaptic pathways"""
         journaling_manager.recordScope("SynapticPathways.send_system_command", command_type=command_type, data=data)
         try:
-            # Create system command
-            command = SystemCommand(
-                command_type=CommandType.SYS,
-                action=command_type,
-                parameters=data or {}
-            )
+            # Map common system command types to proper API actions
+            api_action = command_type
+            api_object = "None"
+            
+            # Map command types to specific API actions and objects
+            if command_type in ["status", "get_model_info"]:
+                api_object = "llm"
+            elif command_type == "reboot":
+                api_object = "system"
+                
+            # Create system command in proper format
+            command_dict = {
+                "request_id": f"sys_{command_type}_{int(time.time())}",
+                "work_id": "sys",
+                "action": api_action,
+                "object": api_object,
+                "data": data if data else None  # Use None instead of "None" string
+            }
             
             # Send command
-            response = await cls.send_command(command.to_dict())
+            journaling_manager.recordInfo(f"Sending system command: {command_dict}")
+            response = await cls.transmit_json(command_dict)
             journaling_manager.recordDebug(f"System command processed: {response}")
             
             return response
@@ -656,68 +692,77 @@ class SynapticPathways:
             cls._initialized = True
             journaling_manager.recordInfo(f"Successfully initialized {cls._connection_type} connection with port {cls._serial_port}")
             
-            # Test the connection
+            # Test the connection first
             journaling_manager.recordInfo("\nTesting connection...")
-            # Create a proper SystemCommand object with sys_ping request_id
-            ping_command = SystemCommand(
-                command_type=CommandType.SYS,
-                action="ping",
-                parameters={
-                    "timestamp": int(time.time() * 1000),
-                    "version": "1.0",
-                    "request_id": "sys_ping",  # Changed to match prototype
-                    "echo": True
-                }
-            )
-            response = await cls.transmit_json(ping_command)
-            journaling_manager.recordInfo(f"Connection test response: {response}")
-            
-            # Initialize the LLM with setup parameters
-            journaling_manager.recordInfo("\nSetting up LLM...")
-            setup_command = {
-                "request_id": "sys_setup",
+            ping_command = {
+                "request_id": "sys_ping",
                 "work_id": "sys",
-                "action": "setup",
-                "object": "None",
-                "data": json.dumps(CONFIG.llm_service.get("setup", {
-                    "system_message": "You are a helpful assistant.",
-                    "enkws": True,
-                    "model": "default",
-                    "enoutput": True,
-                    "version": "1.0",
-                    "max_token_len": 2048,
-                    "wake_word": "hey penphin"
-                }))
+                "action": "ping",
+                "object": "system",
+                "data": None
             }
-            setup_response = await cls.transmit_json(setup_command)
-            journaling_manager.recordInfo(f"LLM setup response: {setup_response}")
             
-            # If setup failed, try alternative initialization commands
-            if "error" in str(setup_response):
-                journaling_manager.recordInfo("Setup command failed, trying alternatives...")
-                for action in ["init", "config", "initialize"]:
-                    journaling_manager.recordInfo(f"Trying {action} command...")
-                    alt_command = {
-                        "request_id": f"sys_{action}",
+            try:
+                response = await cls.transmit_json(ping_command)
+                journaling_manager.recordInfo(f"Connection test response: {response}")
+                
+                # Only continue with reset if ping succeeds
+                if response and not response.get("error", {}).get("code", 0):
+                    # Perform service reset (only on initial boot)
+                    journaling_manager.recordInfo("\nPerforming initial service reset...")
+                    reset_command = {
+                        "request_id": "initial_reset",
                         "work_id": "sys",
-                        "action": action,
-                        "object": "None",
-                        "data": json.dumps({
-                            "system_message": "You are a helpful assistant.",
-                            "enkws": True,
-                            "model": "default",
-                            "enoutput": True,
-                            "version": "1.0",
-                            "max_token_len": 2048,
-                            "wake_word": "hey penphin"
-                        })
+                        "action": "reset",
+                        "object": "llm",
+                        "data": None
                     }
-                    alt_response = await cls.transmit_json(alt_command)
-                    journaling_manager.recordInfo(f"{action.capitalize()} response: {alt_response}")
-                    if "error" not in str(alt_response):
-                        journaling_manager.recordInfo(f"Successfully initialized with {action} command")
-                        break
+                    reset_response = await cls.transmit_json(reset_command)
+                    journaling_manager.recordInfo(f"Service reset response: {reset_response}")
+                    
+                    # Brief pause to allow reset to complete
+                    await asyncio.sleep(1)
+                else:
+                    journaling_manager.recordError("Ping test failed, skipping reset")
+            except Exception as e:
+                journaling_manager.recordError(f"Connection test failed: {e}")
+                journaling_manager.recordError("Continuing without reset")
             
+            # Get model info
+            journaling_manager.recordInfo("\nGetting model info...")
+            model_info_command = {
+                "request_id": "sys_model_info",
+                "work_id": "sys",
+                "action": "lsmode",
+                "object": "system",
+                "data": None
+            }
+            
+            try:
+                model_info_response = await cls.transmit_json(model_info_command)
+                journaling_manager.recordInfo(f"Model info response: {model_info_response}")
+            except Exception as e:
+                journaling_manager.recordError(f"Model info check failed: {e}")
+            
+            # Get hardware info
+            journaling_manager.recordInfo("\nGetting hardware info...")
+            try:
+                hw_info = await cls.get_hardware_info()
+                journaling_manager.recordInfo(f"Hardware info: {hw_info}")
+                # Store the hardware info in a class variable for later use
+                cls.current_hw_info = hw_info
+            except Exception as e:
+                journaling_manager.recordError(f"Hardware info check failed: {e}")
+                cls.current_hw_info = {
+                    "cpu_load": "N/A",
+                    "memory_usage": "N/A",
+                    "temperature": "N/A",
+                    "timestamp": int(time.time())
+                }
+            
+            # Successfully initialized
+            journaling_manager.recordInfo("\nM5Stack LLM Module connected and initialized successfully")
+                        
         except Exception as e:
             journaling_manager.recordError(f"Error initializing {mode} connection: {e}")
             raise
@@ -843,18 +888,19 @@ class SynapticPathways:
                     journaling_manager.recordInfo(f"Received response: {buffer.strip()}")
                     try:
                         response = json.loads(buffer.strip())
-                        # Parse response like the prototype
-                        if response.get("work_id") == "llm" and response.get("action") == "inference":
-                            return {
-                                "status": "ok",
-                                "response": response.get("data", {}).get("delta", ""),
-                                "finished": response.get("data", {}).get("finish", False),
-                                "index": response.get("data", {}).get("index", 0)
-                            }
+                        # Don't try to modify the response format - just return it directly
+                        journaling_manager.recordDebug(f"Received valid JSON response: {response}")
                         return response
                     except json.JSONDecodeError:
                         journaling_manager.recordError(f"Failed to parse JSON: {buffer.strip()}")
-                        return {"error": "Failed to parse response", "raw": buffer.strip()}
+                        return {
+                            "request_id": command_data.get("request_id", f"error_{int(time.time())}"),
+                            "work_id": command_data.get("work_id", "sys"),
+                            "data": "None",
+                            "error": {"code": -1, "message": "Failed to parse response"},
+                            "object": command_data.get("object", "None"),
+                            "created": int(time.time())
+                        }
                         
             elif cls._connection_type == "adb":
                 if not cls._serial_port:
@@ -962,3 +1008,457 @@ class SynapticPathways:
             journaling_manager.recordError(f"Error in transmit_json: {str(e)}")
             journaling_manager.recordError(f"Error details: {traceback.format_exc()}")
             raise 
+
+    @classmethod
+    def _parse_response(cls, response: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse response from M5Stack LLM module according to API format"""
+        try:
+            # M5Stack API response format has these fields:
+            # {
+            #   "created": timestamp,
+            #   "data": data_content,
+            #   "error": {"code": code, "message": "message"},
+            #   "object": "object_name",
+            #   "request_id": "request_id",
+            #   "work_id": "work_id"
+            # }
+            
+            # Check if this is already a valid M5Stack API response
+            if all(k in response for k in ["request_id", "work_id"]):
+                # Check if there's an error
+                if response.get("error") and (
+                    response["error"].get("code", 0) != 0 or response["error"].get("message", "")
+                ):
+                    journaling_manager.recordError(f"API error: {response['error']}")
+                
+                # Return the original response
+                return response
+                
+            # For any other format, try to convert to M5Stack format
+            timestamp = int(time.time())
+            formatted_response = {
+                "request_id": response.get("request_id", f"resp_{timestamp}"),
+                "work_id": response.get("work_id", "sys"),
+                "data": response.get("data", None),  # Use None instead of response as default
+                "error": {"code": 0, "message": ""},
+                "object": response.get("object", "None"),
+                "created": timestamp
+            }
+            
+            # Check if there was an error message in a non-standard format
+            if "error" in response or "exception" in response:
+                error_msg = response.get("error", response.get("exception", "Unknown error"))
+                error_code = -1
+                
+                if isinstance(error_msg, dict):
+                    error_code = error_msg.get("code", -1)
+                    error_msg = error_msg.get("message", str(error_msg))
+                
+                formatted_response["error"] = {
+                    "code": error_code,
+                    "message": str(error_msg)
+                }
+            
+            return formatted_response
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error parsing response: {e}")
+            return {
+                "request_id": f"error_{int(time.time())}",
+                "work_id": "sys",
+                "data": "None",
+                "error": {"code": -1, "message": f"Failed to parse response: {str(e)}"},
+                "object": "None",
+                "created": int(time.time())
+            } 
+
+    @classmethod
+    async def clear_and_reset(cls) -> Dict[str, Any]:
+        """Public method to manually reset the LLM state if needed"""
+        journaling_manager.recordInfo("\nManually resetting LLM state...")
+        
+        results = {}
+        
+        # Reset LLM
+        try:
+            reset_command = {
+                "request_id": "manual_reset_llm",
+                "work_id": "sys",
+                "action": "reset",
+                "object": "llm",
+                "data": None
+            }
+            reset_response = await cls.transmit_json(reset_command)
+            journaling_manager.recordInfo(f"LLM reset response: {reset_response}")
+            results["llm_reset"] = "success"
+            
+            # Brief pause to allow reset to complete
+            await asyncio.sleep(1)
+        except Exception as e:
+            journaling_manager.recordError(f"Error resetting LLM: {e}")
+            results["llm_reset"] = f"failed: {str(e)}"
+            
+        # Get hardware info after reset
+        try:
+            journaling_manager.recordInfo("\nGetting hardware info after reset...")
+            hw_info = await cls.get_hardware_info()
+            journaling_manager.recordInfo(f"Hardware info after reset: {hw_info}")
+            cls.current_hw_info = hw_info
+            results["hardware_info"] = hw_info
+            
+            # Format hardware info for display
+            formatted_info = cls.format_hw_info()
+            results["formatted_info"] = formatted_info
+        except Exception as e:
+            journaling_manager.recordError(f"Error getting hardware info after reset: {e}")
+            results["hardware_info"] = f"failed: {str(e)}"
+            
+        return results
+
+    @classmethod
+    async def get_hardware_info(cls) -> Dict[str, Any]:
+        """Get hardware information (CPU load, memory usage, temperature) from the device"""
+        journaling_manager.recordInfo("\nRetrieving hardware information...")
+        
+        try:
+            hw_info_command = {
+                "request_id": f"hwinfo_{int(time.time())}",
+                "work_id": "sys",
+                "action": "hwinfo",
+                "object": "system",
+                "data": None
+            }
+            
+            # Send the hardware info command
+            response = await cls.transmit_json(hw_info_command)
+            journaling_manager.recordInfo(f"Hardware info response: {response}")
+            
+            # Get IP address from connection
+            ip_address = "N/A"
+            if cls._connection_type == "wifi" and cls._serial_port:
+                ip_address = cls._serial_port.split(":")[0]
+            
+            # Parse the response
+            if response and "data" in response:
+                # Initialize hardware info with default values
+                hw_info = {
+                    "cpu_load": "N/A",
+                    "memory_usage": "N/A",
+                    "temperature": "N/A",
+                    "ip_address": ip_address,
+                    "timestamp": int(time.time())
+                }
+                
+                data = response.get("data", "")
+                journaling_manager.recordInfo(f"Raw hardware info data: {data}")
+                
+                # Check if data is a dictionary (JSON format)
+                if isinstance(data, dict):
+                    # Extract CPU load - use cpu_loadavg field
+                    if "cpu_loadavg" in data:
+                        hw_info["cpu_load"] = data["cpu_loadavg"]
+                    elif "cpu_load" in data:
+                        hw_info["cpu_load"] = data["cpu_load"]
+                    
+                    # Extract memory usage - use mem field
+                    if "mem" in data:
+                        hw_info["memory_usage"] = data["mem"]
+                    elif "memory" in data:
+                        hw_info["memory_usage"] = data["memory"]
+                    
+                    # Extract temperature - convert if too high
+                    if "temperature" in data:
+                        temp_value = data["temperature"]
+                        if isinstance(temp_value, (int, float)):
+                            # Check if value is too high for Celsius
+                            if temp_value > 100:  # Most temperatures over 100 are likely in deci-Celsius
+                                # Convert from deci-Celsius to Celsius
+                                temp_value = temp_value / 100
+                            hw_info["temperature"] = f"{temp_value:.1f}"
+                        else:
+                            hw_info["temperature"] = temp_value
+                
+                # Check if data is a string (older format)
+                elif isinstance(data, str):
+                    # Extract CPU load
+                    if "cpu_loadavg" in data:
+                        cpu_match = re.search(r"cpu_loadavg\(([^)]+)\)", data)
+                        if cpu_match:
+                            hw_info["cpu_load"] = cpu_match.group(1)
+                    
+                    # Extract memory usage
+                    if "mem" in data:
+                        mem_match = re.search(r"mem\(([^)]+)\)", data)
+                        if mem_match:
+                            hw_info["memory_usage"] = mem_match.group(1)
+                    
+                    # Extract temperature
+                    if "temperature" in data:
+                        temp_match = re.search(r"temperature\(([^)]+)\)", data)
+                        if temp_match:
+                            temp_value = temp_match.group(1)
+                            try:
+                                temp_float = float(temp_value.replace("°C", "").strip())
+                                if temp_float > 100:
+                                    temp_float = temp_float / 10
+                                hw_info["temperature"] = f"{temp_float:.1f}"
+                            except ValueError:
+                                hw_info["temperature"] = temp_value
+                
+                # Ensure values have appropriate units if not already included
+                if hw_info["cpu_load"] != "N/A" and "%" not in str(hw_info["cpu_load"]):
+                    hw_info["cpu_load"] = f"{hw_info['cpu_load']}%"
+                if hw_info["memory_usage"] != "N/A" and "%" not in str(hw_info["memory_usage"]):
+                    hw_info["memory_usage"] = f"{hw_info['memory_usage']}%"
+                if hw_info["temperature"] != "N/A" and "°C" not in str(hw_info["temperature"]):
+                    hw_info["temperature"] = f"{hw_info['temperature']}°C"
+                
+                journaling_manager.recordInfo(f"Parsed hardware info: {hw_info}")
+                
+                # Update the current_hw_info
+                cls.current_hw_info = hw_info
+                return hw_info
+            else:
+                journaling_manager.recordError("Failed to retrieve hardware info")
+                return {
+                    "cpu_load": "N/A",
+                    "memory_usage": "N/A",
+                    "temperature": "N/A",
+                    "ip_address": ip_address,
+                    "timestamp": int(time.time())
+                }
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error retrieving hardware info: {e}")
+            # Get IP address from connection
+            ip_address = "N/A"
+            if cls._connection_type == "wifi" and cls._serial_port:
+                ip_address = cls._serial_port.split(":")[0]
+                
+            return {
+                "cpu_load": "N/A",
+                "memory_usage": "N/A",
+                "temperature": "N/A",
+                "ip_address": ip_address,
+                "error": str(e),
+                "timestamp": int(time.time())
+            }
+
+    @classmethod
+    async def reboot_device(cls) -> Dict[str, Any]:
+        """Send a reboot command to fully restart the M5Stack system
+        Note: This is a hard reboot - use with caution, as it will cause device to reconnect
+        """
+        journaling_manager.recordInfo("\nSending reboot command to device...")
+        
+        try:
+            # Reboot command uses different object than reset
+            reboot_command = {
+                "request_id": f"reboot_{int(time.time())}",
+                "work_id": "sys",
+                "action": "reboot",
+                "object": "system",  # Important: system object, not llm
+                "data": None
+            }
+            
+            # Send reboot command
+            response = await cls.transmit_json(reboot_command)
+            journaling_manager.recordInfo(f"Reboot command response: {response}")
+            
+            # Device will disconnect after reboot
+            journaling_manager.recordInfo("Device is rebooting, connection will be lost")
+            
+            # Reset our connection state
+            cls._initialized = False
+            
+            return {
+                "success": True,
+                "message": "Reboot command sent. Device is restarting.",
+                "response": response
+            }
+        except Exception as e:
+            journaling_manager.recordError(f"Error sending reboot command: {e}")
+            return {
+                "success": False,
+                "message": f"Failed to reboot device: {str(e)}",
+                "error": str(e)
+            } 
+
+    @classmethod
+    def format_hw_info(cls) -> str:
+        """Format hardware info for display at the start of chat
+        Returns a formatted string with hardware info that can be displayed
+        in the chat UI.
+        """
+        hw = cls.current_hw_info
+        
+        # Format timestamp as readable time
+        timestamp = hw.get("timestamp", 0)
+        time_str = time.strftime("%H:%M:%S", time.localtime(timestamp)) if timestamp else "N/A"
+        
+        # Get IP address
+        ip_address = hw.get("ip_address", "N/A")
+        ip_display = f"IP: {ip_address} | " if ip_address != "N/A" else ""
+        
+        # Format the hardware info in the requested format
+        info_str = f"""~
+{ip_display}CPU: {hw.get('cpu_load', 'N/A')} | Memory: {hw.get('memory_usage', 'N/A')} | Temp: {hw.get('temperature', 'N/A')} | Updated: {time_str}
+~"""
+        
+        return info_str
+
+    @classmethod
+    async def set_active_model(cls, model_name: str) -> Dict[str, Any]:
+        """Set the active model for LLM inference
+        
+        Args:
+            model_name: The name of the model to activate
+            
+        Returns:
+            Dictionary with result of the operation
+        """
+        journaling_manager.recordInfo(f"\nSetting active model to: {model_name}")
+        
+        try:
+            # Prepare command to set model
+            set_model_command = {
+                "request_id": f"set_model_{int(time.time())}",
+                "work_id": "sys",
+                "action": "setmode",
+                "object": "system",
+                "data": model_name
+            }
+            
+            # Send command
+            response = await cls.transmit_json(set_model_command)
+            journaling_manager.recordInfo(f"Set model response: {response}")
+            
+            # Check for success
+            if response and not response.get("error", {}).get("code", 0):
+                return {
+                    "success": True,
+                    "message": f"Successfully set active model to {model_name}",
+                    "response": response
+                }
+            else:
+                error_msg = response.get("error", {}).get("message", "Unknown error")
+                return {
+                    "success": False,
+                    "message": f"Failed to set model: {error_msg}",
+                    "response": response
+                }
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error setting active model: {e}")
+            return {
+                "success": False,
+                "message": f"Error: {str(e)}",
+                "error": str(e)
+            } 
+
+    @classmethod
+    async def get_active_model(cls) -> Dict[str, Any]:
+        """Get information about the currently active model
+        
+        Returns:
+            Dictionary with active model information
+        """
+        journaling_manager.recordInfo("\nGetting active model information...")
+        
+        try:
+            # Prepare command to get active model
+            get_model_command = {
+                "request_id": f"get_active_model_{int(time.time())}",
+                "work_id": "sys",
+                "action": "getmode",
+                "object": "system",
+                "data": None
+            }
+            
+            # Send command
+            response = await cls.transmit_json(get_model_command)
+            journaling_manager.recordInfo(f"Get active model response: {response}")
+            
+            # Check for success
+            if response and not response.get("error", {}).get("code", 0):
+                active_model = {
+                    "success": True,
+                    "model": response.get("data", "Unknown")
+                }
+                
+                if isinstance(active_model["model"], dict):
+                    # Response is a full model object
+                    return active_model
+                elif isinstance(active_model["model"], str):
+                    # Response is just the model name, try to get full details
+                    models = await cls.get_available_models()
+                    
+                    # Find the matching model
+                    for model in models:
+                        if model.get("model") == active_model["model"]:
+                            active_model["details"] = model
+                            break
+                    
+                    return active_model
+                else:
+                    return {
+                        "success": True,
+                        "model": "Unknown",
+                        "message": "Could not parse active model information"
+                    }
+            else:
+                error_msg = response.get("error", {}).get("message", "Unknown error")
+                return {
+                    "success": False,
+                    "message": f"Failed to get active model: {error_msg}",
+                    "response": response
+                }
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error getting active model: {e}")
+            return {
+                "success": False,
+                "message": f"Error: {str(e)}",
+                "error": str(e)
+            }
+    
+    @classmethod
+    async def get_available_models(cls) -> List[Dict[str, Any]]:
+        """Get the list of available models
+        
+        Returns:
+            List of model dictionaries with model information
+        """
+        journaling_manager.recordInfo("\nGetting available models...")
+        
+        try:
+            # Prepare command to get models
+            model_info_command = {
+                "request_id": f"get_models_{int(time.time())}",
+                "work_id": "sys",
+                "action": "lsmode",
+                "object": "system",
+                "data": None
+            }
+            
+            # Send command
+            response = await cls.transmit_json(model_info_command)
+            journaling_manager.recordInfo(f"Get models response: {response}")
+            
+            # Check for success and parse models
+            if response and not response.get("error", {}).get("code", 0):
+                models_data = response.get("data", [])
+                
+                if isinstance(models_data, list):
+                    return models_data
+                else:
+                    journaling_manager.recordError(f"Unexpected models data format: {models_data}")
+                    return []
+            else:
+                error_msg = response.get("error", {}).get("message", "Unknown error")
+                journaling_manager.recordError(f"Failed to get models: {error_msg}")
+                return []
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error getting models: {e}")
+            return [] 

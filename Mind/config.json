@@ -9,7 +9,7 @@
             "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         },
         "llm_service": {
-            "ip": "10.0.0.194",
+            "ip": "10.0.0.253",
             "port": 10001,
             "timeout": 5.0,
             "setup": {

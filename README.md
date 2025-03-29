@@ -1,81 +1,83 @@
-<div align="center">
-  <h2><em>PenphinMind</em></h2>
-  <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_logo.jpg" alt="Penphin Logo" width="352"/>
-<br/>PenphinMind: <i>The AI that bridges creativity and logic, evolving with every interaction.</i>
-</div>
+# PenphinMind
 
+## Overview
 
+PenphinMind is an AI assistant that interfaces with the M5Stack LLM Module to provide a chat interface and model management capabilities.
 
 ## Features
 
-- **Multimodal Sensory Processing**: Vision, sound, and touch integration.
-- **Cognitive Decision-Making**: Adaptive decision-making based on emotion, context, and learning.
-- **Memory Systems**: Hierarchical memory that stores experiences and learns over time.
-- **Motor Control & Coordination**: AI-driven motion planning, execution, and real-time feedback.
-- **Behavioral Adaptation**: Reinforcement learning and emotional regulation.
+- Interactive menu system with the following options:
+  - **Chat**: Start a conversation with the LLM model
+  - **Configure**: View and select available models
+  - **Reboot**: Reboot the M5Stack device
+  - **Exit**: Exit the application
 
-## Whitepapers
-
-PenphinMind's development is detailed in the following whitepapers:
-
-1. [Modular Cognitive Framework in Code](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/0%20-%20Modular%20Cognitive%20Framework%20in%20Code.md)
-2. [PenphinMind - A Modular Cognitive Framework](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/1%20-%20PenphinMind%20-%20A%20Modular%20Cognitive%20Framework.md)
-3. [Sensory Processing in AI – Vision, Sound, and Touch](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/2%20-%20Sensory%20Processing%20in%20AI%20–%20Vision%2C%20Sound%2C%20and%20Touch.md)
-4. [Decision-Making & Behavioral Regulation in AI](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/3%20-%20Decision-Making%20%26%20Behavioral%20Regulation%20in%20AI.md)
-5. [AI Memory Systems – Learning, Adaptation, and Recall](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/4%20-%20AI%20Memory%20Systems%20–%20Learning%2C%20Adaptation%2C%20and%20Recall.md)
-6. [Motor Control & Coordination in AI Systems](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/5%20-%20Motor%20Control%20%26%20Coordination%20in%20AI%20Systems.md)
+- Hardware information display at the top of the interface
+- Model configuration and selection
+- Real-time chat with LLM models
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/PenphinMind.git
-cd PenphinMind
+1. Clone the repository
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+## Usage
+
+Run the application with:
+
+```
+python main.py --connection wifi
 ```
 
-	2.	Create and activate a virtual environment:
+Connection options:
+- `wifi`: Connect via WiFi (default)
+- `serial`: Connect via Serial port
+- `adb`: Connect via ADB
 
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+## Menu System
 
-	3.	Install dependencies:
+### Main Menu
 
-pip install -r requirements.txt
+The main menu provides the following options:
 
-	4.	Configure your environment:
+1. **Chat**: Start a conversation with the LLM
+2. **Configure**: View and select available models
+3. **Reboot**: Reboot the M5Stack device
+4. **Exit**: Exit the application
 
-	•	Copy .env.example to .env
-	•	Add your API keys for OpenAI and ElevenLabs
+### Chat Interface
 
-Usage
+In the chat interface:
+- Type your message and press Enter to send
+- Type 'exit' to return to the main menu
+- Type 'reset' to reset the LLM
 
-Run the system:
+### Model Configuration
 
-python runPenphinMind.py
+The Configure option allows you to:
+1. View all available models grouped by type
+2. Select a model to view detailed information
+3. Set a model as the active model for chat
 
-Project Structure
-	•	AuditoryCortex/: Speech and audio processing
-	•	CorpusCallosum/: Neural command processing
-	•	FrontalLobe/: Decision making and planning
-	•	Hippocampus/: Memory management
-	•	OccipitalLobe/: Visual processing
-	•	ParietalLobe/: Sensory integration
-	•	TemporalLobe/: Language and audio understanding
-	•	MotorCortex/: Movement planning and motor control
-	•	Cerebellum/: Learning and adaptation
-	•	LimbicSystem/: Emotional processing and motivation
-	•	VestibularSystem/: Balance and spatial awareness
+## Hardware Information
 
-License
+Hardware information is displayed at the top of the interface, showing:
+- CPU load
+- Memory usage
+- Temperature
+- Last update timestamp
 
-MIT License - see LICENSE file for details
+## Development
 
-### Corrected Links:
-1. [Modular Cognitive Framework in Code](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/0%20-%20Modular%20Cognitive%20Framework%20in%20Code.md)
-2. [PenphinMind - A Modular Cognitive Framework](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/1%20-%20PenphinMind%20-%20A%20Modular%20Cognitive%20Framework.md)
-3. [Sensory Processing in AI – Vision, Sound, and Touch](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/2%20-%20Sensory%20Processing%20in%20AI%20–%20Vision%2C%20Sound%2C%20and%20Touch.md)
-4. [Decision-Making & Behavioral Regulation in AI](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/3%20-%20Decision-Making%20%26%20Behavioral%20Regulation%20in%20AI.md)
-5. [AI Memory Systems – Learning, Adaptation, and Recall](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/4%20-%20AI%20Memory%20Systems%20–%20Learning%2C%20Adaptation%2C%20and%20Recall.md)
-6. [Motor Control & Coordination in AI Systems](https://github.com/CodeMusic/PenphinMind/blob/main/whitepapers/5%20-%20Motor%20Control%20%26%20Coordination%20in%20AI%20Systems.md)
+The project follows a brain-inspired architecture with modules named after brain structures:
 
-Now, all the links should work correctly!
+- **CorpusCallosum**: Communication pathways
+- **FrontalLobe**: Decision making and control
+- **Synaptic Pathways**: Network communication
+
+## License
+
+This project is licensed under the MIT License.

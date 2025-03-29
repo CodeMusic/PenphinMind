@@ -10,6 +10,7 @@ from .command_types import BaseCommand, CommandType
 from .command_loader import CommandLoader
 from datetime import datetime
 import traceback
+import time
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -52,18 +53,18 @@ class TTSCommand(BaseCommand):
     def to_dict(self) -> Dict[str, Any]:
         """Convert command to dictionary"""
         journaling_manager.recordScope("TTSCommand.to_dict")
-        # Use the exact format from prototype
+        # Use the M5Stack API format
         return {
-            "request_id": "tts_process",
+            "request_id": f"tts_{int(time.time())}",
             "work_id": "tts",
             "action": "process",
             "object": "tts.utf-8",
-            "data": {
+            "data": json.dumps({
                 "text": self.text,
                 "voice_id": self.voice_id,
                 "speed": self.speed,
                 "pitch": self.pitch
-            }
+            })
         }
 
 class VADCommand(BaseCommand):
@@ -90,27 +91,89 @@ class VADCommand(BaseCommand):
 
 class LLMCommand(BaseCommand):
     """Command for language model operations"""
-    def __init__(self, command_type: CommandType, request_id: str, work_id: str = "llm", action: str = "inference", object: str = "llm.utf-8.stream", data: Dict[str, Any] = None):
+    def __init__(self, command_type: CommandType, request_id: str = None, prompt: str = None, max_tokens: int = 100, 
+                 temperature: float = 0.7, work_id: str = "llm", action: str = "inference", 
+                 object: str = "llm.utf-8.stream", **kwargs):
         journaling_manager.recordScope("LLMCommand.__init__")
         super().__init__(command_type)
-        self.request_id = request_id
+        self.request_id = request_id or f"generate_{int(time.time())}"
         self.work_id = work_id
         self.action = action
         self.object = object
-        self.data = data or {}
+        
+        # Either use provided prompt or extract from data/kwargs
+        if prompt:
+            self.prompt = prompt
+        elif "data" in kwargs and isinstance(kwargs["data"], dict):
+            self.prompt = kwargs["data"].get("prompt", "")
+        elif "parameters" in kwargs and isinstance(kwargs["parameters"], dict):
+            self.prompt = kwargs["parameters"].get("prompt", "")
+        else:
+            self.prompt = ""
+            
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         journaling_manager.recordDebug(f"LLM command initialized with action: {self.action}")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert command to dictionary format"""
         journaling_manager.recordScope("LLMCommand.to_dict")
-        # Use the exact format from raw_commands.json
+        # Use the M5Stack LLM Module API format
         return {
             "request_id": self.request_id,
             "work_id": self.work_id,
             "action": self.action,
             "object": self.object,
-            "data": self.data
+            "data": self.prompt  # Send prompt as plain text string
         }
+
+    def _parse_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse the response data from the LLM API"""
+        # Create a structured response object
+        parsed_response = {
+            "success": False,
+            "error": None,
+            "data": None,
+            "request_id": response_data.get("request_id", "unknown")
+        }
+        
+        # Check for error responses
+        if response_data.get("error"):
+            error_info = response_data.get("error", {})
+            error_code = error_info.get("code", "unknown")
+            error_message = error_info.get("message", "Unknown error")
+            
+            parsed_response["error"] = {
+                "code": error_code,
+                "message": error_message
+            }
+            return parsed_response
+        
+        # Process successful responses
+        if "data" in response_data:
+            data = response_data["data"]
+            parsed_response["success"] = True
+            
+            # Data could be a string, dict with text field, or other dict
+            if isinstance(data, dict):
+                if "text" in data:
+                    parsed_response["data"] = {
+                        "generated_text": data.get("text", ""),
+                        "finished": True
+                    }
+                else:
+                    parsed_response["data"] = {
+                        "generated_text": data.get("generated_text", str(data)),
+                        "finished": data.get("finished", True)
+                    }
+            else:
+                # Treat data as the generated text
+                parsed_response["data"] = {
+                    "generated_text": str(data),
+                    "finished": True
+                }
+        
+        return parsed_response
 
 class VLMCommand(BaseCommand):
     """Vision Language Model commands"""
@@ -168,42 +231,42 @@ class SystemCommand(BaseCommand):
     def to_dict(self) -> Dict[str, Any]:
         """Convert system command to dictionary"""
         journaling_manager.recordScope("SystemCommand.to_dict")
-        # For ping command, use the exact format from prototype
-        if self.action == "ping":
-            return {
-                "request_id": "sys_ping",
-                "work_id": "sys",
-                "action": "ping",
-                "object": "None",
-                "data": "None"
-            }
-        # For setup command, use specific format
-        elif self.action == "setup":
-            return {
-                "request_id": "sys_setup",
-                "work_id": "sys",
-                "action": "setup",
-                "object": "None",
-                "data": json.dumps(self.parameters)
-            }
-        # For other initialization commands (fallbacks)
-        elif self.action in ["init", "config", "initialize"]:
-            return {
-                "request_id": f"sys_{self.action}",
-                "work_id": "sys",
-                "action": self.action,
-                "object": "None",
-                "data": json.dumps(self.parameters)
-            }
-            
-        # For other commands, use standard format
-        data = super().to_dict()
-        data.update({
-            "action": self.action,
-            "parameters": self.parameters
-        })
-        journaling_manager.recordDebug(f"Converted system command to dict: {data}")
-        return data
+        
+        # Create system command in proper format
+        data = None  # Default to null instead of "None" string
+        if self.parameters:
+            if isinstance(self.parameters, dict):
+                data = self.parameters
+            else:
+                data = {"params": self.parameters}
+                
+        # Set the object based on action type
+        api_object = "None"
+        api_action = self.action
+        
+        # Map standard action names to M5Stack API action names
+        if self.action == "status":
+            api_action = "get_status"
+            api_object = "llm"
+        elif self.action == "get_model_info":
+            api_action = "lsmode"
+            api_object = "system"
+        elif self.action in ["reboot", "reset"]:
+            if self.action == "reset":
+                api_action = "reset"
+                api_object = "llm"  # Reset the LLM specifically
+            else:  # reboot
+                api_action = "reboot"
+                api_object = "system"  # Reboot the entire system
+                
+        # Return command in M5Stack API format
+        return {
+            "request_id": f"sys_{self.action}_{int(time.time())}",
+            "work_id": "sys",
+            "action": api_action,
+            "object": api_object,
+            "data": data
+        }
         
     def validate(self) -> bool:
         """Validate system command"""

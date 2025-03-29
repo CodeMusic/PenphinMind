@@ -20,6 +20,7 @@ from Mind.mind import Mind
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+from Mind.menu_system import run_menu_system
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
@@ -232,6 +233,28 @@ async def run_frontal_cortex_test(mind: Mind) -> None:
         logger.error(f"Frontal cortex test error: {e}")
         raise
 
+async def run_menu(mind: Mind) -> None:
+    """Run the interactive menu system"""
+    try:
+        logger.info("Starting interactive menu system...")
+        
+        # Ensure the connection is initialized if not done already
+        if not SynapticPathways._initialized:
+            logger.info("Initializing SynapticPathways for menu system...")
+            await SynapticPathways.initialize()
+        
+        # Run the menu system with the Mind instance
+        await run_menu_system(mind=mind)
+        
+        # Clean up after menu system exits
+        logger.info("Menu system exited, cleaning up...")
+        await SynapticPathways.cleanup()
+        
+    except Exception as e:
+        logger.error(f"Menu system error: {e}")
+        logger.exception("Full exception details:")
+        raise
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -240,9 +263,10 @@ def parse_args():
 This system implements a bicameral mind architecture with various neural subsystems:
 - Visual Cortex (vc): LED Matrix and visual processing
 - Auditory Cortex (ac): Audio processing and speech
-- Frontal Cortex (fc): Language processing and LLM
+- Frontal Cortex (fc): Language processing and LLM with interactive menu
 - Full Mind (full): Complete system integration
 
+If no mode is specified, the system defaults to the interactive menu mode.
 Each mode provides direct interaction with its respective subsystem.""",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -260,7 +284,7 @@ Each mode provides direct interaction with its respective subsystem.""",
         Example: python run.py --mode ac
         
   fc  - Frontal Cortex (LLM)
-        Direct interaction with the LLM system
+        Interactive menu system for model management and chat
         Example: python run.py --mode fc
         
   full - Full Mind
@@ -325,11 +349,13 @@ async def main():
             elif args.mode == 'ac':
                 await run_auditory_cortex_test(penphin.mind)
             elif args.mode == 'fc':
-                await run_frontal_cortex_test(penphin.mind)
+                # Use the new menu system when in frontal cortex mode
+                await run_menu(penphin.mind)
             elif args.mode == 'full':
                 await penphin.run()
         else:
-            await penphin.run()
+            # Default to menu system if no mode specified
+            await run_menu(penphin.mind)
             
     except Exception as e:
         logger.error(f"Error in main: {e}")
