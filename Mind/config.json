@@ -7,6 +7,11 @@
         "logging": {
             "level": "SCOPE",
             "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        },
+        "llm_service": {
+            "ip": "10.0.0.27",
+            "port": 10001,
+            "timeout": 5.0
         }
     },
     "temporal_lobe": {

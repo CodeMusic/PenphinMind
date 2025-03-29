@@ -261,15 +261,15 @@ class LLMInterface:
                 print(f"Using baud rate: {BAUD_RATE}")
                 
                 try:
-                    self._ser = serial.Serial(
-                        port=self.port,
-                        baudrate=BAUD_RATE,
-                        bytesize=serial.EIGHTBITS,
-                        parity=serial.PARITY_NONE,
-                        stopbits=serial.STOPBITS_ONE,
-                        timeout=0.1,
-                        xonxoff=False,
-                        rtscts=False,
+                self._ser = serial.Serial(
+                    port=self.port,
+                    baudrate=BAUD_RATE,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=0.1,
+                    xonxoff=False,
+                    rtscts=False,
                         dsrdtr=True  # Enable DTR for reset
                     )
                     
@@ -280,9 +280,9 @@ class LLMInterface:
                     self._ser.setDTR(True)
                     time.sleep(1.0)  # Give device time to stabilize
                     
-                    # Clear any existing data
+                # Clear any existing data
                     print("Clearing any existing data...")
-                    while self._ser.in_waiting:
+                while self._ser.in_waiting:
                         data = self._ser.read()
                         print(f"Cleared data: {data!r}")
                     
@@ -296,7 +296,7 @@ class LLMInterface:
                         response = self._ser.read(self._ser.in_waiting)
                         print(f"Test response: {response!r}")
                     
-                    print("Serial connection established")
+                print("Serial connection established")
                     
                 except Exception as e:
                     print(f"Error setting up serial connection: {e}")
@@ -333,7 +333,7 @@ class LLMInterface:
                 print(f"Error during ping: {e}")
                 self._initialized = False
                 return
-                
+            
             print(f"Successfully initialized {self.connection_type} connection to {self.port}")
             
         except Exception as e:
@@ -452,9 +452,9 @@ class LLMInterface:
             for port in ports:
                 print(f"\nChecking port: {port.device}")
                 print(f"Description: {port.description}")
-                if port.vid is not None and port.pid is not None:
-                    print(f"VID:PID: {port.vid:04x}:{port.pid:04x}")
-                print(f"Hardware ID: {port.hwid}")
+                    if port.vid is not None and port.pid is not None:
+                        print(f"VID:PID: {port.vid:04x}:{port.pid:04x}")
+                    print(f"Hardware ID: {port.hwid}")
                 
                 # Check for CH340 device (VID:PID = 1A86:7523)
                 if port.vid == 0x1A86 and port.pid == 0x7523:
@@ -476,7 +476,7 @@ class LLMInterface:
                 if "CH340" in port.description.upper():
                     print(f"\nFound CH340 device by description on port: {port.device}")
                     return port.device
-                
+            
             print("\nNo suitable serial port found")
             return None
             
@@ -1075,12 +1075,12 @@ def main():
         
         while True:
             try:
-                print("\n=== M5Module-LLM Interface ===")
-                print("1. Send ping command")
-                print("2. Generate text")
-                print("3. Change connection mode")
-                print("4. Exit")
-                
+            print("\n=== M5Module-LLM Interface ===")
+            print("1. Send ping command")
+            print("2. Generate text")
+            print("3. Change connection mode")
+            print("4. Exit")
+            
                 choice = input("\nSelect an option (1-4): ").strip()
                 
                 if choice == "1":
@@ -1096,8 +1096,8 @@ def main():
                         }
                     }
                     try:
-                        response = llm.send_command(ping_command)
-                        print(f"Ping response: {response}")
+                    response = llm.send_command(ping_command)
+                    print(f"Ping response: {response}")
                     except KeyboardInterrupt:
                         print("\nPing command interrupted by user")
                         continue
@@ -1117,8 +1117,8 @@ def main():
                             }
                         }
                         try:
-                            response = llm.send_command(command)
-                            print(f"\nResponse: {response}")
+                        response = llm.send_command(command)
+                        print(f"\nResponse: {response}")
                         except KeyboardInterrupt:
                             print("\nGenerate command interrupted by user")
                             continue

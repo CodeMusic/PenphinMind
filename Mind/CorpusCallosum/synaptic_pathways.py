@@ -141,20 +141,20 @@ class SynapticPathways:
         
         # Use the connection type specified by command line argument
         if cls._connection_type == "wifi":
-            cls.welcome_message = "Welcome to PenphinMind."
+            cls.welcome_message = "Welcome to PenphinMind (WiFi)."
             journaling_manager.recordInfo("Using WiFi connection")
             return
         elif cls._connection_type == "adb":
             if cls._is_adb_available():
-                cls.welcome_message = "Welcome to PenphinMind."
+                cls.welcome_message = "Welcome to PenphinMind (ADB)."
                 journaling_manager.recordInfo("Using ADB connection")
-                return
+                return  
         elif cls._connection_type == "serial":
             if cls._is_serial_available():
-                cls.welcome_message = "Welcome to PenphinMind."
+                cls.welcome_message = "Welcome to PenphinMind (Serial)."
                 journaling_manager.recordInfo("Using Serial connection")
                 return
-        
+            
         # If we get here, the specified connection type is not available
         cls._connection_type = None
         cls.welcome_message = "Welcome to PenphinMind."
@@ -284,7 +284,7 @@ class SynapticPathways:
             # Only handle the specified connection type
             if cls._connection_type == "wifi":
                 # WiFi connection is already set up in set_device_mode
-                                    return True
+                return True
             elif cls._connection_type == "serial":
                 if not cls._is_serial_available():
                     journaling_manager.recordError("No serial ports available")
@@ -294,19 +294,19 @@ class SynapticPathways:
                 if not cls._serial_port:
                     journaling_manager.recordError("No suitable serial port found")
                     return False
-                
+                    
                 # Open serial connection
                 try:
-                    cls._serial_connection = serial.Serial(
-                        port=cls._serial_port,
-                    baudrate=115200,
-                        timeout=2.0,
-                    write_timeout=5.0
-                )
-                    return True
+                        cls._serial_connection = serial.Serial(
+                            port=cls._serial_port,
+                        baudrate=115200,
+                            timeout=2.0,
+                        write_timeout=5.0
+                    )
+                        return True
                 except serial.SerialException as e:
-                    journaling_manager.recordError(f"Serial connection error: {str(e)}")
-                    return False
+                        journaling_manager.recordError(f"Serial connection error: {str(e)}")
+                        return False
                     
             elif cls._connection_type == "adb":
                 if not cls._is_adb_available():
@@ -369,9 +369,9 @@ class SynapticPathways:
             else:
                 # Create command object using CommandFactory for other types
                 command_obj = CommandFactory.create_command(
-                    command_type=command_type,
-                    action=command.get("command", "process"),
-                    parameters=command.get("data", {})
+                        command_type=command_type,
+                        action=command.get("command", "process"),
+                        parameters=command.get("data", {})
                 )
                 command_obj = command_obj.to_dict()
             
@@ -774,21 +774,24 @@ class SynapticPathways:
             if mode == "wifi":
                 journaling_manager.recordInfo("Setting up WiFi connection...")
                 
-                # Use known IP address
-                wifi_ip = "10.0.0.177"
-                journaling_manager.recordInfo(f"Using WiFi IP: {wifi_ip}")
+                # Use LLM service configuration from CONFIG
+                llm_ip = CONFIG.llm_service["ip"]
+                llm_port = CONFIG.llm_service["port"]
+                llm_timeout = CONFIG.llm_service["timeout"]
+                
+                journaling_manager.recordInfo(f"Using LLM service IP: {llm_ip}")
                 
                 # Use SSH to find the LLM service port
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                journaling_manager.recordInfo(f"\nConnecting to {wifi_ip}:22...")
-                ssh.connect(wifi_ip, port=22, username="root", password="123456")
+                journaling_manager.recordInfo(f"\nConnecting to {llm_ip}:22...")
+                ssh.connect(llm_ip, port=22, username="root", password="123456")
                 
                 # Find the LLM service port
                 service_port = cls._find_llm_port(ssh)
                 ssh.close()
                 
-                cls._serial_port = f"{wifi_ip}:{service_port}"  # Use IP:port format
+                cls._serial_port = f"{llm_ip}:{service_port}"  # Use IP:port format
                 cls._connection_type = "wifi"
                 journaling_manager.recordInfo(f"Found WiFi connection at {cls._serial_port}")
                 

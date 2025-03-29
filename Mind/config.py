@@ -56,6 +56,13 @@ class MentalConfiguration:
         self.llm_temperature = 0.7
         self.llm_max_tokens = 1000
         
+        # LLM service settings
+        self.llm_service = {
+            "ip": "10.0.0.154",
+            "port": 10001,
+            "timeout": 5.0
+        }
+        
         # System settings
         self.debug_mode = False
         self.log_level = "DEBUG"
@@ -66,11 +73,36 @@ class MentalConfiguration:
         self.serial_timeout = 1.0
         self.serial_port = None  # Will be auto-detected
         
+        # Load configuration from config.json
+        self._load_config_json()
+        
         # Load environment variables
         self._load_env_vars()
         
         journaling_manager.recordInfo("Mental configuration initialized")
         
+    def _load_config_json(self) -> None:
+        """Load configuration from config.json"""
+        journaling_manager.recordScope("MentalConfiguration._load_config_json")
+        try:
+            config_path = PROJECT_ROOT / "config.json"
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config_data = json.load(f)
+                    
+                # Load LLM service settings from corpus_callosum section
+                if "corpus_callosum" in config_data and "llm_service" in config_data["corpus_callosum"]:
+                    llm_service_config = config_data["corpus_callosum"]["llm_service"]
+                    self.llm_service.update({
+                        "ip": llm_service_config.get("ip", self.llm_service["ip"]),
+                        "port": llm_service_config.get("port", self.llm_service["port"]),
+                        "timeout": llm_service_config.get("timeout", self.llm_service["timeout"])
+                    })
+                    journaling_manager.recordDebug(f"Loaded LLM service config: {self.llm_service}")
+                    
+        except Exception as e:
+            journaling_manager.recordError(f"Error loading config.json: {e}")
+            
     def _load_env_vars(self) -> None:
         """Load configuration from environment variables"""
         journaling_manager.recordScope("MentalConfiguration._load_env_vars")
@@ -136,6 +168,17 @@ class MentalConfiguration:
             self.llm_max_tokens = int(os.environ["PENPHIN_LLM_MAX_TOKENS"])
             journaling_manager.recordDebug(f"Loaded LLM max tokens from env: {self.llm_max_tokens}")
             
+        # LLM service settings
+        if "PENPHIN_LLM_SERVICE_IP" in os.environ:
+            self.llm_service["ip"] = os.environ["PENPHIN_LLM_SERVICE_IP"]
+            journaling_manager.recordDebug(f"Loaded LLM service IP from env: {self.llm_service['ip']}")
+        if "PENPHIN_LLM_SERVICE_PORT" in os.environ:
+            self.llm_service["port"] = int(os.environ["PENPHIN_LLM_SERVICE_PORT"])
+            journaling_manager.recordDebug(f"Loaded LLM service port from env: {self.llm_service['port']}")
+        if "PENPHIN_LLM_SERVICE_TIMEOUT" in os.environ:
+            self.llm_service["timeout"] = float(os.environ["PENPHIN_LLM_SERVICE_TIMEOUT"])
+            journaling_manager.recordDebug(f"Loaded LLM service timeout from env: {self.llm_service['timeout']}")
+            
         # System settings
         if "PENPHIN_DEBUG_MODE" in os.environ:
             self.debug_mode = os.environ["PENPHIN_DEBUG_MODE"].lower() == "true"
@@ -180,6 +223,7 @@ class MentalConfiguration:
                 "temperature": self.llm_temperature,
                 "max_tokens": self.llm_max_tokens
             },
+            "llm_service": self.llm_service,
             "system": {
                 "debug_mode": self.debug_mode,
                 "log_level": self.log_level
