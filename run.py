@@ -11,6 +11,7 @@ import os
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
+import subprocess
 
 # Add the project root to Python path
 project_root = str(Path(__file__).parent)
@@ -339,6 +340,36 @@ async def main():
         # Set connection mode if specified
         if args.connection:
             print(f"\n🔍 Setting connection mode to {args.connection}...")
+            
+            # Set up ADB port forwarding if ADB mode is selected
+            if args.connection == "adb":
+                print("Setting up ADB port forwarding...")
+                try:
+                    # First ensure ADB server is running
+                    subprocess.run(["adb", "start-server"], capture_output=True)
+                    
+                    # Check for connected devices
+                    device_result = subprocess.run(
+                        ["adb", "devices"],
+                        capture_output=True,
+                        text=True
+                    )
+                    print(f"ADB devices found:\n{device_result.stdout}")
+                    
+                    # Set up port forwarding from local port 5555 to device port 5555
+                    result = subprocess.run(
+                        ["adb", "forward", "tcp:5555", "tcp:5555"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        print(f"ADB port forwarding set up successfully: tcp:5555 -> tcp:5555")
+                        print(f"Connection will use localhost:5555 via ADB")
+                    else:
+                        print(f"Error setting up ADB port forwarding: {result.stderr}")
+                except Exception as e:
+                    print(f"Failed to set up ADB port forwarding: {e}")
+            
             await SynapticPathways.set_device_mode(args.connection)
             
         penphin = PenphinMind()

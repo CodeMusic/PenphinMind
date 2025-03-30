@@ -662,31 +662,51 @@ class SynapticPathways:
                 cls._serial_port = f"{llm_ip}:{service_port}"  # Use IP:port format
                 cls._connection_type = "wifi"
                 journaling_manager.recordInfo(f"Found WiFi connection at {cls._serial_port}")
+            # For ADB mode - using port forwarding to localhost:5555
+            elif mode == "adb":
+                journaling_manager.recordInfo("Setting up ADB connection over port forwarding...")
                 
-            else:
-                # For Serial and ADB modes
-                journaling_manager.recordInfo(f"Setting up {mode} connection...")
+                if cls._is_adb_available():
+                    # Check if port forwarding is already set up
+                    result = subprocess.run(
+                        ["adb", "forward", "--list"],
+                        capture_output=True, 
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        forwarding_set = "tcp:5555 tcp:5555" in result.stdout
+                        journaling_manager.recordInfo(f"Port forwarding status: {'set up' if forwarding_set else 'not set up'}")
+                        
+                        # Set up port forwarding if not already established
+                        if not forwarding_set:
+                            journaling_manager.recordInfo("Setting up port forwarding tcp:5555 -> tcp:5555")
+                            setup_result = subprocess.run(
+                                ["adb", "forward", "tcp:5555", "tcp:5555"],
+                                capture_output=True,
+                                text=True
+                            )
+                            if setup_result.returncode != 0:
+                                raise Exception(f"Failed to set up ADB port forwarding: {setup_result.stderr}")
+                            journaling_manager.recordInfo("Port forwarding established successfully")
+                    
+                    # Use localhost:5555 for the connection
+                    cls._serial_port = "127.0.0.1:5555"
+                    cls._connection_type = "wifi"  # Use wifi implementation for socket connection
+                    journaling_manager.recordInfo(f"Using ADB port forwarding at {cls._serial_port}")
+                else:
+                    raise Exception("ADB not available")
+            else:  # serial mode
+                journaling_manager.recordInfo(f"Setting up serial connection...")
                 
-                if mode == "serial":
-                    if cls._is_serial_available():
-                        cls._serial_port = cls._find_serial_port()
-                        if cls._serial_port:
-                            cls._connection_type = "serial"
-                            journaling_manager.recordInfo(f"Found serial port: {cls._serial_port}")
-                        else:
-                            raise Exception("No suitable serial port found")
+                if cls._is_serial_available():
+                    cls._serial_port = cls._find_serial_port()
+                    if cls._serial_port:
+                        cls._connection_type = "serial"
+                        journaling_manager.recordInfo(f"Found serial port: {cls._serial_port}")
                     else:
-                        raise Exception("No serial ports available")
-                else:  # adb
-                    if cls._is_adb_available():
-                        cls._serial_port = cls._find_adb_port()
-                        if cls._serial_port:
-                            cls._connection_type = "adb"
-                            journaling_manager.recordInfo(f"Found ADB port: {cls._serial_port}")
-                        else:
-                            raise Exception("No suitable ADB port found")
-                    else:
-                        raise Exception("ADB not available")
+                        raise Exception("No suitable serial port found")
+                else:
+                    raise Exception("No serial ports available")
             
             # Initialize new connection
             if cls._connection_type == "serial":
@@ -892,6 +912,12 @@ class SynapticPathways:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(5.0)  # 5 second timeout
                     journaling_manager.recordInfo(f"Connecting to {ip}:{port}...")
+                    
+                    # Additional debug info for ADB connections
+                    if ip == "127.0.0.1" and cls._connection_type == "wifi":
+                        journaling_manager.recordInfo("This is an ADB connection over port forwarding")
+                        journaling_manager.recordInfo("Ensure the device is connected and port forwarding is set up")
+                        
                     s.connect((ip, port))
                     journaling_manager.recordInfo("Connected successfully")
                     
@@ -939,63 +965,6 @@ class SynapticPathways:
                             "object": command_data.get("object", "None"),
                             "created": int(time.time())
                         }
-                        
-            elif cls._connection_type == "adb":
-                if not cls._serial_port:
-                    journaling_manager.recordError("No serial port configured for ADB")
-                    raise SerialConnectionError("No serial port configured for ADB")
-                    
-                command_data = command_data
-                json_data = json.dumps(command_data) + "\n"
-                journaling_manager.recordDebug(f"Sending command through ADB: {json_data.strip()}")
-                
-                # Send command through ADB
-                result = subprocess.run(
-                    ["adb", "shell", f"echo '{json_data}' > {cls._serial_port}"],
-                    capture_output=True,
-                    text=True
-                )
-                
-                if result.returncode != 0:
-                    journaling_manager.recordError(f"ADB command failed: {result.stderr}")
-                    raise CommandTransmissionError(f"Failed to send command: {result.stderr}")
-                    
-                # Wait for response with timeout
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    journaling_manager.recordInfo(f"\nAttempt {attempt + 1} to read response:")
-                    # Try multiple methods to read response
-                    methods = [
-                        f"cat {cls._serial_port}",
-                        f"dd if={cls._serial_port} bs=1024 count=1",
-                        f"hexdump -C {cls._serial_port} -n 1024"
-                    ]
-                    
-                    for method in methods:
-                        journaling_manager.recordInfo(f"Trying: {method}")
-                        result = subprocess.run(
-                            ["adb", "shell", method],
-                            capture_output=True,
-                            text=True,
-                            timeout=2  # 2 second timeout
-                        )
-                        
-                        if result.returncode == 0 and result.stdout.strip():
-                            response = result.stdout.strip()
-                            journaling_manager.recordInfo(f"Response received: {response}")
-                            
-                            try:
-                                response_data = json.loads(response)
-                                return response_data
-                            except json.JSONDecodeError:
-                                journaling_manager.recordError(f"Invalid JSON response: {response}")
-                                continue
-                    
-                    time.sleep(1)  # Wait before next attempt
-                
-                journaling_manager.recordError("No valid response received after multiple attempts")
-                raise CommandTransmissionError("No response from neural processor")
-                
             else:  # Serial connection
                 # Ensure we have a valid serial connection
                 if not cls._serial_connection or not cls._serial_connection.is_open:

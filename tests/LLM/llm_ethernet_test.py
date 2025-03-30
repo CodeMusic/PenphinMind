@@ -4,14 +4,7 @@ import time
 import paramiko
 
 # LLM Device IP and Port
-LLM_IP = "10.0.0.177"  # Your IP address
-LLM_PORT = 22  # SSH port
-
-# SSH Credentials
-SSH_USERNAME = "root"  # Change this to your username
-SSH_PASSWORD = "123456"  # Change this to your password
-
-def find_llm_port(ssh) -> int:
+LLM_IP = "10.0.0.85"  # Your IP.14
     """Find the port where the LLM service is running"""
     print("\nChecking for LLM service port...")
     
@@ -21,7 +14,7 @@ def find_llm_port(ssh) -> int:
         print(f"Found port info: {line.strip()}")
         # Look for port number in the output
         if ":" in line:
-            port = line.split(":")[-1].split()[0]
+            port = line.split(":")[-1].split()[0
             print(f"Found LLM service port: {port}")
             return int(port)
     
