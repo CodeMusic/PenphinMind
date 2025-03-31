@@ -13,6 +13,7 @@ from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJourne
 
 # Get the project root directory (where config.py is located)
 PROJECT_ROOT = Path(__file__).parent
+CONFIG_FILE = PROJECT_ROOT / "config.json"
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -29,27 +30,53 @@ class MentalConfiguration:
     def __init__(self):
         journaling_manager.recordScope("MentalConfiguration.__init__")
         
+        # Initialize default values
+        self._init_defaults()
+        
+        # Serial settings with defaults
+        self.serial_settings = {
+            "port": "COM7",
+            "baud_rate": 115200,
+            "timeout": 1.0,
+            "bytesize": 8,
+            "parity": "N",
+            "stopbits": 1,
+            "xonxoff": False,
+            "rtscts": False,
+            "dsrdtr": False
+        }
+        
+        # Load configuration from config.json
+        self._load_config()
+        
+        # Load environment variables (these override config file settings)
+        self._load_env_vars()
+        
+        journaling_manager.recordInfo("Mental configuration initialized")
+
+    def _init_defaults(self):
+        """Initialize default configuration values"""
         # Audio settings
         self.sample_rate = 16000
         self.channels = 1
         self.chunk_size = 1024
         self.audio_device_controls = {
-            "volume": 100,  # Volume level (0-100)
-            "mute": False,  # Mute state
-            "input_device": "default",  # Input device name
-            "output_device": "default",  # Output device name
-            "latency": 0.1,  # Audio latency in seconds
-            "buffer_size": 2048  # Audio buffer size
+            "volume": 100,
+            "mute": False,
+            "input_device": "default",
+            "output_device": "default",
+            "latency": 0.1,
+            "buffer_size": 2048
         }
         
         # Visual settings
-        self.visual_height = 32  # Height of LED matrix
-        self.visual_width = 64   # Width of LED matrix
-        self.visual_fps = 30     # Frames per second for visual updates
+        self.visual_height = 32
+        self.visual_width = 64
+        self.visual_fps = 30
         
         # Motor settings
-        self.motor_speed = 100    # Default motor speed (0-255)
-        self.motor_acceleration = 50  # Default acceleration (0-255)
+        self.motor_speed = 100
+        self.motor_acceleration = 50
         
         # LLM settings
         self.llm_model = "gpt-3.5-turbo"
@@ -68,51 +95,77 @@ class MentalConfiguration:
         self.log_level = "DEBUG"
         self.log_file = str(PROJECT_ROOT / "logs" / "penphin.log")
         
-        # Serial communication settings
-        self.serial_baud_rate = 115200
-        self.serial_timeout = 1.0
-        self.serial_port = None  # Will be auto-detected
-        
-        # Load configuration from config.json
-        self._load_config_json()
-        
-        # Load environment variables
-        self._load_env_vars()
-        
-        journaling_manager.recordInfo("Mental configuration initialized")
-        
-        self.config_file = Path("config.json")  # Default config file path
-        self._protected_attrs = {'config_file', '_protected_attrs'}  # Attributes that shouldn't be saved
-        self._load_config()
-        
-    def _load_config_json(self) -> None:
+        # ADB settings
+        self.adb_path = "adb"  # Default to system adb
+
+    def _load_config(self) -> None:
         """Load configuration from config.json"""
-        journaling_manager.recordScope("MentalConfiguration._load_config_json")
+        journaling_manager.recordScope("MentalConfiguration._load_config")
         try:
-            config_path = PROJECT_ROOT / "config.json"
-            if config_path.exists():
-                with open(config_path, 'r') as f:
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, 'r') as f:
                     config_data = json.load(f)
                     
-                # Load LLM service settings from corpus_callosum section
+                # Load corpus callosum settings
                 if "corpus_callosum" in config_data:
-                    corpus_callosum_config = config_data["corpus_callosum"]
-                    if "llm_service" in corpus_callosum_config:
-                        llm_service_config = corpus_callosum_config["llm_service"]
-                        self.llm_service.update({
-                            "ip": llm_service_config.get("ip", self.llm_service["ip"]),
-                            "port": llm_service_config.get("port", self.llm_service["port"]),
-                            "timeout": llm_service_config.get("timeout", self.llm_service["timeout"])
-                        })
-                        journaling_manager.recordDebug(f"Loaded LLM service config: {self.llm_service}")
+                    cc_config = config_data["corpus_callosum"]
+                    
+                    # Load LLM service settings
+                    if "llm_service" in cc_config:
+                        self.llm_service.update(cc_config["llm_service"])
                     
                     # Load ADB path
-                    self.adb_path = corpus_callosum_config.get("adb_path", "adb")
-                    journaling_manager.recordDebug(f"Loaded ADB path: {self.adb_path}")
+                    if "adb_path" in cc_config:
+                        self.adb_path = cc_config["adb_path"]
                     
+                    # Load serial settings
+                    if "serial_settings" in cc_config:
+                        self.serial_settings.update(cc_config["serial_settings"])
+                        journaling_manager.recordInfo(f"Loaded serial settings: {self.serial_settings}")
+                    
+                # Load other sections as needed...
+                
+                journaling_manager.recordInfo(f"Configuration loaded from {CONFIG_FILE}")
+            else:
+                journaling_manager.recordWarning(f"Config file not found at {CONFIG_FILE}, using defaults")
+                
         except Exception as e:
             journaling_manager.recordError(f"Error loading config.json: {e}")
+
+    def save(self) -> bool:
+        """Save current configuration to JSON file"""
+        try:
+            # Ensure the config structure matches the expected format
+            config_data = {
+                "corpus_callosum": {
+                    "llm_service": self.llm_service,
+                    "adb_path": self.adb_path,
+                    "serial_settings": self.serial_settings,
+                    "api_keys": {
+                        "openai": "",
+                        "elevenlabs": ""
+                    },
+                    "logging": {
+                        "level": self.log_level,
+                        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                    }
+                }
+                # Add other sections as needed...
+            }
             
+            # Ensure directory exists
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save with pretty formatting
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config_data, f, indent=4)
+            
+            journaling_manager.recordInfo(f"Configuration saved to {CONFIG_FILE}")
+            return True
+        except Exception as e:
+            journaling_manager.recordError(f"Error saving config: {e}")
+            return False
+
     def _load_env_vars(self) -> None:
         """Load configuration from environment variables"""
         journaling_manager.recordScope("MentalConfiguration._load_env_vars")
@@ -197,94 +250,15 @@ class MentalConfiguration:
             self.log_level = os.environ["PENPHIN_LOG_LEVEL"]
             journaling_manager.recordDebug(f"Loaded log level from env: {self.log_level}")
             
-        # Serial communication settings
-        if "PENPHIN_SERIAL_BAUD_RATE" in os.environ:
-            self.serial_baud_rate = int(os.environ["PENPHIN_SERIAL_BAUD_RATE"])
-            journaling_manager.recordDebug(f"Loaded serial baud rate from env: {self.serial_baud_rate}")
-        if "PENPHIN_SERIAL_TIMEOUT" in os.environ:
-            self.serial_timeout = float(os.environ["PENPHIN_SERIAL_TIMEOUT"])
-            journaling_manager.recordDebug(f"Loaded serial timeout from env: {self.serial_timeout}")
+        # Serial settings from environment
         if "PENPHIN_SERIAL_PORT" in os.environ:
-            self.serial_port = os.environ["PENPHIN_SERIAL_PORT"]
-            journaling_manager.recordDebug(f"Loaded serial port from env: {self.serial_port}")
+            self.serial_settings["port"] = os.environ["PENPHIN_SERIAL_PORT"]
+        if "PENPHIN_SERIAL_BAUD" in os.environ:
+            self.serial_settings["baud_rate"] = int(os.environ["PENPHIN_SERIAL_BAUD"])
+        if "PENPHIN_SERIAL_TIMEOUT" in os.environ:
+            self.serial_settings["timeout"] = float(os.environ["PENPHIN_SERIAL_TIMEOUT"])
             
         journaling_manager.recordInfo("Environment variables loaded successfully")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert configuration to dictionary"""
-        return {
-            "audio": {
-                "sample_rate": self.sample_rate,
-                "channels": self.channels,
-                "chunk_size": self.chunk_size,
-                "device_controls": self.audio_device_controls
-            },
-            "visual": {
-                "height": self.visual_height,
-                "width": self.visual_width,
-                "fps": self.visual_fps
-            },
-            "motor": {
-                "speed": self.motor_speed,
-                "acceleration": self.motor_acceleration
-            },
-            "llm": {
-                "model": self.llm_model,
-                "temperature": self.llm_temperature,
-                "max_tokens": self.llm_max_tokens
-            },
-            "llm_service": self.llm_service,
-            "system": {
-                "debug_mode": self.debug_mode,
-                "log_level": self.log_level
-            },
-            "serial": {
-                "baud_rate": self.serial_baud_rate,
-                "timeout": self.serial_timeout,
-                "port": self.serial_port
-            }
-        }
-
-    def _load_config(self):
-        """Load configuration from JSON file"""
-        try:
-            if self.config_file.exists():
-                with open(self.config_file, 'r') as f:
-                    config_data = json.load(f)
-                    # Update instance attributes with loaded config
-                    for key, value in config_data.items():
-                        setattr(self, key, value)
-                    journaling_manager.recordInfo(f"Loaded configuration from {self.config_file}")
-        except Exception as e:
-            journaling_manager.recordError(f"Error loading config: {e}")
-            # Continue with default values if load fails
-
-    def save(self) -> bool:
-        """Save current configuration to JSON file"""
-        try:
-            # Create config dictionary from instance attributes, excluding protected ones
-            config_data = {
-                key: value for key, value in self.__dict__.items()
-                if not key.startswith('_') and key not in self._protected_attrs
-            }
-            
-            # Ensure directory exists
-            self.config_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Save with pretty formatting
-            with open(self.config_file, 'w') as f:
-                json.dump(config_data, f, indent=4)
-            
-            journaling_manager.recordInfo(f"Configuration saved to {self.config_file}")
-            return True
-        except Exception as e:
-            journaling_manager.recordError(f"Error saving config: {e}")
-            return False
-
-    def set_config_file(self, path: str):
-        """Set custom config file path"""
-        self.config_file = Path(path)
-        self._load_config()
 
 # Create global configuration instance
 CONFIG = MentalConfiguration() 

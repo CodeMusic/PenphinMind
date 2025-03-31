@@ -80,96 +80,143 @@ class SerialTransport(BaseTransport):
         super().__init__()
         self._serial_port = None
         self._serial_connection = None
+        self.port = str(CONFIG.llm_service["port"])  # 10001
+        self._tunnel_active = False
+        self.serial_settings = CONFIG.serial_settings
     
     def is_available(self) -> bool:
         """Check if serial connection is available"""
-        if platform.system() == "Darwin":  # macOS
-            journaling_manager.recordInfo("Checking macOS serial ports...")
-            ports = serial.tools.list_ports.comports()
-            for port in ports:
-                journaling_manager.recordInfo(f"Found port: {port.device}")
-                journaling_manager.recordInfo(f"Hardware ID: {port.hwid}")
-                journaling_manager.recordInfo(f"Description: {port.description}")
-                if "ax630" in port.description.lower() or "axera" in port.description.lower():
-                    journaling_manager.recordInfo(f"Found AX630 device: {port.device}")
-                    return True
-        else:  # Linux (including Raspberry Pi) or Windows
-                journaling_manager.recordInfo("Checking serial ports...")
-                # First try to find AX630 by device name
-                ports = serial.tools.list_ports.comports()
-                for port in ports:
-                    journaling_manager.recordInfo(f"Found port: {port.device}")
-                    journaling_manager.recordInfo(f"Hardware ID: {port.hwid}")
-                    journaling_manager.recordInfo(f"Description: {port.description}")
-                    if "ax630" in port.description.lower() or "axera" in port.description.lower():
-                        journaling_manager.recordInfo(f"Found AX630 device: {port.device}")
-                        return True
-                            
-                    # If no AX630 found, check common Raspberry Pi ports
-                    pi_ports = [
-                        "/dev/ttyAMA0",  # Primary UART
-                        "/dev/ttyAMA1",  # Secondary UART
-                        "/dev/ttyUSB0",  # USB to Serial
-                        "/dev/ttyUSB1",  # USB to Serial
-                        "/dev/ttyS0",    # Serial
-                        "/dev/ttyS1"     # Serial
-                    ]
-                    
-                    for port in pi_ports:
-                        if os.path.exists(port):
-                            journaling_manager.recordInfo(f"Found Raspberry Pi port: {port}")
-                            return True
-                        
-        journaling_manager.recordInfo("No suitable serial port found")
-        return False
+        # Don't fail here, just return True to allow discovery process
+        return True
     
     def _find_serial_port(self) -> Optional[str]:
-        """Find the serial port for the device"""
-        if platform.system() == "Darwin":  # macOS
-            ports = serial.tools.list_ports.comports()
-            for port in ports:
-                if "ax630" in port.description.lower() or "axera" in port.description.lower():
-                    return port.device
-                    
-        elif platform.system() == "Linux":
-            # Check for AX630 by device name
-            ports = serial.tools.list_ports.comports()
-            for port in ports:
-                if "ax630" in port.description.lower() or "axera" in port.description.lower():
-                    return port.device
-                    
-            # If not found, check common Raspberry Pi ports
-            pi_ports = [
-                "/dev/ttyAMA0",  # Primary UART
-                "/dev/ttyAMA1",  # Secondary UART
-                "/dev/ttyUSB0",  # USB to Serial
-                "/dev/ttyUSB1",  # USB to Serial
-                "/dev/ttyS0",    # Serial
-                "/dev/ttyS1"     # Serial
-            ]
-            
-            for port in pi_ports:
-                if os.path.exists(port):
-                    return port
-        else:  # Windows
-            ports = serial.tools.list_ports.comports()
-            for port in ports:
-                if "ax630" in port.description.lower() or "axera" in port.description.lower():
-                    return port.device
+        """Find the device port through serial"""
+        journaling_manager.recordInfo("Starting serial port discovery...")
         
+        ports = serial.tools.list_ports.comports()
+        if not ports:
+            journaling_manager.recordInfo("No serial ports found")
+            return None
+        
+        journaling_manager.recordInfo("\nChecking all available ports...")
+        for port in ports:
+            journaling_manager.recordInfo(f"\nChecking port: {port.device}")
+            journaling_manager.recordInfo(f"Description: {port.description}")
+            if port.vid is not None and port.pid is not None:
+                journaling_manager.recordInfo(f"VID:PID: {port.vid:04x}:{port.pid:04x}")
+            journaling_manager.recordInfo(f"Hardware ID: {port.hwid}")
+            
+            # Check for CH340 device (VID:PID = 1A86:7523)
+            if port.vid == 0x1A86 and port.pid == 0x7523:
+                journaling_manager.recordInfo(f"\nFound CH340 device on port: {port.device}")
+                return port.device
+            
+            # Check for M5Stack USB device patterns
+            patterns = ["m5stack", "m5 module", "m5module", "cp210x", "silicon labs"]
+            if any(pattern.lower() in port.description.lower() for pattern in patterns):
+                journaling_manager.recordInfo(f"\nFound matching device pattern on port: {port.device}")
+                return port.device
+                    
+            # Check for any USB CDC device
+            if "USB" in port.description.upper() and "CDC" in port.description.upper():
+                journaling_manager.recordInfo(f"\nFound USB CDC device on port: {port.device}")
+                return port.device
+                    
+            # If we get here and haven't found a match, but it's a CH340 device,
+            # return it anyway (some Windows systems might not report the VID/PID correctly)
+            if "CH340" in port.description.upper():
+                journaling_manager.recordInfo(f"\nFound CH340 device by description on port: {port.device}")
+                return port.device
+        
+        journaling_manager.recordInfo("\nNo suitable serial port found")
         return None
     
-    async def connect(self) -> bool:
-        """Connect to the serial device"""
+    async def _setup_tunnel(self) -> bool:
+        """Setup port forwarding tunnel"""
         try:
-            if not self.is_available():
-                raise ConnectionError("No serial device available")
+            journaling_manager.recordInfo(f"\n>>> SETTING UP TUNNEL FOR PORT {self.port}")
             
-            self._serial_port = self._find_serial_port()
-            if not self._serial_port:
-                raise ConnectionError("No suitable serial port found")
+            # First check shell access
+            self._serial_connection.write(b"whoami\n")
+            await asyncio.sleep(0.5)
+            shell_check = ""
+            while self._serial_connection.in_waiting:
+                shell_check += self._serial_connection.read().decode()
+            journaling_manager.recordInfo(f">>> SHELL ACCESS: {shell_check.strip()!r}")
+
+            # Check if netcat exists
+            self._serial_connection.write(b"which nc\n")
+            await asyncio.sleep(0.5)
+            nc_check = ""
+            while self._serial_connection.in_waiting:
+                nc_check += self._serial_connection.read().decode()
+            journaling_manager.recordInfo(f">>> NETCAT AVAILABLE: {nc_check.strip()!r}")
+
+            # Check current port status
+            self._serial_connection.write(f"netstat -tln | grep {self.port}\n".encode())
+            await asyncio.sleep(0.5)
+            port_check = ""
+            while self._serial_connection.in_waiting:
+                port_check += self._serial_connection.read().decode()
+            journaling_manager.recordInfo(f">>> CURRENT PORT STATUS: {port_check.strip()!r}")
+
+            # Kill any existing netcat
+            self._serial_connection.write(b"pkill -f 'nc -l'\n")
+            await asyncio.sleep(0.5)
+            while self._serial_connection.in_waiting:
+                self._serial_connection.read()
+
+            # Start netcat tunnel with error capture
+            tunnel_cmd = f"nc -l -p {self.port} 2>&1 &\n"
+            journaling_manager.recordInfo(f">>> STARTING TUNNEL: {tunnel_cmd.strip()}")
+            self._serial_connection.write(tunnel_cmd.encode())
+            await asyncio.sleep(1)
+
+            # Check for any error output
+            self._serial_connection.write(b"dmesg | tail\n")
+            await asyncio.sleep(0.5)
+            error_check = ""
+            while self._serial_connection.in_waiting:
+                error_check += self._serial_connection.read().decode()
+            journaling_manager.recordInfo(f">>> SYSTEM MESSAGES: {error_check.strip()!r}")
+
+            # Verify tunnel process
+            self._serial_connection.write(b"ps | grep nc\n")
+            await asyncio.sleep(0.5)
+            ps_check = ""
+            while self._serial_connection.in_waiting:
+                ps_check += self._serial_connection.read().decode()
+            journaling_manager.recordInfo(f">>> TUNNEL PROCESS: {ps_check.strip()!r}")
+
+            # Final port check
+            self._serial_connection.write(f"netstat -tln | grep {self.port}\n".encode())
+            await asyncio.sleep(0.5)
+            final_check = ""
+            while self._serial_connection.in_waiting:
+                final_check += self._serial_connection.read().decode()
+            journaling_manager.recordInfo(f">>> FINAL PORT STATUS: {final_check.strip()!r}")
+
+            if f":{self.port}" in final_check:
+                self._tunnel_active = True
+                journaling_manager.recordInfo(">>> TUNNEL ESTABLISHED SUCCESSFULLY")
+                return True
+            else:
+                journaling_manager.recordError(">>> TUNNEL SETUP FAILED - Port not listening")
+                return False
+
+        except Exception as e:
+            journaling_manager.recordError(f">>> TUNNEL SETUP ERROR: {str(e)}")
+            journaling_manager.recordError(f">>> STACK TRACE: {traceback.format_exc()}")
+            return False
+
+    async def connect(self) -> bool:
+        """Connect to serial and setup tunnel"""
+        try:
+            journaling_manager.recordInfo(">>> STARTING SERIAL CONNECTION")
             
-            journaling_manager.recordInfo(f"Connecting to serial port: {self._serial_port}")
+            # Connect to serial port
+            self._serial_port = self.serial_settings["port"]  # COM7
+            journaling_manager.recordInfo(f">>> CONNECTING TO {self._serial_port}")
             
             self._serial_connection = serial.Serial(
                 port=self._serial_port,
@@ -177,73 +224,86 @@ class SerialTransport(BaseTransport):
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=1,
-                xonxoff=False,
-                rtscts=False,
-                dsrdtr=False
+                timeout=1
             )
             
-            # Clear any pending data
+            # Clear buffer
             while self._serial_connection.in_waiting:
                 self._serial_connection.read()
-                
+
+            # Setup tunnel
+            if not await self._setup_tunnel():
+                journaling_manager.recordError(">>> FAILED TO SETUP TUNNEL")
+                return False
+
+            self.endpoint = f"127.0.0.1:{self.port}"
             self.connected = True
-            self.endpoint = self._serial_port
-            journaling_manager.recordInfo("Serial connection established")
-            
             return True
             
         except Exception as e:
-            journaling_manager.recordError(f"Serial connection error: {e}")
-            self.connected = False
+            journaling_manager.recordError(f">>> CONNECTION ERROR: {e}")
+            if self._serial_connection and self._serial_connection.is_open:
+                self._serial_connection.close()
             return False
-    
-    async def disconnect(self) -> None:
-        """Close the serial connection"""
-        if self._serial_connection and self._serial_connection.is_open:
-            self._serial_connection.close()
-            journaling_manager.recordInfo("Serial connection closed")
-        
-        self._serial_connection = None
-        self.connected = False
-    
+
     async def transmit(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a command over serial and get response"""
-        if not self.connected or not self._serial_connection or not self._serial_connection.is_open:
-            raise ConnectionError("Serial connection not established")
+        """Send command through tunnel"""
+        if not self.connected or not self._tunnel_active:
+            raise ConnectionError("Tunnel not established")
         
         try:
-            # Prepare command
+            # Send command through tunnel
             json_data = json.dumps(command) + "\n"
-            journaling_manager.recordDebug(f"Sending command through serial: {json_data.strip()}")
+            cmd = f"echo '{json_data.strip()}' | nc localhost {self.port}\n"
+            journaling_manager.recordInfo(f">>> SENDING THROUGH TUNNEL: {cmd.strip()}")
             
-            # Send command
-            self._serial_connection.write(json_data.encode())
-            self._serial_connection.flush()  # Ensure data is sent
+            self._serial_connection.write(cmd.encode())
+            self._serial_connection.flush()
             
-            # Wait for response with timeout
-            max_attempts = 3
-            for attempt in range(max_attempts):
-                try:
-                    response = self._serial_connection.readline().decode().strip()
-                    if response:
+            # Read response
+            buffer = ""
+            start_time = time.time()
+            
+            while (time.time() - start_time) < 5.0:
+                if self._serial_connection.in_waiting:
+                    char = self._serial_connection.read().decode()
+                    buffer += char
+                    journaling_manager.recordInfo(f">>> RECEIVED: {char!r}")
+                    
+                    if char == '\n':
                         try:
-                            response_data = json.loads(response)
-                            return response_data
+                            response = json.loads(buffer.strip())
+                            journaling_manager.recordInfo(f">>> VALID JSON: {response}")
+                            return response
                         except json.JSONDecodeError:
-                            journaling_manager.recordError(f"Invalid JSON response: {response}")
+                            journaling_manager.recordInfo(f">>> INVALID JSON: {buffer.strip()!r}")
+                            buffer = ""
                             continue
-                except serial.SerialTimeoutException:
-                    journaling_manager.recordError(f"Timeout on attempt {attempt + 1}")
-                    continue
-                
-                time.sleep(1)  # Wait before next attempt
+                await asyncio.sleep(0.1)
             
-            raise CommandError("No response from device")
+            journaling_manager.recordError(">>> NO RESPONSE (timeout)")
+            raise CommandError("No valid response received")
             
         except Exception as e:
-            journaling_manager.recordError(f"Serial communication error: {str(e)}")
-            raise CommandError(f"Serial communication failed: {str(e)}")
+            journaling_manager.recordError(f">>> TRANSMISSION ERROR: {e}")
+            raise CommandError(f"Command transmission failed: {e}")
+
+    async def disconnect(self) -> None:
+        """Clean up tunnel and connection"""
+        try:
+            if self._tunnel_active:
+                journaling_manager.recordInfo(">>> CLEANING UP TUNNEL")
+                self._serial_connection.write(b"pkill -f 'nc -l'\n")
+                await asyncio.sleep(0.5)
+                self._tunnel_active = False
+            
+            if self._serial_connection and self._serial_connection.is_open:
+                self._serial_connection.close()
+            
+            self.connected = False
+            journaling_manager.recordInfo(">>> DISCONNECTED")
+        except Exception as e:
+            journaling_manager.recordError(f">>> DISCONNECT ERROR: {e}")
 
 class WiFiTransport(BaseTransport):
     """TCP communication transport layer"""
@@ -497,8 +557,8 @@ class WiFiTransport(BaseTransport):
                     try:
                         data = s.recv(1).decode()
                         if not data:
-                          journaling_manager.recordDebug("No more data received")
-                          break
+                            journaling_manager.recordDebug("No more data received")
+                            break
                         buffer += data
                         
                         # For chat responses, print characters as they arrive
@@ -585,7 +645,7 @@ class ADBTransport(BaseTransport):
         super().__init__()
         self.adb_path = CONFIG.adb_path
         self.port = str(CONFIG.llm_service["port"])  # Should be "10001"
-    
+        
     def _run_adb_command(self, command):
         """Run an ADB command using the module-level function with caching"""
         return run_adb_command(command)
@@ -639,8 +699,8 @@ class ADBTransport(BaseTransport):
                 pass
             
             # Forward local port to device port (both using LLM service port)
-            journaling_manager.recordInfo(f"Setting up ADB port forwarding tcp:{self.port} -> tcp:{self.port}")
-            self._run_adb_command(["forward", f"tcp:{self.port}", f"tcp:{self.port}"])
+                journaling_manager.recordInfo(f"Setting up ADB port forwarding tcp:{self.port} -> tcp:{self.port}")
+                self._run_adb_command(["forward", f"tcp:{self.port}", f"tcp:{self.port}"])
             
             # Verify port forwarding
             forwarding = self._run_adb_command(["forward", "--list"])
@@ -717,9 +777,9 @@ class ADBTransport(BaseTransport):
                             break
                         buffer.extend(chunk)
                         if b"\n" in chunk:
-                            break
+                                break
                     except socket.timeout:
-                        break
+                                break
                 
                 if buffer:
                     try:
@@ -739,14 +799,14 @@ class ADBTransport(BaseTransport):
                     journaling_manager.recordError("Empty response received")
                     _tcp_gateway_active = False  # Mark gateway as inactive on empty response
                     return {
-                        "request_id": command.get("request_id", "error"),
-                        "work_id": command.get("work_id", "local"),
-                        "data": None,
-                        "error": {"code": -2, "message": "Empty response"},
+                    "request_id": command.get("request_id", "error"),
+                    "work_id": command.get("work_id", "local"),
+                    "data": None,
+                    "error": {"code": -2, "message": "Empty response"},
                         "object": command.get("object", "None"),
                         "created": int(time.time())
                     }
-                
+            
         except Exception as e:
             journaling_manager.recordError(f"Error transmitting command: {e}")
             _tcp_gateway_active = False  # Mark gateway as inactive on error
