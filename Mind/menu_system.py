@@ -6,6 +6,7 @@ import os
 import asyncio
 from typing import Dict, Any, List
 import time
+import json
 
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
@@ -45,7 +46,6 @@ async def get_current_model_info():
 
 async def display_main_menu() -> str:
     """Display main menu and get user choice"""
-    clear_screen()
     print_header()
     
     # Refresh hardware info before displaying
@@ -59,7 +59,7 @@ async def display_main_menu() -> str:
     print("Main Menu:")
     print("1) Chat")
     print("2) Information")
-    print("3) Reboot")
+    print("3) System")
     print("4) Exit")
     print()
     
@@ -406,6 +406,63 @@ async def start_chat():
             
         print()  # Empty line after response
 
+async def system_menu() -> None:
+    """Display and handle system menu options"""
+    while True:
+        clear_screen()
+        print_header()
+        
+        # Display hardware info
+        hw_info = SynapticPathways.format_hw_info()
+        print(hw_info)
+        print()
+        
+        print("System Menu:")
+        print("1) Hardware Info")
+        print("2) List Models")
+        print("3) Ping System")
+        print("4) Reboot Device")
+        print("0) Back to Main Menu")
+        print()
+        
+        choice = input("Enter your choice (0-4): ").strip()
+        
+        try:
+            if choice == "0":
+                return
+            elif choice == "1":
+                # Hardware Info
+                hw_info = await SynapticPathways.get_hardware_info()
+                print("\n=== Hardware Information ===")
+                print(json.dumps(hw_info, indent=2))
+                input("\nPress Enter to continue...")
+                
+            elif choice == "2":
+                # List Models
+                models = await SynapticPathways.get_available_models()
+                print("\n=== Available Models ===")
+                print(json.dumps(models, indent=2))
+                input("\nPress Enter to continue...")
+                
+            elif choice == "3":
+                # Ping System
+                print("\nPinging system...")
+                result = await SynapticPathways.ping_system()
+                print(f"Ping {'successful' if result else 'failed'}")
+                input("\nPress Enter to continue...")
+                
+            elif choice == "4":
+                # Reboot (using existing reboot_system function)
+                await reboot_system()
+                
+            else:
+                print("\nInvalid choice. Press Enter to continue...")
+                input()
+                
+        except Exception as e:
+            print(f"\nError: {e}")
+            input("\nPress Enter to continue...")
+
 async def run_menu_system(mind=None):
     """Run the main menu system
     
@@ -420,7 +477,7 @@ async def run_menu_system(mind=None):
         elif choice == "2":
             await display_model_list()
         elif choice == "3":
-            await reboot_system()
+            await system_menu()
         elif choice == "4":
             print("Exiting PenphinMind...")
             break

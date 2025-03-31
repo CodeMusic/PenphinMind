@@ -19,7 +19,7 @@
     "llm_temperature": 0.7,
     "llm_max_tokens": 1000,
     "llm_service": {
-        "ip": "10.0.0.54",
+        "ip": "10.0.0.158",
         "port": 10001,
         "timeout": 7.0
     },

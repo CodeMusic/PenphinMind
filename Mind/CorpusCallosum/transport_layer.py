@@ -584,8 +584,8 @@ class ADBTransport(BaseTransport):
     def __init__(self):
         super().__init__()
         self.adb_path = CONFIG.adb_path
-        self.port = "5555"  # Default ADB forwarding port
-        
+        self.port = str(CONFIG.llm_service["port"])  # Should be "10001"
+    
     def _run_adb_command(self, command):
         """Run an ADB command using the module-level function with caching"""
         return run_adb_command(command)
@@ -631,51 +631,45 @@ class ADBTransport(BaseTransport):
             if not self.is_available():
                 raise ConnectionError("No ADB devices available")
             
-            # Check if port forwarding is already set up
+            # Clear any existing forwards for this port
+            try:
+                self._run_adb_command(["forward", "--remove", f"tcp:{self.port}"])
+                _tcp_gateway_active = False
+            except Exception:
+                pass
+            
+            # Forward local port to device port (both using LLM service port)
+            journaling_manager.recordInfo(f"Setting up ADB port forwarding tcp:{self.port} -> tcp:{self.port}")
+            self._run_adb_command(["forward", f"tcp:{self.port}", f"tcp:{self.port}"])
+            
+            # Verify port forwarding
             forwarding = self._run_adb_command(["forward", "--list"])
-            forwarding_set = f"tcp:{self.port}" in forwarding
-            
-            if forwarding_set:
-                journaling_manager.recordInfo(f"ADB port forwarding already established for tcp:{self.port}")
-                _tcp_gateway_active = True  # Port forwarding already exists, mark as active
+            if f"tcp:{self.port}" in forwarding:
+                _tcp_gateway_active = True
+                journaling_manager.recordInfo("Port forwarding verified")
             else:
-                # Set up port forwarding
-                journaling_manager.recordInfo(f"Setting up ADB port forwarding tcp:{self.port} -> tcp:{self.port}")
-                start_time = time.time()
-                self._run_adb_command(["forward", f"tcp:{self.port}", f"tcp:{self.port}"])
-                setup_time = time.time() - start_time
-                
-                journaling_manager.recordInfo(f"ADB port forwarding established in {setup_time:.2f} seconds")
-                _tcp_gateway_active = True  # Mark TCP gateway as active
-                
-                # Wait for port forwarding to be fully ready
-                wait_time = 3.0  # seconds
-                journaling_manager.recordInfo(f"Waiting {wait_time} seconds for ADB TCP gateway to initialize...")
-                await asyncio.sleep(wait_time)
+                raise ConnectionError("Port forwarding not established")
             
-            # Use localhost:port as the endpoint
+            # Use localhost with the forwarded port
             self.endpoint = f"127.0.0.1:{self.port}"
             self.connected = True
-            journaling_manager.recordInfo(f"ADB connection via port forwarding at {self.endpoint}")
             
+            journaling_manager.recordInfo(f"ADB connection established at {self.endpoint}")
             return True
             
         except Exception as e:
             journaling_manager.recordError(f"Error connecting via ADB: {e}")
             self.connected = False
-            _tcp_gateway_active = False  # Mark TCP gateway as inactive
+            _tcp_gateway_active = False
             raise ConnectionError(f"ADB connection failed: {e}")
     
     async def disconnect(self) -> None:
         """Remove port forwarding and disconnect"""
-        global _tcp_gateway_active
-        
         if self.connected:
             try:
                 self._run_adb_command(["forward", "--remove", f"tcp:{self.port}"])
                 journaling_manager.recordInfo("ADB port forwarding removed")
                 self.connected = False
-                _tcp_gateway_active = False  # Mark TCP gateway as inactive
             except Exception as e:
                 journaling_manager.recordError(f"Error removing ADB port forwarding: {e}")
     
@@ -685,8 +679,7 @@ class ADBTransport(BaseTransport):
         
         if not self.connected:
             if _tcp_gateway_active:
-                # If we think the TCP gateway is active but we're not connected,
-                # try to re-establish the connection
+                # Try to re-establish the connection if gateway is marked active
                 journaling_manager.recordInfo("TCP gateway marked active but connection lost, reconnecting...")
                 await self.connect()
             else:
@@ -696,120 +689,67 @@ class ADBTransport(BaseTransport):
             ip, port = self.endpoint.split(":")
             port = int(port)
             
-            # Connect to the forwarded port
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5.0)
                 
-                # Prepare JSON data - don't log it here, it's already logged in transmit_json
-                json_data = json.dumps(command) + "\n"
-                
                 try:
-                    journaling_manager.recordDebug(f"ADB: Connecting to {ip}:{port}...")
-                    s.connect((ip, int(port)))
+                    s.connect((ip, port))
                 except Exception as e:
                     # Connection failed, TCP gateway might be down
                     journaling_manager.recordError(f"Socket connection failed: {e}")
                     _tcp_gateway_active = False
                     self.connected = False
-                    
-                    # Try to reconnect
-                    journaling_manager.recordInfo("Attempting to reconnect ADB...")
-                    await self.connect()
-                    
-                    # If reconnect succeeded, try the socket again
-                    if self.connected:
-                        s.connect((ip, int(port)))
-                    else:
-                        raise ConnectionError("Failed to reconnect to device")
+                    raise ConnectionError("Failed to connect to forwarded port")
                 
-                journaling_manager.recordInfo("This is an ADB connection over port forwarding")
-                _tcp_gateway_active = True  # Confirm TCP gateway is working
+                # Mark gateway as active if connection succeeds
+                _tcp_gateway_active = True
                 
                 # Send command
+                json_data = json.dumps(command) + "\n"
                 s.sendall(json_data.encode())
-                journaling_manager.recordDebug("Command sent successfully")
                 
-                # Wait for response with larger buffer for model info
-                buffer = ""
-                journaling_manager.recordDebug("Waiting for response...")
-                
-                # Read response with approach based on command type
-                is_model_info = command.get("action") == "get_model_info"
-                if is_model_info:
-                    # Use larger chunks for model info requests
-                    s.settimeout(15.0)  # Longer timeout for model info
+                # Read response with larger buffer
+                buffer = bytearray()
+                while True:
                     try:
-                        # Try to read a large chunk first
-                        data = s.recv(16384).decode()
-                        buffer = data
-                        journaling_manager.recordDebug(f"ADB model info initial chunk: received {len(data)} bytes")
-                        
-                        # Continue reading if needed
-                        read_timeout = time.time() + 15.0
-                        while time.time() < read_timeout and not buffer.endswith("\n"):
-                            try:
-                                chunk = s.recv(4096).decode()
-                                if not chunk:
-                                    break
-                                buffer += chunk
-                            except socket.timeout:
-                                journaling_manager.recordWarning("Socket timeout while reading model info")
-                                break
-                    except socket.timeout:
-                        journaling_manager.recordError("Socket timeout reading initial model info")
-                else:
-                    # Standard byte-by-byte reading for other commands
-                    while True:
-                        try:
-                            data = s.recv(1).decode()
-                            if not data:
-                                break
-                            buffer += data
-                            
-                            # For chat responses, print characters as they arrive
-                            if command.get("action") == "inference":
-                                print(data, end="", flush=True)
-                            
-                            if data == "\n":
-                                break
-                        except socket.timeout:
-                            journaling_manager.recordError("Socket timeout")
+                        chunk = s.recv(4096)
+                        if not chunk:
                             break
+                        buffer.extend(chunk)
+                        if b"\n" in chunk:
+                            break
+                    except socket.timeout:
+                        break
                 
-                # Parse response - don't log it here, it's already logged in transmit_json
-                try:
-                    if buffer.strip():
-                        response = json.loads(buffer.strip())
+                if buffer:
+                    try:
+                        response = json.loads(buffer.decode().strip())
                         return response
-                    else:
-                        journaling_manager.recordError("Empty response received")
+                    except json.JSONDecodeError as e:
+                        journaling_manager.recordError(f"Failed to parse JSON: {e}")
                         return {
-                            "request_id": command.get("request_id", f"error_{int(time.time())}"),
-                            "work_id": command.get("work_id", "sys"),
-                            "data": None,
-                            "error": {"code": -2, "message": "Empty response"},
+                            "request_id": command.get("request_id", "error"),
+                            "work_id": command.get("work_id", "local"),
+                            "data": buffer.decode().strip(),
+                            "error": {"code": -1, "message": f"Failed to parse response: {e}"},
                             "object": command.get("object", "None"),
                             "created": int(time.time())
                         }
-                except json.JSONDecodeError as e:
-                    journaling_manager.recordError(f"Failed to parse JSON: {e}, Response: {buffer.strip()[:200]}")
-                    
-                    # Return a properly formatted error response
+                else:
+                    journaling_manager.recordError("Empty response received")
+                    _tcp_gateway_active = False  # Mark gateway as inactive on empty response
                     return {
-                        "request_id": command.get("request_id", f"error_{int(time.time())}"),
-                        "work_id": command.get("work_id", "sys"),
-                        "data": buffer.strip() if buffer else "None",
-                        "error": {"code": -1, "message": f"Failed to parse response: {e}"},
+                        "request_id": command.get("request_id", "error"),
+                        "work_id": command.get("work_id", "local"),
+                        "data": None,
+                        "error": {"code": -2, "message": "Empty response"},
                         "object": command.get("object", "None"),
                         "created": int(time.time())
                     }
                 
         except Exception as e:
             journaling_manager.recordError(f"Error transmitting command: {e}")
-            stack_trace = traceback.format_exc()
-            journaling_manager.recordError(f"Stack trace: {stack_trace}")
-            _tcp_gateway_active = False  # Mark TCP gateway as inactive on error
-            self.connected = False
+            _tcp_gateway_active = False  # Mark gateway as inactive on error
             raise CommandError(f"Command transmission failed: {e}")
 
 # Transport factory
