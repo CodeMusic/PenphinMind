@@ -18,6 +18,7 @@ from typing import Dict, Any, Optional, Union
 import paramiko
 import serial
 import serial.tools.list_ports
+import re
 
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
@@ -267,17 +268,199 @@ class WiFiTransport(BaseTransport):
         try:
             journaling_manager.recordInfo(f"Setting up TCP connection to {self.ip}:{self.port}...")
             
-            # For TCP, just set up the connection without testing
-            # Use the exact format from the original code - no socket test here
-            self.endpoint = f"{self.ip}:{self.port}"
-            self.connected = True
-            journaling_manager.recordInfo("TCP connection established")
-            return True
+            # Try to connect and ping with current IP and port
+            initial_connection = False
+            try:
+                # First check basic socket connection
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(3.0)  # 3 second timeout for initial connection
+                    s.connect((self.ip, self.port))
+                    
+                    # If socket connects, try a ping command to verify LLM service
+                    ping_command = {
+                        "request_id": f"ping_{int(time.time())}",
+                        "work_id": "sys",
+                        "action": "ping",
+                        "object": "system",
+                        "data": None
+                    }
+                    
+                    # Send ping and wait for response
+                    json_data = json.dumps(ping_command) + "\n"
+                    s.sendall(json_data.encode())
+                    
+                    # Wait for response with timeout
+                    s.settimeout(3.0)
+                    response = ""
+                    while True:
+                        chunk = s.recv(1).decode()
+                        if not chunk:
+                            break
+                        response += chunk
+                        if chunk == "\n":
+                            break
+                    
+                    # Verify ping response
+                    if response.strip():
+                        try:
+                            response_data = json.loads(response.strip())
+                            if response_data.get("error", {}).get("code", -1) == 0:
+                                initial_connection = True
+                            else:
+                                journaling_manager.recordError("Ping response indicated failure")
+                        except json.JSONDecodeError:
+                            journaling_manager.recordError("Invalid JSON response from ping")
+                    else:
+                        journaling_manager.recordError("Empty response from ping")
+                    
+            except (socket.timeout, ConnectionRefusedError, OSError, json.JSONDecodeError) as e:
+                journaling_manager.recordInfo(f"Initial TCP connection/ping failed: {e}")
+            
+            if initial_connection:
+                self.endpoint = f"{self.ip}:{self.port}"
+                self.connected = True
+                journaling_manager.recordInfo("TCP connection established and verified with ping")
+                return True
+            
+            # If direct connection fails, try to discover IP via ADB
+            journaling_manager.recordInfo("TCP connection failed. Attempting to discover IP via ADB...")
+            ip_from_adb = await self._discover_ip_via_adb()
+            
+            if ip_from_adb:
+                journaling_manager.recordInfo(f"Found device IP via ADB: {ip_from_adb}")
+                # Update IP in instance and config
+                self.ip = ip_from_adb
+                CONFIG.llm_service["ip"] = ip_from_adb
+                
+                # Save to config for future use
+                if CONFIG.save():
+                    journaling_manager.recordInfo(f"Updated and saved configuration with new IP: {ip_from_adb}")
+                else:
+                    journaling_manager.recordWarning(f"Updated configuration with new IP: {ip_from_adb} but failed to save")
+                
+                # Try TCP connection with the new IP
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(3.0)
+                        s.connect((self.ip, self.port))
+                        
+                        # Try ping with new IP
+                        ping_command = {
+                            "request_id": f"ping_{int(time.time())}",
+                            "work_id": "sys",
+                            "action": "ping",
+                            "object": "system",
+                            "data": None
+                        }
+                        
+                        # Send ping and wait for response
+                        json_data = json.dumps(ping_command) + "\n"
+                        s.sendall(json_data.encode())
+                        
+                        # Wait for response with timeout
+                        s.settimeout(3.0)
+                        response = ""
+                        while True:
+                            chunk = s.recv(1).decode()
+                            if not chunk:
+                                break
+                            response += chunk
+                            if chunk == "\n":
+                                break
+                        
+                        # Verify ping response
+                        if response.strip():
+                            try:
+                                response_data = json.loads(response.strip())
+                                if response_data.get("error", {}).get("code", -1) == 0:
+                                    self.endpoint = f"{self.ip}:{self.port}"
+                                    self.connected = True
+                                    journaling_manager.recordInfo("TCP connection established and verified with discovered IP")
+                                    return True
+                            except json.JSONDecodeError:
+                                journaling_manager.recordError("Invalid JSON response from ping with discovered IP")
+                        
+                except (socket.timeout, ConnectionRefusedError, OSError) as e:
+                    journaling_manager.recordError(f"Connection/ping failed with discovered IP: {e}")
+            
+            # If we get here, both connection attempts failed
+            journaling_manager.recordError("Failed to establish verified TCP connection with both configured and discovered IPs")
+            self.connected = False
+            return False
             
         except Exception as e:
             journaling_manager.recordError(f"TCP connection error: {e}")
             self.connected = False
             return False
+    
+    async def _discover_ip_via_adb(self) -> Optional[str]:
+        """Discover device IP address using ADB"""
+        try:
+            # Create an ADB transport to run commands
+            adb_transport = get_transport("adb")
+            if not await adb_transport.connect():
+                journaling_manager.recordError("Failed to establish ADB connection for IP discovery")
+                return None
+            
+            # First try to get IP from wlan0 interface
+            try:
+                output = run_adb_command(["shell", "ip", "addr", "show", "wlan0"])
+                match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', output)
+                if match:
+                    ip = match.group(1)
+                    journaling_manager.recordInfo(f"Found IP from wlan0: {ip}")
+                    return ip
+            except Exception as e:
+                journaling_manager.recordWarning(f"Error getting IP from wlan0: {e}")
+            
+            # If wlan0 fails, try eth0
+            try:
+                output = run_adb_command(["shell", "ip", "addr", "show", "eth0"])
+                match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', output)
+                if match:
+                    ip = match.group(1)
+                    journaling_manager.recordInfo(f"Found IP from eth0: {ip}")
+                    return ip
+            except Exception as e:
+                journaling_manager.recordWarning(f"Error getting IP from eth0: {e}")
+            
+            # If specific interfaces fail, try general IP commands
+            try:
+                # Try to get IP using ifconfig
+                output = run_adb_command(["shell", "ifconfig"])
+                matches = re.findall(r'inet addr:(\d+\.\d+\.\d+\.\d+)', output)
+                if not matches:  # Try newer format
+                    matches = re.findall(r'inet\s+(\d+\.\d+\.\d+\.\d+)', output)
+                
+                if matches:
+                    for ip in matches:
+                        if not ip.startswith("127."):  # Skip localhost
+                            journaling_manager.recordInfo(f"Found IP from ifconfig: {ip}")
+                            return ip
+            except Exception as e:
+                journaling_manager.recordWarning(f"Error getting IP from ifconfig: {e}")
+            
+            # If all else fails, try to get device ADB IP address
+            try:
+                # Get ADB devices with IP
+                output = run_adb_command(["devices", "-l"])
+                ip_matches = re.findall(r'(\d+\.\d+\.\d+\.\d+:\d+)', output)
+                if ip_matches:
+                    ip = ip_matches[0].split(':')[0]
+                    journaling_manager.recordInfo(f"Found IP from ADB devices: {ip}")
+                    return ip
+            except Exception as e:
+                journaling_manager.recordWarning(f"Error getting IP from ADB devices: {e}")
+            
+            # No IP found
+            return None
+        except Exception as e:
+            journaling_manager.recordError(f"Error in IP discovery: {e}")
+            return None
+        finally:
+            # Make sure to disconnect ADB transport if created
+            if 'adb_transport' in locals() and adb_transport:
+                await adb_transport.disconnect()
     
     async def disconnect(self) -> None:
         """Close TCP connection"""
@@ -314,8 +497,8 @@ class WiFiTransport(BaseTransport):
                     try:
                         data = s.recv(1).decode()
                         if not data:
-                            journaling_manager.recordDebug("No more data received")
-                            break
+                          journaling_manager.recordDebug("No more data received")
+                          break
                         buffer += data
                         
                         # For chat responses, print characters as they arrive
@@ -328,7 +511,7 @@ class WiFiTransport(BaseTransport):
                     except socket.timeout:
                         journaling_manager.recordError("Socket timeout")
                         break
-                
+        
                 # Parse response - don't log it here, it's already logged in transmit_json
                 try:
                     response = json.loads(buffer.strip())

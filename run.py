@@ -21,7 +21,7 @@ from Mind.mind import Mind, setup_connection
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-from Mind.menu_system import run_menu_system
+from Mind.menu_system import clear_screen, run_menu_system
 from Mind.CorpusCallosum.transport_layer import run_adb_command, get_transport
 
 # Create logs directory if it doesn't exist
@@ -329,6 +329,7 @@ This will show all debug messages and system state changes."""
 
 async def main():
     """Main entry point"""
+    clear_screen()
     args = parse_args()
     
     # Initialize logging

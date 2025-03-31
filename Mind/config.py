@@ -81,6 +81,10 @@ class MentalConfiguration:
         
         journaling_manager.recordInfo("Mental configuration initialized")
         
+        self.config_file = Path("config.json")  # Default config file path
+        self._protected_attrs = {'config_file', '_protected_attrs'}  # Attributes that shouldn't be saved
+        self._load_config()
+        
     def _load_config_json(self) -> None:
         """Load configuration from config.json"""
         journaling_manager.recordScope("MentalConfiguration._load_config_json")
@@ -240,6 +244,47 @@ class MentalConfiguration:
                 "port": self.serial_port
             }
         }
+
+    def _load_config(self):
+        """Load configuration from JSON file"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    config_data = json.load(f)
+                    # Update instance attributes with loaded config
+                    for key, value in config_data.items():
+                        setattr(self, key, value)
+                    journaling_manager.recordInfo(f"Loaded configuration from {self.config_file}")
+        except Exception as e:
+            journaling_manager.recordError(f"Error loading config: {e}")
+            # Continue with default values if load fails
+
+    def save(self) -> bool:
+        """Save current configuration to JSON file"""
+        try:
+            # Create config dictionary from instance attributes, excluding protected ones
+            config_data = {
+                key: value for key, value in self.__dict__.items()
+                if not key.startswith('_') and key not in self._protected_attrs
+            }
+            
+            # Ensure directory exists
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save with pretty formatting
+            with open(self.config_file, 'w') as f:
+                json.dump(config_data, f, indent=4)
+            
+            journaling_manager.recordInfo(f"Configuration saved to {self.config_file}")
+            return True
+        except Exception as e:
+            journaling_manager.recordError(f"Error saving config: {e}")
+            return False
+
+    def set_config_file(self, path: str):
+        """Set custom config file path"""
+        self.config_file = Path(path)
+        self._load_config()
 
 # Create global configuration instance
 CONFIG = MentalConfiguration() 

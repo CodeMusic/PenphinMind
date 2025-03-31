@@ -1,3 +1,4 @@
+'''
 #!/usr/bin/env python3
 import subprocess
 import json
@@ -1175,4 +1176,4 @@ def main():
             llm.cleanup()
 
 if __name__ == "__main__":
-    main() 
+    main() '''

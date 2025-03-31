@@ -219,8 +219,59 @@ class SynapticPathways:
             else:
                 journaling_manager.recordError(f"Failed to establish {mode} connection after {connect_time:.2f} seconds")
                 
+                # If TCP connection failed and it wasn't already a retry with discovered IP,
+                # the WiFiTransport.connect() method already tried ADB discovery and retried TCP
+                if mode == "tcp":
+                    # Both the initial TCP attempt and the ADB-discovered IP attempt failed
+                    # Ask the user if they want to try ADB mode
+                    try:
+                        print("\n=========================================")
+                        print("TCP connection failed with configured IP and with ADB-discovered IP.")
+                        print("Would you like to try connecting via ADB mode instead? [Y/n]")
+                        choice = input("Enter choice: ").strip().lower()
+                        
+                        # Default to yes if empty or 'y'
+                        if not choice or choice.startswith('y'):
+                            journaling_manager.recordInfo("User chose to try ADB mode as fallback")
+                            # Clean up failed TCP transport
+                            if cls._transport:
+                                await cls._transport.disconnect()
+                            
+                            # Try ADB mode
+                            await cls.set_device_mode("adb")
+                            return
+                        else:
+                            journaling_manager.recordInfo("User chose not to try ADB mode")
+                            print("Connection failed. Please check your device and try again.")
+                    except Exception as e:
+                        journaling_manager.recordError(f"Error during user prompt: {e}")
+                
         except Exception as e:
             journaling_manager.recordError(f"Error initializing {mode} connection: {e}")
+            
+            # If TCP connection failed with an exception, ask if user wants to try ADB
+            if mode == "tcp":
+                try:
+                    print("\n=========================================")
+                    print(f"TCP connection failed with error: {str(e)}")
+                    print("Would you like to try connecting via ADB mode instead? [Y/n]")
+                    choice = input("Enter choice (default: Y): ").strip().lower()
+                    
+                    # Default to yes if empty or 'y'
+                    if not choice or choice.startswith('y'):
+                        journaling_manager.recordInfo("User chose to try ADB mode after TCP error")
+                        # Clean up if needed
+                        if cls._transport:
+                            await cls._transport.disconnect()
+                        
+                        # Try ADB mode
+                        await cls.set_device_mode("adb")
+                        return
+                    else:
+                        journaling_manager.recordInfo("User chose not to try ADB mode")
+                        print("Connection failed. Please check your device and try again.")
+                except Exception as prompt_err:
+                    journaling_manager.recordError(f"Error during user prompt: {prompt_err}")
 
     @classmethod
     async def cleanup(cls) -> None:
