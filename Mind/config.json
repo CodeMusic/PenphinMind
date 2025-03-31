@@ -5,13 +5,13 @@
             "elevenlabs": ""
         },
         "logging": {
-            "level": "ERROR",
+            "level": "DEBUG",
             "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         },
         "llm_service": {
-            "ip": "10.0.0.157",
+            "ip": "10.0.0.144",
             "port": 10001,
-            "timeout": 5.0,
+            "timeout": 7.0,
             "setup": {
                 "system_message": "You are PenphinOS, a bicameral AI assistant.",
                 "enkws": true,
@@ -21,7 +21,8 @@
                 "max_token_len": 2048,
                 "wake_word": "hey penphin"
             }
-        }
+        },
+        "adb_path": "C:\\Users\\themu\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe"
     },
     "temporal_lobe": {
         "superior_temporal_gyrus": {

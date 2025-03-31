@@ -9,6 +9,7 @@ import time
 
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.mind import setup_connection
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -112,8 +113,8 @@ async def display_model_list() -> str:
     for model_type, type_models in model_types.items():
         print(f"\n{model_type.upper()} Models:")
         for model in type_models:
-            # Get the model name from the mode field, fallback to model field
-            model_name = str(model.get("mode", model.get("model", "Unknown")))
+            # Get the model name from the mode field (original API field)
+            model_name = model.get("mode", "Unknown")
             
             # Get capabilities and format them for display
             capabilities = model.get("capabilities", [])
@@ -123,7 +124,7 @@ async def display_model_list() -> str:
             
             # Log the individual model data for debugging
             journaling_manager.recordInfo(f"Model data: {model}")
-            journaling_manager.recordInfo(f"Extracted model name: {model_name}")
+            journaling_manager.recordInfo(f"Using model name from 'mode' field: {model_name}")
             
             model_dict[count] = model
             print(f"{count}) {model_name}{capabilities_str}")
@@ -165,8 +166,8 @@ async def display_model_details(model: Dict[str, Any]):
     print("[Using cached model information]")
     print()
     
-    # Get model identifier
-    model_name = str(model.get('mode', model.get('model', "Unknown")))
+    # Get model identifier from the mode field (original API field)
+    model_name = model.get('mode', "Unknown")
     
     print("Model Details:")
     print("-------------")
@@ -203,15 +204,6 @@ async def display_model_details(model: Dict[str, Any]):
         print("\nParameters:")
         for param_name, param_value in mode_params.items():
             print(f"- {param_name}: {param_value}")
-    
-    # Additional model properties
-    size = model.get("size", "")
-    version = model.get("version", "")
-    
-    if size:
-        print(f"\nSize: {size}")
-    if version:
-        print(f"Version: {version}")
     
     print("\nPress Enter to return to model list...")
     input()
@@ -435,6 +427,10 @@ async def run_menu_system(mind=None):
         else:
             print("Invalid choice. Press Enter to continue...")
             input()
+
+async def initialize_system(connection_type=None):
+    """Initialize the system with the specified connection type"""
+    await setup_connection(connection_type)
 
 # Entry point
 if __name__ == "__main__":

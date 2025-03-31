@@ -91,14 +91,20 @@ class MentalConfiguration:
                     config_data = json.load(f)
                     
                 # Load LLM service settings from corpus_callosum section
-                if "corpus_callosum" in config_data and "llm_service" in config_data["corpus_callosum"]:
-                    llm_service_config = config_data["corpus_callosum"]["llm_service"]
-                    self.llm_service.update({
-                        "ip": llm_service_config.get("ip", self.llm_service["ip"]),
-                        "port": llm_service_config.get("port", self.llm_service["port"]),
-                        "timeout": llm_service_config.get("timeout", self.llm_service["timeout"])
-                    })
-                    journaling_manager.recordDebug(f"Loaded LLM service config: {self.llm_service}")
+                if "corpus_callosum" in config_data:
+                    corpus_callosum_config = config_data["corpus_callosum"]
+                    if "llm_service" in corpus_callosum_config:
+                        llm_service_config = corpus_callosum_config["llm_service"]
+                        self.llm_service.update({
+                            "ip": llm_service_config.get("ip", self.llm_service["ip"]),
+                            "port": llm_service_config.get("port", self.llm_service["port"]),
+                            "timeout": llm_service_config.get("timeout", self.llm_service["timeout"])
+                        })
+                        journaling_manager.recordDebug(f"Loaded LLM service config: {self.llm_service}")
+                    
+                    # Load ADB path
+                    self.adb_path = corpus_callosum_config.get("adb_path", "adb")
+                    journaling_manager.recordDebug(f"Loaded ADB path: {self.adb_path}")
                     
         except Exception as e:
             journaling_manager.recordError(f"Error loading config.json: {e}")

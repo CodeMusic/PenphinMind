@@ -327,4 +327,23 @@ class Mind:
             return {
                 "status": "error",
                 "message": str(e)
-            } 
+            }
+
+async def setup_connection(connection_type=None):
+    """Set up the connection to the device using the specified connection type"""
+    from FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+    journaling_manager = SystemJournelingManager()
+    
+    journaling_manager.recordInfo(f"Mind setting up connection of type: {connection_type}")
+    
+    if connection_type:
+        # Forward to SynapticPathways
+        try:
+            await SynapticPathways.set_device_mode(connection_type)
+            return True
+        except Exception as e:
+            journaling_manager.recordError(f"Error setting up connection: {e}")
+            return False
+    else:
+        journaling_manager.recordInfo("No connection type specified, using default")
+        return await SynapticPathways.initialize() 

@@ -17,11 +17,12 @@ import subprocess
 project_root = str(Path(__file__).parent)
 sys.path.append(project_root)
 
-from Mind.mind import Mind
+from Mind.mind import Mind, setup_connection
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.menu_system import run_menu_system
+from Mind.CorpusCallosum.transport_layer import run_adb_command, get_transport
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
@@ -234,27 +235,30 @@ async def run_frontal_cortex_test(mind: Mind) -> None:
         logger.error(f"Frontal cortex test error: {e}")
         raise
 
-async def run_menu(mind: Mind) -> None:
+async def run_menu(mind: Mind, connection_type: str) -> None:
     """Run the interactive menu system"""
+    was_initialized = SynapticPathways._initialized
+    
     try:
         logger.info("Starting interactive menu system...")
         
         # Ensure the connection is initialized if not done already
         if not SynapticPathways._initialized:
             logger.info("Initializing SynapticPathways for menu system...")
-            await SynapticPathways.initialize()
+            await SynapticPathways.initialize(connection_type)
         
         # Run the menu system with the Mind instance
         await run_menu_system(mind=mind)
-        
-        # Clean up after menu system exits
-        logger.info("Menu system exited, cleaning up...")
-        await SynapticPathways.cleanup()
         
     except Exception as e:
         logger.error(f"Menu system error: {e}")
         logger.exception("Full exception details:")
         raise
+    finally:
+        # Only clean up if we initialized it in this function
+        if not was_initialized and SynapticPathways._initialized:
+            logger.info("Menu system exited, cleaning up...")
+            await SynapticPathways.cleanup()
 
 def parse_args():
     """Parse command line arguments"""
@@ -295,11 +299,11 @@ Each mode provides direct interaction with its respective subsystem.""",
     
     parser.add_argument(
         '--connection',
-        choices=['serial', 'adb', 'wifi'],
+        choices=['serial', 'adb', 'tcp'],
         help="""Select connection mode:
-  serial - Direct USB connection
-  adb    - Android Debug Bridge
-  wifi   - WiFi connection"""
+serial - Direct USB connection
+adb    - Android Debug Bridge
+tcp    - TCP/IP network connection"""
     )
     
     parser.add_argument(
@@ -339,38 +343,14 @@ async def main():
             
         # Set connection mode if specified
         if args.connection:
-            print(f"\n🔍 Setting connection mode to {args.connection}...")
-            
-            # Set up ADB port forwarding if ADB mode is selected
-            if args.connection == "adb":
-                print("Setting up ADB port forwarding...")
-                try:
-                    # First ensure ADB server is running
-                    subprocess.run(["adb", "start-server"], capture_output=True)
-                    
-                    # Check for connected devices
-                    device_result = subprocess.run(
-                        ["adb", "devices"],
-                        capture_output=True,
-                        text=True
-                    )
-                    print(f"ADB devices found:\n{device_result.stdout}")
-                    
-                    # Set up port forwarding from local port 5555 to device port 5555
-                    result = subprocess.run(
-                        ["adb", "forward", "tcp:5555", "tcp:5555"],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0:
-                        print(f"ADB port forwarding set up successfully: tcp:5555 -> tcp:5555")
-                        print(f"Connection will use localhost:5555 via ADB")
-                    else:
-                        print(f"Error setting up ADB port forwarding: {result.stderr}")
-                except Exception as e:
-                    print(f"Failed to set up ADB port forwarding: {e}")
-            
-            await SynapticPathways.set_device_mode(args.connection)
+            print("\n🔍 Setting connection mode to {}...".format(args.connection))
+            try:
+                if await setup_connection(args.connection):
+                    print(f"{args.connection.capitalize()} connection established successfully")
+                else:
+                    print(f"Failed to establish {args.connection} connection")
+            except Exception as e:
+                print(f"Error setting up connection: {e}")
             
         penphin = PenphinMind()
         
@@ -381,16 +361,30 @@ async def main():
                 await run_auditory_cortex_test(penphin.mind)
             elif args.mode == 'fc':
                 # Use the new menu system when in frontal cortex mode
-                await run_menu(penphin.mind)
+                await run_menu(penphin.mind, args.connection)
             elif args.mode == 'full':
                 await penphin.run()
         else:
             # Default to menu system if no mode specified
-            await run_menu(penphin.mind)
+            await run_menu(penphin.mind, args.connection)
             
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
+
+# Add this where the program exits or in a signal handler
+async def shutdown():
+    """Clean up resources before shutdown"""
+    try:
+        # Import here to avoid circular imports
+        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+        await SynapticPathways.final_shutdown()
+        print("All connections and port forwarding cleaned up.")
+    except Exception as e:
+        print(f"Error during shutdown cleanup: {e}")
+
+# Make sure this is called when the program exits
+# For example, at the end of main() or in a signal handler
 
 if __name__ == "__main__":
     asyncio.run(main()) 
