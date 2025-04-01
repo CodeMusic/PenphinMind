@@ -242,29 +242,13 @@ class AssociativeVisualArea:
             journaling_manager.recordError(f"Error animating gear: {e}")
             raise
 
-    async def process_patterns(self, visual_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process visual patterns in the input data
-        
-        Args:
-            visual_data: Dictionary containing visual data to process
-            
-        Returns:
-            Dict[str, Any]: Processing result containing pattern analysis
-        """
-        journaling_manager.recordScope("AssociativeVisualArea.process_patterns", visual_data=visual_data)
-        try:
-            journaling_manager.recordDebug("Starting pattern processing")
-            
-            # Process visual data
-            result = {"status": "ok", "message": "Patterns processed"}
-            
-            journaling_manager.recordInfo("Successfully processed visual patterns")
-            return result
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error processing patterns: {e}")
-            return {"status": "error", "message": str(e)}
+    async def process_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process data received from other cortical areas"""
+        if "visualization" in data:
+            # Handle visualization data
+            return await self.update_llm_visualization(data["content"])
+        # Handle other data types...
+        return {"status": "ok"}
         
     async def draw_penphin(
         self,

@@ -370,7 +370,7 @@ async def start_chat():
             }
             
             # Send inference command
-            response = await SynapticPathways.transmit_json(inference_command)
+            response = await SynapticPathways.think_with_visualization(user_input)
             journaling_manager.recordInfo(f"LLM inference response: {response}")
             
             # Check for errors

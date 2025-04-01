@@ -21,7 +21,6 @@ import logging
 from typing import Dict, Any, Optional
 from ...config import CONFIG
 from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import (
     LLMCommand, TTSCommand, ASRCommand, VADCommand, WhisperCommand,
     CommandType, BaseCommand, SystemCommand
@@ -31,6 +30,11 @@ import traceback
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
+
+def get_synaptic_pathways():
+    """Get the SynapticPathways class, avoiding circular imports"""
+    from ...CorpusCallosum.synaptic_pathways import SynapticPathways
+    return SynapticPathways
 
 class LLM:
     """Handles language model interactions"""
@@ -63,6 +67,7 @@ class LLM:
             journaling_manager.recordDebug(f"LLM model configured: {self.current_state['model']}")
             
             # Initialize synaptic pathways for hardware communication
+            SynapticPathways = get_synaptic_pathways()
             await SynapticPathways.initialize()
             
             # Register as an integration area for command handling
@@ -145,6 +150,7 @@ class LLM:
             journaling_manager.recordInfo(f"Sending LLM inference command: {command}")
             
             # Send command through synaptic pathways
+            SynapticPathways = get_synaptic_pathways()
             response = await SynapticPathways.send_command(command)
             
             journaling_manager.recordDebug(f"LLM response: {response}")
@@ -219,6 +225,7 @@ class LLM:
                 speed=speed,
                 pitch=pitch
             )
+            SynapticPathways = get_synaptic_pathways()
             return await SynapticPathways.send_command(command.to_dict())
         except Exception as e:
             journaling_manager.recordError(f"Error sending TTS command: {e}")
@@ -233,6 +240,7 @@ class LLM:
                 language=language,
                 model_type=model_type
             )
+            SynapticPathways = get_synaptic_pathways()
             return await SynapticPathways.send_command(command.to_dict())
         except Exception as e:
             journaling_manager.recordError(f"Error sending ASR command: {e}")
@@ -247,6 +255,7 @@ class LLM:
                 threshold=threshold,
                 frame_duration=frame_duration
             )
+            SynapticPathways = get_synaptic_pathways()
             return await SynapticPathways.send_command(command.to_dict())
         except Exception as e:
             journaling_manager.recordError(f"Error sending VAD command: {e}")
@@ -261,6 +270,7 @@ class LLM:
                 language=language,
                 model_type=model_type
             )
+            SynapticPathways = get_synaptic_pathways()
             return await SynapticPathways.send_command(command.to_dict())
         except Exception as e:
             journaling_manager.recordError(f"Error sending Whisper command: {e}")

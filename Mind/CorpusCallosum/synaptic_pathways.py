@@ -48,6 +48,8 @@ from Mind.CorpusCallosum.command_loader import CommandLoader
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager, SystemJournelingLevel
 from Mind.CorpusCallosum.transport_layer import get_transport, ConnectionError, CommandError, run_adb_command
+from Mind.Subcortex.BasalGanglia.basal_ganglia_integration import BasalGangliaIntegration
+from Mind.Subcortex.BasalGanglia.tasks.display_visual_task import DisplayVisualTask
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager(CONFIG.log_level)
@@ -91,6 +93,10 @@ class SynapticPathways:
     _transport = None
     _active_operation = False  # Tracks if an operation is in progress
     _final_shutdown = False    # Indicates this is the final application shutdown
+    _basal_ganglia = None
+    _brain_mode = None  # Brain region mode from run.py (vc, ac, fc, full)
+    _ui_mode = None     # UI mode for visualization (will be derived from brain mode)
+    _cortex_communication_enabled = True  # Enable communication between cortices
     
     def __init__(self):
         """Initialize the synaptic pathways"""
@@ -118,34 +124,79 @@ class SynapticPathways:
 
     @classmethod
     def set_mode(cls, mode: str) -> None:
-        """Set operational mode from command line argument"""
-        cls._mode = mode
+        """
+        Set the brain region mode from command line arguments
+        
+        Args:
+            mode: Brain region mode ('vc', 'ac', 'fc', 'full')
+        """
+        if mode not in ["vc", "ac", "fc", "full"]:
+            journaling_manager.recordWarning(f"Unknown brain mode: {mode}, defaulting to 'fc'")
+            mode = "fc"
+        
+        cls._brain_mode = mode
         journaling_manager.recordInfo(f"Operational mode set to: {mode}")
+        
+        # Automatically derive the UI mode based on brain mode
+        if mode == "full":
+            cls._ui_mode = "full"  # Full pixel visualization for full brain mode
+            cls._cortex_communication_enabled = True
+            journaling_manager.recordInfo("UI mode set to 'full' with cortex communication enabled")
+        elif mode == "fc":
+            cls._ui_mode = "fc"  # Text visualization for frontal cortex mode
+            journaling_manager.recordInfo("UI mode set to 'fc' (text visualization)")
+        elif mode == "vc":
+            cls._ui_mode = "full"  # Visual cortex mode should use full visualization
+            journaling_manager.recordInfo("UI mode set to 'full' for visual cortex tests")
+        else:
+            cls._ui_mode = "headless"  # Headless for other modes
+            journaling_manager.recordInfo("UI mode set to 'headless' (no visualization)")
 
     @classmethod
     async def initialize(cls, connection_type=None):
-        """Initialize the SynapticPathways system"""
+        """Initialize the SynapticPathways system."""
         journaling_manager.recordInfo(f"Initializing SynapticPathways with connection type: {connection_type}")
         
-        # If already initialized with the same transport type, don't reinitialize
-        if cls._initialized and cls._transport and connection_type == cls._connection_type:
-            journaling_manager.recordInfo(f"Already initialized with {connection_type} - reusing connection")
-            return True
-        
-        # If connection type is specified, set device mode
-        if connection_type:
-            await cls.set_device_mode(connection_type)
-            return cls._initialized
-        
-        # Try to use existing connection if available
-        if cls._connection_type:
-            journaling_manager.recordInfo(f"Using existing connection mode: {cls._connection_type}")
-            if not cls._initialized:
-                await cls.set_device_mode(cls._connection_type)
-                return cls._initialized
-        
-        # No connection specified and none exists
-        journaling_manager.recordError("No connection type specified and no existing connection")
+        try:
+            # Get BG integration
+            bg = cls.get_basal_ganglia()
+            
+            # Get communication task - use get_communication_task or direct _tasks access
+            if hasattr(bg, "get_communication_task"):
+                comm_task = bg.get_communication_task()
+            else:
+                # Fallback to direct task access if method doesn't exist
+                comm_task = bg._tasks.get("CommunicationTask")
+                if not comm_task:
+                    # Create it if needed
+                    from Mind.Subcortex.BasalGanglia.tasks.communication_task import CommunicationTask
+                    comm_task = CommunicationTask(priority=1)
+                    bg.add_task(comm_task)
+            
+            # Initialize communication
+            if connection_type and comm_task:
+                journaling_manager.recordInfo(f"Initializing communication with {connection_type}")
+                success = await comm_task.initialize(connection_type)
+                cls._initialized = success
+                cls._connection_type = connection_type if success else None
+                
+                if success:
+                    journaling_manager.recordInfo(f"Successfully connected using {connection_type}")
+                    return True
+            
+            # Try existing connection
+            elif cls._connection_type and comm_task:
+                return await comm_task.initialize(cls._connection_type)
+            
+            # No connection specified
+            else:
+                journaling_manager.recordError("No connection type specified and no existing connection")
+                return False
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error initializing SynapticPathways: {e}")
+            import traceback
+            journaling_manager.recordError(f"Traceback: {traceback.format_exc()}")
         return False
 
     @classmethod
@@ -277,16 +328,22 @@ class SynapticPathways:
     async def cleanup(cls) -> None:
         """Clean up resources before establishing a new connection or shutting down"""
         if not cls._initialized or not cls._transport:
-            # Nothing to clean up
-            return
-        
-        try:
-            # Disconnect the transport
-            journaling_manager.recordInfo(f"Disconnecting {cls._connection_type} transport...")
-            await cls._transport.disconnect()
-            journaling_manager.recordInfo("Transport disconnected successfully")
-        except Exception as e:
-            journaling_manager.recordError(f"Error during transport cleanup: {e}")
+            # Nothing to clean up in terms of transport
+            pass
+        else:
+            try:
+                # Disconnect the transport
+                journaling_manager.recordInfo(f"Disconnecting {cls._connection_type} transport...")
+                await cls._transport.disconnect()
+                journaling_manager.recordInfo("Transport disconnected successfully")
+            except Exception as e:
+                journaling_manager.recordError(f"Error during transport cleanup: {e}")
+                    
+            # Shutdown BasalGanglia if it exists
+            if cls._basal_ganglia:
+                journaling_manager.recordInfo("Shutting down BasalGanglia task system")
+                cls._basal_ganglia.shutdown()
+                cls._basal_ganglia = None
         
         # Reset state
         cls._transport = None
@@ -297,37 +354,22 @@ class SynapticPathways:
 
     @classmethod
     async def transmit_json(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Transmit a command as JSON and get response"""
-        if not cls._initialized or not cls._transport:
-            raise ConnectionError("Transport not initialized")
+        """
+        Transmit a command as JSON and get response using CommunicationTask
         
+        This method is kept for backward compatibility but uses CommunicationTask
+        """
         try:
-            # Mark operation as active
-            cls._active_operation = True
+            # Get communication task
+            bg = cls.get_basal_ganglia()
+            comm_task = bg.get_communication_task()
             
-            # Log the command type
-            command_type = command.get("action")
-            journaling_manager.recordInfo(f"Command type: {command_type}")
+            # Send command
+            return await comm_task.send_command(command)
             
-            # Log the full JSON request at debug level
-            journaling_manager.recordDebug(f"[JSON REQUEST] {json.dumps(command)}")
-            
-            # Transmit the command
-            response = await cls._transport.transmit(command)
-            
-            # Log the full JSON response at debug level
-            journaling_manager.recordDebug(f"[JSON RESPONSE] {json.dumps(response)}")
-            
-            return response
         except Exception as e:
             journaling_manager.recordError(f"Error in transmit_json: {e}")
-            # Get detailed error information
-            error_details = traceback.format_exc()
-            journaling_manager.recordError(f"Error details: {error_details}")
             raise CommandTransmissionError(f"Failed to transmit command: {e}")
-        finally:
-            # Mark operation as complete
-            cls._active_operation = False
 
     @classmethod
     async def send_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -337,16 +379,13 @@ class SynapticPathways:
         command_type = command.get("type", "")
         command_action = command.get("command", "")
         
-        # Handle LLM commands
+        # Handle LLM commands through BasalGanglia
         if command_type == "LLM":
             # Get a timestamp for request ID
             request_id = command.get("data", {}).get("request_id", f"llm_{int(time.time())}")
             
-            # Generate a work ID if none provided
-            work_id = f"llm.{int(time.time())}"
-            
+            # For setup commands, still use direct API as these configure the LLM system
             if command_action == "setup":
-                # Setup LLM with specified parameters
                 setup_data = command.get("data", {})
                 setup_command = {
                     "request_id": request_id,
@@ -364,40 +403,15 @@ class SynapticPathways:
                 }
                 return await cls.transmit_json(setup_command)
                 
+            # For actual generation, use the ThinkTask
             elif command_action == "generate":
-                # Inference with user input
                 prompt = command.get("data", {}).get("prompt", "")
-                inference_command = {
-                    "request_id": request_id,
-                    "work_id": work_id,
-                    "action": "inference",
-                    "object": "llm.utf-8",
-                    "data": {
-                        "input": prompt
-                    }
-                }
-                return await cls.transmit_json(inference_command)
-                
-            elif command_action == "exit":
-                # Exit LLM session
-                exit_command = {
-                    "request_id": request_id,
-                    "work_id": work_id,
-                    "action": "exit"
-                }
-                return await cls.transmit_json(exit_command)
-                
-            elif command_action == "status":
-                # Get LLM status
-                status_command = {
-                    "request_id": request_id,
-                    "work_id": work_id,
-                    "action": "taskinfo"
-                }
-                return await cls.transmit_json(status_command)
+                # Use BasalGanglia for thinking tasks
+                return await cls.think(prompt, stream=True)
             
+            # Other LLM command types can be handled similarly
             else:
-                # Unknown command
+                # Continue with existing implementation for other actions
                 return {
                     "error": {
                         "code": 1,
@@ -419,32 +433,17 @@ class SynapticPathways:
     async def send_system_command(cls, command_type: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Send a system command through the synaptic pathways"""
         journaling_manager.recordScope("SynapticPathways.send_system_command", command_type=command_type, data=data)
+        
         try:
-            # Map common system command types to proper API actions
-            api_action = command_type
-            api_object = "None"
+            # Use BasalGanglia for task management
+            task = cls.get_basal_ganglia().system_command(command_type, data)
             
-            # Map command types to specific API actions and objects
-            if command_type in ["status", "get_model_info"]:
-                api_object = "llm"
-            elif command_type == "reboot":
-                api_object = "system"
-                
-            # Create system command in proper format
-            command_dict = {
-                "request_id": f"sys_{command_type}_{int(time.time())}",
-                "work_id": "sys",
-                "action": api_action,
-                "object": api_object,
-                "data": data if data else None  # Use None instead of "None" string
-            }
+            # Wait for task to complete (this is a blocking operation)
+            while task.active or not task.has_completed():
+                await asyncio.sleep(0.1)
             
-            # Send command
-            journaling_manager.recordInfo(f"Sending system command: {command_dict}")
-            response = await cls.transmit_json(command_dict)
-            journaling_manager.recordDebug(f"System command processed: {response}")
-            
-            return response
+            # Return task result
+            return task.result if task.result is not None else {"error": "Task completed with no result"}
             
         except Exception as e:
             journaling_manager.recordError(f"Error sending system command: {e}")
@@ -499,7 +498,13 @@ class SynapticPathways:
     async def transmit_command(cls, command: BaseCommand) -> Dict[str, Any]:
         """Transmit a command object directly"""
         try:
-            # Serialize command to JSON format
+            # If it's an LLM command, use the think task
+            if command.command_type == CommandType.LLM:
+                llm_command = command.to_dict()
+                prompt = llm_command.get("data", {}).get("prompt", "")
+                return await cls.think(prompt, stream=llm_command.get("data", {}).get("stream", False))
+            
+            # For other commands, use existing logic
             command_dict = CommandSerializer.serialize(command)
             return await cls.transmit_json(command_dict)
             
@@ -598,227 +603,134 @@ class SynapticPathways:
 
     @classmethod
     async def get_hardware_info(cls) -> Dict[str, Any]:
-        """Get hardware information (CPU load, memory usage, temperature) from the device"""
-        journaling_manager.recordInfo("\nRetrieving hardware information...")
-        
-        # Return cached info if not connected
-        if not cls._initialized:
-            journaling_manager.recordInfo("System not initialized - hardware info not available")
-            return cls.current_hw_info
-        
-        if not cls._transport:
-            journaling_manager.recordInfo("Transport layer not initialized - creating it now")
-            # Try to create the transport if it's null but we're supposed to be initialized
-            if cls._connection_type:
-                try:
-                    cls._transport = get_transport(cls._connection_type)
-                    if not await cls._transport.connect():
-                        journaling_manager.recordError(f"Failed to connect with {cls._connection_type}")
-                        return cls.current_hw_info
-                except Exception as e:
-                    journaling_manager.recordError(f"Error creating transport: {e}")
-                    return cls.current_hw_info
-            else:
-                journaling_manager.recordInfo("No connection type specified - using cached info")
-                return cls.current_hw_info
+        """Get hardware information without forcing a refresh."""
+        journaling_manager.recordDebug("[SynapticPathways] Getting hardware info")
         
         try:
-            # Create hardware info command according to the API spec
-            hw_info_command = {
-                "request_id": f"hwinfo_{int(time.time())}",
-                "work_id": "sys",
-                "action": "hwinfo",  
-                "object": "system"
-            }
+            # Get hardware info task
+            bg = cls.get_basal_ganglia()
+            hw_task = bg.get_hardware_info_task()
             
-            # Send command with error handling
-            journaling_manager.recordInfo(f"Sending hardware info request via {cls._connection_type}...")
-            response = await cls.transmit_json(hw_info_command)
-            
-            # Guard against None response
-            if response is None:
-                journaling_manager.recordError("Received None response from hardware info request")
+            if not hw_task:
+                journaling_manager.recordError("[SynapticPathways] ❌ Hardware info task not found")
                 return cls.current_hw_info
             
-            # Debug the response
-            journaling_manager.recordInfo(f"Hardware info response type: {type(response)}")
-            if isinstance(response, dict):
-                journaling_manager.recordInfo(f"Response keys: {list(response.keys())}")
-            else:
-                journaling_manager.recordInfo(f"Response: {response}")
+            # Return current cached info without forcing refresh
+            hw_info = hw_task.hardware_info
+            journaling_manager.recordDebug(f"[SynapticPathways] 📊 Retrieved hardware info: {hw_info}")
+            return hw_info
             
-            # Parse the response with better error handling
-            if response and isinstance(response, dict) and "data" in response:
-                data = response.get("data", {})
-                
-                # Guard against None data
-                if data is None:
-                    data = {}
-                    journaling_manager.recordWarning("Received None in data field, using empty dict")
-                
-                # Get IP address
-                ip_address = "N/A"
-                if cls._connection_type == "tcp" and hasattr(cls._transport, 'ip'):
-                    ip_address = cls._transport.ip
-                elif "eth_info" in data and isinstance(data["eth_info"], list) and len(data["eth_info"]) > 0:
-                    eth_info = data["eth_info"][0]
-                    if "ip" in eth_info:
-                        ip_address = eth_info["ip"]
-                
-                # Create hardware info dict with proper key names from actual response
-                hw_info = {
-                    "cpu_load": f"{data.get('cpu_loadavg', 0)}%",  # Use cpu_loadavg
-                    "memory_usage": f"{data.get('mem', 0)}%",  # Use mem
-                    "temperature": f"{float(data.get('temperature', 0))/1000:.1f}°C",  # Temperature is in millidegrees C
-                    "ip_address": ip_address,
-                    "timestamp": int(time.time())
-                }
-                
-                # Update cached hardware info
-                cls.current_hw_info = hw_info
-                journaling_manager.recordInfo(f"Updated hardware info: {hw_info}")
-                return hw_info
-            else:
-                journaling_manager.recordError("Invalid hardware info response format")
-                return cls.current_hw_info
         except Exception as e:
-            journaling_manager.recordError(f"Error retrieving hardware info: {e}")
-            import traceback
-            journaling_manager.recordError(f"Stack trace: {traceback.format_exc()}")
-            return cls.current_hw_info
+            journaling_manager.recordError(f"[SynapticPathways] ❌ Error getting hardware info: {e}")
+            journaling_manager.recordError(f"[SynapticPathways] Stack trace: {traceback.format_exc()}")
+            return cls.current_hw_info  # Fallback to cached info
 
     @classmethod
     def format_hw_info(cls) -> str:
-        """Format hardware info for display at the start of chat"""
-        hw = cls.current_hw_info
-        
-        # Format timestamp as readable time
-        timestamp = hw.get("timestamp", 0)
-        time_str = time.strftime("%H:%M:%S", time.localtime(timestamp)) if timestamp else "N/A"
-        
-        # Get IP address
-        ip_address = hw.get("ip_address", "N/A")
-        ip_display = f"IP: {ip_address} | " if ip_address != "N/A" else ""
-        
-        # Format the hardware info in the requested format
-        info_str = f"""~
-{ip_display}CPU: {hw.get('cpu_load', 'N/A')} | Memory: {hw.get('memory_usage', 'N/A')} | Temp: {hw.get('temperature', 'N/A')} | Updated: {time_str}
+        """Format hardware info with proper field names and unit conversions."""
+        try:
+            # Get hardware info task
+            bg = cls.get_basal_ganglia()
+            hw_task = bg.get_hardware_info_task() if hasattr(bg, "get_hardware_info_task") else None
+            
+            # Get current info - either from task or fallback
+            hw = hw_task.hardware_info if hw_task else cls.current_hw_info
+            
+            # Format timestamp
+            timestamp = hw.get("timestamp", 0)
+            time_str = time.strftime("%H:%M:%S", time.localtime(timestamp)) if timestamp else "N/A"
+            
+            # Get CPU and memory with exact field names from API
+            cpu = hw.get("cpu_loadavg", "N/A")
+            mem = hw.get("mem", "N/A")
+            
+            # Handle temperature conversion from millidegrees to degrees
+            # API returns temperature in millidegrees (e.g., 39350 = 39.35°C)
+            temp_millideg = hw.get("temperature", 0)
+            if isinstance(temp_millideg, str):
+                try:
+                    temp_millideg = int(temp_millideg)
+                except (ValueError, TypeError):
+                    temp_millideg = 0
+            
+            # Convert temperature to degrees with proper formatting
+            if temp_millideg:
+                temp_c = f"{temp_millideg/1000:.1f}"  # Format to one decimal place
+            else:
+                temp_c = "N/A"
+            
+            # Format IP if available
+            ip_address = hw.get("ip_address", "N/A")
+            ip_display = f"IP: {ip_address} | " if ip_address != "N/A" else ""
+            
+            # Create the formatted string
+            return f"""~
+{ip_display}CPU: {cpu}% | Memory: {mem}% | Temp: {temp_c}°C | Updated: {time_str}
 ~"""
-        
-        return info_str
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error formatting hardware info: {e}")
+            import traceback
+            journaling_manager.recordError(f"Traceback: {traceback.format_exc()}")
+            
+            # Emergency fallback with empty values
+            return "~\nCPU: N/A | Memory: N/A | Temp: N/A | Updated: N/A\n~"
 
     @classmethod
     async def get_available_models(cls) -> List[Dict[str, Any]]:
-        """Get a list of available models from the device using lsmode command"""
-        # Check if initialized
-        if not cls._initialized or not cls._transport:
-            journaling_manager.recordInfo("Transport not initialized, returning cached models")
-            return cls.available_models
-        
-        journaling_manager.recordInfo("\nGetting available models with lsmode command...")
+        """Get available models with proper error handling."""
+        journaling_manager.recordInfo("[SynapticPathways] 🔍 Getting available models")
         
         try:
-            # Create lsmode command per API spec
-            lsmode_command = {
-                "request_id": f"lsmode_{int(time.time())}",
-                "work_id": "sys",
-                "action": "lsmode",  # API uses lsmode, not get_model_info
-                "object": "system"
-            }
+            # Get model management task
+            bg = cls.get_basal_ganglia()
             
-            # Send the command
-            journaling_manager.recordInfo(f"Sending lsmode request via {cls._connection_type}...")
-            response = await cls.transmit_json(lsmode_command)
-            
-            if response is None:
-                journaling_manager.recordError("Received None response from lsmode request")
+            if not bg:
+                journaling_manager.recordError("[SynapticPathways] ❌ BasalGanglia not initialized")
                 return cls.available_models
             
-            # Parse data array from response
-            model_list = []
+            # Get model task
+            model_task = bg.get_model_management_task() if hasattr(bg, "get_model_management_task") else None
             
-            if isinstance(response, dict) and "data" in response:
-                data = response["data"]
-                
-                if isinstance(data, list):
-                    journaling_manager.recordInfo(f"Found {len(data)} total models")
-                    
-                    # Process all models in the data array
-                    for model_entry in data:
-                        if not isinstance(model_entry, dict):
-                            continue
-                        
-                        # Store the complete model entry directly without modifying field names
-                        # This preserves the original field names like "mode" instead of renaming
-                        model_list.append(model_entry)
-                        
-                        # Log the model 
-                        journaling_manager.recordInfo(f"Added model: {model_entry.get('mode', 'Unknown')} (type: {model_entry.get('type', 'Unknown')}, capabilities: {', '.join(model_entry.get('capabilities', []))})")
+            if not model_task:
+                journaling_manager.recordError("[SynapticPathways] ❌ ModelManagementTask not found")
+                return cls.available_models
             
-            # Update available models if we found any
-            if model_list:
-                journaling_manager.recordInfo(f"Updated model cache with {len(model_list)} models")
-                cls.available_models = model_list
-                
-                # Set default model if not already set - prefer LLM type models
-                if not cls.default_llm_model:
-                    # Try to find LLM models first
-                    llm_models = [m for m in model_list if m.get("type", "").lower() == "llm"]
-                    if llm_models:
-                        cls.default_llm_model = llm_models[0].get("mode", "")
-                        journaling_manager.recordInfo(f"Set default LLM model to: {cls.default_llm_model}")
-                    elif model_list:
-                        cls.default_llm_model = model_list[0].get("mode", "")
-                        journaling_manager.recordInfo(f"No LLM models found, using first model: {cls.default_llm_model}")
-                
-                return model_list
+            # Request models
+            journaling_manager.recordInfo("[SynapticPathways] 🔄 Requesting models from task")
+            models = await model_task.get_available_models()
             
+            # Check if we got models
+            if models and len(models) > 0:
+                journaling_manager.recordInfo(f"[SynapticPathways] ✅ Retrieved {len(models)} models")
+                cls.available_models = models
+                return models
+            else:
+                journaling_manager.recordWarning("[SynapticPathways] ⚠️ No models returned, using cached models")
             return cls.available_models
             
         except Exception as e:
-            journaling_manager.recordError(f"Error retrieving model info: {e}")
-            journaling_manager.recordError(f"Stack trace: {traceback.format_exc()}")
+            journaling_manager.recordError(f"[SynapticPathways] ❌ Error getting models: {e}")
+            import traceback
+            journaling_manager.recordError(f"[SynapticPathways] Stack trace: {traceback.format_exc()}")
             return cls.available_models
 
     @classmethod
     async def set_active_model(cls, model_name: str) -> bool:
-        """Set the active model for LLM operations"""
-        journaling_manager.recordInfo(f"\nSetting active model to: {model_name}")
-        
-        if not cls._initialized:
-            journaling_manager.recordError("Cannot set model - not connected")
-            return False
-        
+        """Set active model using ModelManagementTask"""
         try:
-            # Create model setup command
-            setup_command = {
-                "request_id": f"setup_{int(time.time())}",
-                "work_id": "sys",
-                "action": "setup",
-                "object": "llm.setup",
-                "data": {
-                    "model": model_name,
-                    "response_format": "llm.utf-8",
-                    "input": "llm.utf-8",
-                    "enoutput": True,
-                    "enkws": False,
-                    "max_token_len": 127,
-                    "prompt": "You are a helpful assistant named Penphin."
-                }
-            }
+            # Get model management task
+            bg = cls.get_basal_ganglia()
+            model_task = bg.get_model_management_task()
             
-            # Send setup command
-            response = await cls.transmit_json(setup_command)
-            journaling_manager.recordInfo(f"Model setup response: {response}")
+            # Set active model
+            success = await model_task.set_active_model(model_name)
             
-            # Check if setup was successful
-            if response and not response.get("error", {}).get("code", 0):
+            # Update default model if successful
+            if success:
                 cls.default_llm_model = model_name
-                return True
-            else:
-                error_msg = response.get("error", {}).get("message", "Unknown error")
-                journaling_manager.recordError(f"Failed to set active model: {error_msg}")
-                return False
+                
+            return success
                 
         except Exception as e:
             journaling_manager.recordError(f"Error setting active model: {e}")
@@ -826,45 +738,15 @@ class SynapticPathways:
 
     @classmethod
     async def reset_llm(cls) -> bool:
-        """Reset the LLM system"""
-        journaling_manager.recordInfo("\nResetting LLM...")
-        
-        if not cls._initialized:
-            journaling_manager.recordError("Cannot reset LLM - not connected")
-            return False
-        
+        """Reset LLM using ModelManagementTask"""
         try:
-            # Create reset command in the correct format
-            reset_command = {
-                "request_id": f"reset_{int(time.time())}",
-                "work_id": "sys",
-                "action": "reset",
-                "object": "system"  # Use "system" not "sys"
-            }
+            # Get model management task
+            bg = cls.get_basal_ganglia()
+            model_task = bg.get_model_management_task()
             
-            # Send reset command
-            journaling_manager.recordInfo("Sending reset command...")
-            response = await cls.transmit_json(reset_command)
-            journaling_manager.recordInfo(f"Reset response: {response}")
+            # Reset LLM
+            return await model_task.reset_llm()
             
-            # Check if reset was successful - error code 0 means success
-            if response and response.get("error", {}).get("code", -1) == 0:
-                # API shows message will be "llm server restarting ..."
-                message = response.get("error", {}).get("message", "")
-                journaling_manager.recordInfo(f"Reset successful: {message}")
-                
-                # Clear model cache to force refresh
-                cls.available_models = []
-                cls.default_llm_model = ""
-                
-                # Wait a moment for the reset to complete
-                await asyncio.sleep(3)
-                
-                return True
-            else:
-                error_msg = response.get("error", {}).get("message", "Unknown error")
-                journaling_manager.recordError(f"Failed to reset LLM: {error_msg}")
-                return False
         except Exception as e:
             journaling_manager.recordError(f"Error resetting LLM: {e}")
             return False
@@ -962,33 +844,449 @@ class SynapticPathways:
 
     @classmethod
     async def ping_system(cls) -> bool:
-        """Test the connection with a ping command"""
+        """Test the connection with a ping command."""
         journaling_manager.recordInfo("\nPinging system...")
         
-        if not cls._initialized or not cls._transport:
+        if not cls._initialized:
             journaling_manager.recordError("Cannot ping - not connected")
             return False
         
         try:
-            # Create ping command in the correct format
-            ping_command = {
-                "request_id": f"ping_{int(time.time())}",
-                "work_id": "sys",
-                "action": "ping",
-                "object": "system",
-                "data": None
-            }
-            
-            # Send ping command
-            response = await cls.transmit_json(ping_command)
-            
-            # Check for successful response
-            if response and response.get("error", {}).get("code", -1) == 0:
-                journaling_manager.recordInfo("Ping successful!")
-                return True
+            # Get the system command task using the correct method
+            bg = cls.get_basal_ganglia()
+            # Try both methods in case one exists
+            if hasattr(bg, "get_system_command_task"):
+                system_task = bg.get_system_command_task()
+            elif hasattr(bg, "get_task"):
+                system_task = bg.get_task("SystemCommandTask")
             else:
-                journaling_manager.recordError("Ping failed")
+                # Direct access to _tasks if neither method exists
+                system_task = bg._tasks.get("SystemCommandTask")
+            
+            if not system_task:
+                journaling_manager.recordError("System command task not found")
                 return False
+            
+            # Configure task for ping
+            system_task.command = "ping"
+            system_task.data = None
+            system_task.completed = False
+            system_task.active = True
+            
+            # Wait for task to complete
+            max_wait = 5  # seconds
+            start_time = time.time()
+            
+            while not system_task.completed and (time.time() - start_time) < max_wait:
+                await asyncio.sleep(0.1)
+            
+            # Check result
+            if system_task.completed and system_task.result:
+                success = system_task.result.get("success", False)
+                journaling_manager.recordInfo(f"Ping {'successful' if success else 'failed'}")
+                return success
+            else:
+                journaling_manager.recordError("Ping timed out or failed")
+                return False
+            
         except Exception as e:
             journaling_manager.recordError(f"Error pinging system: {e}")
+            import traceback
+            journaling_manager.recordError(f"Ping traceback: {traceback.format_exc()}")
             return False
+
+    @classmethod
+    def get_basal_ganglia(cls):
+        """Get or create the BasalGanglia instance."""
+        if cls._basal_ganglia is None:
+            journaling_manager.recordInfo("[SynapticPathways] 🏗️ Creating new BasalGanglia instance")
+            
+            # Import here to avoid circular imports
+            from Mind.Subcortex.BasalGanglia.basal_ganglia_integration import BasalGangliaIntegration
+            cls._basal_ganglia = BasalGangliaIntegration()
+            
+            # Verify initialization
+            if hasattr(cls._basal_ganglia, "_tasks") and cls._basal_ganglia._tasks:
+                task_names = list(cls._basal_ganglia._tasks.keys())
+                journaling_manager.recordInfo(f"[SynapticPathways] ✅ BasalGanglia initialized with tasks: {task_names}")
+            else:
+                journaling_manager.recordWarning("[SynapticPathways] ⚠️ BasalGanglia may not be fully initialized")
+        
+        return cls._basal_ganglia
+
+    @classmethod
+    async def think(cls, prompt: str, stream: bool = False) -> Dict[str, Any]:
+        """Use BasalGanglia to perform a thinking task with LLM"""
+        journaling_manager.recordInfo(f"Initiating thinking task: {prompt[:50]}...")
+        
+        try:
+            # Register thinking task
+            task = cls.get_basal_ganglia().think(prompt, stream)
+            
+            # Wait for task to complete
+            while task.active or not task.has_completed():
+                await asyncio.sleep(0.1)
+            
+            # Return thinking result
+            return task.result
+        except Exception as e:
+            journaling_manager.recordError(f"Error in thinking task: {e}")
+            return {"error": str(e)}
+
+    @classmethod
+    def display_visual(cls, content: str = None, display_type: str = "text", 
+                      visualization_type: str = None, visualization_params: dict = None) -> None:
+        """
+        Display visual content using BasalGanglia task system
+        
+        Args:
+            content: Text content or image path to display
+            display_type: Type of content ("text", "image", "animation")
+            visualization_type: Special visualization type ("splash_screen", "game_of_life")
+            visualization_params: Parameters for special visualizations
+        """
+        if visualization_type:
+            journaling_manager.recordInfo(f"Registering {visualization_type} visualization task")
+        else:
+            journaling_manager.recordInfo(f"Registering display task for: {display_type}")
+        
+        # Register display task - non-blocking
+        cls.get_basal_ganglia().display_visual(
+            content=content, 
+            display_type=display_type,
+            visualization_type=visualization_type,
+            visualization_params=visualization_params
+        )
+
+    @classmethod 
+    def show_splash_screen(cls, title: str = "Penphin Mind", subtitle: str = "Neural Architecture") -> None:
+        """Show application splash screen"""
+        cls.display_visual(
+            visualization_type="splash_screen",
+            visualization_params={
+                "title": title,
+                "subtitle": subtitle
+            }
+        )
+        
+    @classmethod
+    def run_game_of_life(cls, width: int = 20, height: int = 20, iterations: int = 10, 
+                        initial_state: list = None) -> None:
+        """Run Conway's Game of Life visualization"""
+        cls.display_visual(
+            visualization_type="game_of_life",
+            visualization_params={
+                "width": width,
+                "height": height, 
+                "iterations": iterations,
+                "initial_state": initial_state
+            }
+        )
+
+    @classmethod
+    async def setup_llm(cls, model_name: str, params: dict = None) -> Dict[str, Any]:
+        """Set up the LLM with specific parameters"""
+        # This is a system operation since it configures the system
+        data = {
+            "model": model_name,
+            **(params or {})
+        }
+        return await cls.send_system_command("setup", data)
+
+    @classmethod
+    async def run_llm_inference(cls, prompt: str, stream: bool = False) -> Dict[str, Any]:
+        """Run inference with the LLM - this is a cognitive operation"""
+        # This is a thinking operation, not a system command
+        return await cls.think(prompt, stream)
+
+    @classmethod
+    async def think_with_pixel_grid(cls, prompt: str, 
+                                   width: int = 64, 
+                                   height: int = 64,
+                                   color_mode: str = "grayscale") -> Dict[str, Any]:
+        """
+        Use BasalGanglia to perform a thinking task with LLM and visualize the output as a pixel grid
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            width: Width of the pixel grid
+            height: Height of the pixel grid
+            color_mode: Visualization mode ('grayscale' or 'color')
+        
+        Returns:
+            The final LLM response
+        """
+        journaling_manager.recordInfo(f"Initiating thinking task with pixel grid: {prompt[:50]}...")
+        
+        try:
+            # Create pixel grid visualization task
+            visual_task = cls.get_basal_ganglia().display_llm_pixel_grid(
+                width=width,
+                height=height,
+                color_mode=color_mode
+            )
+            
+            # Register thinking task
+            task = cls.get_basal_ganglia().think(prompt, stream=True)
+            
+            # Continuously update visualization as we get results
+            result = ""
+            while task.active or not task.has_completed():
+                if hasattr(task, 'result') and task.result:
+                    # Update result and visualization if there's new content
+                    if isinstance(task.result, str) and task.result != result:
+                        result = task.result
+                        # Update the visual task with new content
+                        visual_task.update_stream(result)
+                
+                await asyncio.sleep(0.1)
+            
+            # Mark visualization as complete
+            visual_task.update_stream(task.result, is_complete=True)
+            
+            # Return final thinking result
+            return task.result
+        except Exception as e:
+            journaling_manager.recordError(f"Error in thinking task with pixel grid: {e}")
+            return {"error": str(e)}
+
+    @classmethod
+    def create_llm_pixel_grid(cls, 
+                             width: int = 64, 
+                             height: int = 64,
+                             wrap: bool = True,
+                             color_mode: str = "grayscale") -> DisplayVisualTask:
+        """
+        Create an LLM token-to-pixel grid visualization task that can be updated manually
+        
+        Returns:
+            The DisplayVisualTask instance that can be updated with update_stream()
+        """
+        return cls.get_basal_ganglia().display_llm_pixel_grid(
+            width=width,
+            height=height,
+            wrap=wrap,
+            color_mode=color_mode
+        )
+
+    @classmethod
+    def create_llm_stream_visualization(cls, 
+                                      highlight_keywords: bool = False,
+                                      keywords: list = None,
+                                      show_tokens: bool = False) -> DisplayVisualTask:
+        """
+        Create an LLM stream visualization task that can be updated manually
+        
+        Returns:
+            The DisplayVisualTask instance that can be updated with update_stream()
+        """
+        return cls.get_basal_ganglia().display_llm_stream(
+            highlight_keywords=highlight_keywords,
+            keywords=keywords,
+            show_tokens=show_tokens
+        )
+
+    @classmethod
+    async def think_with_stream_visualization(cls, prompt: str, 
+                                            highlight_keywords: bool = False,
+                                            keywords: list = None,
+                                            show_tokens: bool = False) -> Dict[str, Any]:
+        """
+        Use BasalGanglia to perform a thinking task with LLM and visualize the streaming output
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            highlight_keywords: Whether to highlight keywords in the output
+            keywords: List of keywords to highlight (if None, will be extracted from prompt)
+            show_tokens: Whether to show token statistics
+        
+        Returns:
+            The final LLM response
+        """
+        journaling_manager.recordInfo(f"Initiating thinking task with stream visualization: {prompt[:50]}...")
+        
+        try:
+            # Extract keywords if not provided but highlighting is requested
+            if highlight_keywords and not keywords:
+                # Simple keyword extraction (in a real system, use NLP for better extraction)
+                import re
+                words = re.findall(r'\b[A-Za-z]{4,}\b', prompt)
+                # Filter out common words
+                common_words = {'what', 'when', 'where', 'which', 'who', 'whom', 'whose', 'why', 'how'}
+                keywords = [word for word in words if word.lower() not in common_words][:5]
+                journaling_manager.recordInfo(f"Extracted keywords: {keywords}")
+            
+            # Create visualization task first
+            visual_task = cls.get_basal_ganglia().display_llm_stream(
+                highlight_keywords=highlight_keywords,
+                keywords=keywords,
+                show_tokens=show_tokens
+            )
+            
+            # Register thinking task
+            task = cls.get_basal_ganglia().think(prompt, stream=True)
+            
+            # Continuously update visualization as we get results
+            result = ""
+            while task.active or not task.has_completed():
+                if hasattr(task, 'result') and task.result:
+                    # Update result and visualization if there's new content
+                    if isinstance(task.result, str) and task.result != result:
+                        result = task.result
+                        # Update the visual task with new content
+                        visual_task.update_stream(result)
+            
+            await asyncio.sleep(0.1)
+            
+            # Mark visualization as complete
+            visual_task.update_stream(task.result, is_complete=True)
+            
+            # Return final thinking result
+            return task.result
+        except Exception as e:
+            journaling_manager.recordError(f"Error in thinking task with visualization: {e}")
+            return {"error": str(e)}
+
+    @classmethod
+    def get_ui_mode(cls) -> str:
+        """Get the current UI mode with fallback to fc"""
+        if cls._ui_mode is None:
+            # If UI mode not explicitly set, derive from brain mode
+            if cls._brain_mode == "full":
+                return "full"
+            elif cls._brain_mode in ["fc", "vc"]:
+                return "fc"
+            else:
+                return "headless"
+        return cls._ui_mode
+
+    @classmethod
+    async def think_with_visualization(cls, prompt: str, 
+                                      highlight_keywords: bool = False,
+                                      keywords: list = None,
+                                      show_tokens: bool = False) -> Dict[str, Any]:
+        """
+        Think with visualization based on current UI mode
+        
+        In full mode, enables communication between cortices (OccipitalLobe gets data from PrefrontalCortex)
+        In fc mode, uses text stream visualization
+        In headless mode, uses basic thinking without visualization
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            highlight_keywords: Whether to highlight keywords (for text visualization)
+            keywords: List of keywords to highlight
+            show_tokens: Whether to show token statistics
+            
+        Returns:
+            The thinking result
+        """
+        # Get UI mode based on current settings
+        ui_mode = cls.get_ui_mode()
+        journaling_manager.recordInfo(f"[CorpusCallosum] Thinking with visualization in {ui_mode} mode")
+        
+        try:
+            # Select visualization based on mode
+            if ui_mode == "full":
+                # Full UI mode - use pixel grid visualization and enable cortex communication
+                journaling_manager.recordInfo("[CorpusCallosum] Using pixel grid visualization with cortex communication")
+                
+                # Enable direct communication between OccipitalLobe and PrefrontalCortex
+                if cls._cortex_communication_enabled:
+                    occipital_area = None
+                    
+                    # Get the OccipitalLobe's visual processing area if registered
+                    if "OccipitalLobe" in cls._integration_areas:
+                        occipital_area = cls._integration_areas["OccipitalLobe"]
+                        journaling_manager.recordInfo("[CorpusCallosum] OccipitalLobe integration area found")
+                        
+                        # Initialize it if needed
+                        if hasattr(occipital_area, "initialize") and callable(occipital_area.initialize):
+                            await occipital_area.initialize()
+                    
+                # Use pixel grid visualization
+                return await cls.think_with_pixel_grid(
+                    prompt=prompt,
+                    width=64,
+                    height=64,
+                    color_mode="color"
+                )
+                
+            elif ui_mode == "fc":
+                # Frontend console mode - use text stream visualization
+                journaling_manager.recordInfo("[CorpusCallosum] Using text stream visualization")
+                return await cls.think_with_stream_visualization(
+                    prompt=prompt,
+                    highlight_keywords=highlight_keywords,
+                    keywords=keywords,
+                    show_tokens=show_tokens
+                )
+                
+            else:
+                # Headless or unknown mode - just think with no visualization
+                journaling_manager.recordInfo("[CorpusCallosum] Using basic thinking (no visualization)")
+                return await cls.think(prompt, stream=False)
+                
+        except Exception as e:
+            journaling_manager.recordError(f"[CorpusCallosum] Error in think_with_visualization: {e}")
+            # Fallback to basic thinking
+            journaling_manager.recordInfo("[CorpusCallosum] Falling back to basic thinking due to error")
+            return await cls.think(prompt, stream=False)
+
+    @classmethod
+    def enable_cortex_communication(cls, enabled: bool = True) -> None:
+        """
+        Enable or disable direct communication between cortices
+        
+        When enabled, cortices can directly communicate through CorpusCallosum
+        When disabled, they operate more independently
+        
+        Args:
+            enabled: Whether to enable cortex communication
+        """
+        cls._cortex_communication_enabled = enabled
+        journaling_manager.recordInfo(f"[CorpusCallosum] Cortex communication {'enabled' if enabled else 'disabled'}")
+
+    @classmethod
+    async def relay_between_cortices(cls, source_cortex: str, target_cortex: str, 
+                                    data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Relay data between cortices through the CorpusCallosum
+        
+        Args:
+            source_cortex: Source cortex name
+            target_cortex: Target cortex name
+            data: Data to relay
+            
+        Returns:
+            Response from target cortex
+        """
+        if not cls._cortex_communication_enabled:
+            journaling_manager.recordWarning(f"[CorpusCallosum] Cortex communication disabled, "
+                                             f"cannot relay from {source_cortex} to {target_cortex}")
+            return {"error": "Cortex communication disabled"}
+        
+        journaling_manager.recordInfo(f"[CorpusCallosum] Relaying data from {source_cortex} to {target_cortex}")
+        
+        try:
+            # Get the target integration area
+            if target_cortex not in cls._integration_areas:
+                journaling_manager.recordError(f"[CorpusCallosum] Target cortex not registered: {target_cortex}")
+                return {"error": f"Target cortex not registered: {target_cortex}"}
+            
+            target_area = cls._integration_areas[target_cortex]
+            
+            # Check if target has process_data method
+            if not hasattr(target_area, "process_data") or not callable(target_area.process_data):
+                journaling_manager.recordError(f"[CorpusCallosum] Target cortex cannot process data: {target_cortex}")
+                return {"error": f"Target cortex cannot process data: {target_cortex}"}
+            
+            # Relay the data
+            response = await target_area.process_data(data)
+            journaling_manager.recordInfo(f"[CorpusCallosum] Data relayed successfully to {target_cortex}")
+            
+            return response
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[CorpusCallosum] Error relaying data: {e}")
+            return {"error": str(e)}
