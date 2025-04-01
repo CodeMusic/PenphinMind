@@ -1,7 +1,7 @@
 {
     "corpus_callosum": {
         "llm_service": {
-            "ip": "10.0.0.159",
+            "ip": "10.0.0.206",
             "port": 10001,
             "timeout": 7.0,
             "setup": {
