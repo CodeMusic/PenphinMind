@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional, Tuple
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import CommandType
 from ...config import CONFIG
+from rgbmatrix import RGBMatrix, RGBMatrixOptions
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,14 @@ class PrimaryVisualArea:
         self._initialized = False
         self._processing = False
         self._matrix = None
+        self._options = RGBMatrixOptions()
+        self._options.rows = 64
+        self._options.cols = 64
+        self._options.chain_length = 1
+        self._options.parallel = 1
+        self._options.hardware_mapping = 'regular'
+        self._options.brightness = 30
+        self._options.disable_hardware_pulsing = True
         
     async def initialize(self) -> None:
         """Initialize the primary visual area"""
@@ -26,8 +36,8 @@ class PrimaryVisualArea:
             return
             
         try:
-            # Initialize LED matrix
-            self._matrix = np.zeros((CONFIG.visual_height, CONFIG.visual_width, 3), dtype=np.uint8)
+            # Initialize LED matrix with the same options as test
+            self._matrix = RGBMatrix(options=self._options)
             self._initialized = True
             logger.info("Primary visual area initialized")
             
@@ -76,3 +86,15 @@ class PrimaryVisualArea:
         except Exception as e:
             logger.error(f"Error detecting edges: {e}")
             return np.zeros_like(image[:,:,0]) 
+
+    async def set_image(self, image: Image.Image) -> None:
+        """Set an image to the matrix"""
+        if not self._initialized:
+            raise RuntimeError("Matrix not initialized")
+        self._matrix.SetImage(image)
+
+    async def clear(self) -> None:
+        """Clear the matrix"""
+        if not self._initialized:
+            raise RuntimeError("Matrix not initialized")
+        self._matrix.Clear()

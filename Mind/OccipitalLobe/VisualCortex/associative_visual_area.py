@@ -34,6 +34,9 @@ import asyncio
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 import time
 from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from PIL import Image
+import random
+import colorsys
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,14 @@ class AssociativeVisualArea:
             self.menu_items: List[MenuItem] = []
             self.selected_index = -1
             self.animation_task = None
+            self.WIDTH = 64
+            self.HEIGHT = 64
+            self.grid = [[random.randint(0, 1) for _ in range(self.WIDTH)] for _ in range(self.HEIGHT)]
+            self.text_buffer = []
+            self.current_col = 0
+            self.current_row = 0
+            self.char_map = {}
+            self._setup_spectrum_char_map()
             journaling_manager.recordDebug("Initialized associative visual area")
             
         except Exception as e:
@@ -500,128 +511,136 @@ class AssociativeVisualArea:
         """
         Display the PenphinMind splash screen with logo and loading animation
         """
-        journaling_manager.recordScope("AssociativeVisualArea.show_splash_screen")
+        journaling_manager.recordScope("[Visual Cortex] show_splash_screen")
         try:
-            journaling_manager.recordDebug("Starting splash screen display")
-            
-            # Clear screen
-            await self._clear_screen()
-            journaling_manager.recordDebug("Cleared screen for splash")
+            # Create a new image for the splash screen
+            image = Image.new("RGB", (64, 64), LogoColors.BACKGROUND)
+            pixels = image.load()
             
             # Draw logo
-            await self._draw_logo()
-            journaling_manager.recordDebug("Drew PenphinMind logo")
-            
+            # Center coordinates
+            center_x = 32
+            center_y = 32
+            scale = 20  # Scale for 64x64 matrix
+
+            # Draw dolphin (left side)
+            dolphin_points = [
+                (-0.3, 0.1),   # Start at nose
+                (-0.2, 0.0),   # Upper curve
+                (-0.1, -0.1),  # Head top
+                (0.0, -0.1),   # Body top
+                (0.1, 0.0),    # Tail start
+                (0.2, 0.2),    # Tail tip
+                (0.1, 0.1),    # Tail bottom
+                (0.0, 0.0),    # Body bottom
+                (-0.2, 0.1),   # Back to nose
+            ]
+
+            # Convert and draw dolphin points
+            for i in range(len(dolphin_points) - 1):
+                x1 = int(center_x - 10 + dolphin_points[i][0] * scale)
+                y1 = int(center_y + dolphin_points[i][1] * scale)
+                x2 = int(center_x - 10 + dolphin_points[i + 1][0] * scale)
+                y2 = int(center_y + dolphin_points[i + 1][1] * scale)
+                self._draw_line_on_image(pixels, x1, y1, x2, y2, LogoColors.DOLPHIN)
+
+            # Draw penguin (right side)
+            penguin_points = [
+                (0.2, 0.1),    # Start at beak
+                (0.1, 0.0),    # Head top
+                (0.0, 0.0),    # Body top
+                (-0.1, 0.1),   # Back
+                (0.0, 0.2),    # Bottom
+                (0.1, 0.15),   # Front
+                (0.2, 0.1),    # Back to beak
+            ]
+
+            # Convert and draw penguin points
+            for i in range(len(penguin_points) - 1):
+                x1 = int(center_x + 10 + penguin_points[i][0] * scale)
+                y1 = int(center_y + penguin_points[i][1] * scale)
+                x2 = int(center_x + 10 + penguin_points[i + 1][0] * scale)
+                y2 = int(center_y + penguin_points[i + 1][1] * scale)
+                self._draw_line_on_image(pixels, x1, y1, x2, y2, LogoColors.PENGUIN)
+
+            # Display initial logo
+            await self.primary_area.set_image(image)
+            await asyncio.sleep(1.0)
+
             # Animate loading bar
-            await self._animate_loading_bar()
-            journaling_manager.recordDebug("Completed loading bar animation")
-            
-            # Fade to main screen
-            await self._fade_transition()
-            journaling_manager.recordDebug("Completed fade transition")
-            
+            bar_width = 40  # 40 pixels wide
+            bar_height = 3  # 3 pixels high
+            bar_x = (64 - bar_width) // 2  # Centered
+            bar_y = 50  # Near bottom
+
+            # Loading bar animation
+            for progress in range(bar_width + 1):
+                # Update loading bar
+                for y in range(bar_y, bar_y + bar_height):
+                    for x in range(bar_x, bar_x + bar_width):
+                        if x - bar_x < progress:
+                            # Calculate pulse effect
+                            dist_from_edge = abs(x - (bar_x + progress))
+                            if dist_from_edge < 5:  # 5-pixel pulse width
+                                pulse = 1.0 - (dist_from_edge / 5.0)
+                                color = self._blend_colors(
+                                    LogoColors.DOLPHIN,
+                                    LogoColors.DOLPHIN_HIGHLIGHT,
+                                    pulse
+                                )
+                            else:
+                                color = LogoColors.DOLPHIN
+                        else:
+                            color = (32, 32, 48)  # Dark background
+                        pixels[x, y] = color
+
+                # Update display
+                await self.primary_area.set_image(image)
+                await asyncio.sleep(0.05)
+
+            # Final pause
+            await asyncio.sleep(0.5)
+
             journaling_manager.recordInfo("Splash screen displayed successfully")
-            
+                
         except Exception as e:
             journaling_manager.recordError(f"Error showing splash screen: {e}")
             raise
             
-    async def _draw_logo(self) -> None:
-        """Draw the PenphinMind logo on the LED matrix"""
-        journaling_manager.recordScope("AssociativeVisualArea._draw_logo")
-        try:
-            # Center the logo
-            center_x = CONFIG.visual_width // 2
-            center_y = CONFIG.visual_height // 2
-            scale = min(CONFIG.visual_width, CONFIG.visual_height) // 2
-            journaling_manager.recordDebug(f"Logo centered at ({center_x}, {center_y}) with scale {scale}")
-            
-            # Set background
-            await self._set_background(*LogoColors.BACKGROUND)
-            journaling_manager.recordDebug("Set logo background")
-            
-            # Draw dolphin outline
-            dolphin_points = [
-                Point(-0.3, 0.1),   # Start at nose
-                Point(-0.2, 0.0),   # Upper curve
-                Point(-0.1, -0.1),  # Head top
-                Point(0.0, -0.1),   # Body top
-                Point(0.1, 0.0),    # Tail start
-                Point(0.2, 0.2),    # Tail tip
-                Point(0.1, 0.1),    # Tail bottom
-                Point(0.0, 0.0),    # Body bottom
-                Point(-0.2, 0.1),   # Back to nose
-            ]
-            
-            # Draw dolphin
-            await self._draw_curved_shape(
-                points=dolphin_points,
-                center_x=center_x - scale//4,
-                center_y=center_y,
-                scale=scale,
-                color=LogoColors.DOLPHIN,
-                highlight_color=LogoColors.DOLPHIN_HIGHLIGHT
-            )
-            journaling_manager.recordDebug("Drew dolphin outline")
-            
-            # Draw dolphin fin
-            fin_points = [
-                Point(-0.1, 0.0),   # Fin base
-                Point(0.0, -0.15),  # Fin tip
-                Point(0.1, 0.0),    # Fin back
-            ]
-            
-            await self._draw_curved_shape(
-                points=fin_points,
-                center_x=center_x - scale//4,
-                center_y=center_y,
-                scale=scale,
-                color=LogoColors.DOLPHIN,
-                highlight_color=LogoColors.DOLPHIN_HIGHLIGHT
-            )
-            journaling_manager.recordDebug("Drew dolphin fin")
-            
-            # Draw penguin outline
-            penguin_points = [
-                Point(0.2, 0.1),    # Start at beak
-                Point(0.1, 0.0),    # Head top
-                Point(0.0, 0.0),    # Body top
-                Point(-0.1, 0.1),   # Back
-                Point(0.0, 0.2),    # Bottom
-                Point(0.1, 0.15),   # Front
-                Point(0.2, 0.1),    # Back to beak
-            ]
-            
-            # Draw penguin
-            await self._draw_curved_shape(
-                points=penguin_points,
-                center_x=center_x + scale//4,
-                center_y=center_y,
-                scale=scale,
-                color=LogoColors.PENGUIN,
-                highlight_color=None
-            )
-            journaling_manager.recordDebug("Drew penguin outline")
-            
-            # Draw eye details
-            await self._draw_pixel(
-                center_x - scale//3,
-                center_y - scale//6,
-                0, 0, 0  # Black for dolphin eye
-            )
-            await self._draw_pixel(
-                center_x + scale//4,
-                center_y - scale//8,
-                0, 0, 0  # Black for penguin eye
-            )
-            journaling_manager.recordDebug("Drew eye details")
-            
-            journaling_manager.recordInfo("Successfully drew PenphinMind logo")
-                
-        except Exception as e:
-            journaling_manager.recordError(f"Error drawing logo: {e}")
-            raise
-            
+    def _draw_line_on_image(self, pixels, x1: int, y1: int, x2: int, y2: int, color: tuple) -> None:
+        """Draw a line on the image using Bresenham's algorithm"""
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        x, y = x1, y1
+        sx = 1 if x1 < x2 else -1
+        sy = 1 if y1 < y2 else -1
+        err = dx - dy
+
+        while True:
+            if 0 <= x < 64 and 0 <= y < 64:  # Check bounds
+                pixels[x, y] = color
+            if x == x2 and y == y2:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
+
+    def _blend_colors(
+        self,
+        color1: Tuple[int, int, int],
+        color2: Tuple[int, int, int],
+        factor: float
+    ) -> Tuple[int, int, int]:
+        """Blend two colors with a factor between 0 and 1"""
+        return tuple(
+            int(c1 + (c2 - c1) * factor)
+            for c1, c2 in zip(color1, color2)
+        )
+
     async def _draw_curved_shape(
         self,
         points: List[Point],
@@ -920,31 +939,6 @@ class AssociativeVisualArea:
                 
         except Exception as e:
             journaling_manager.recordError(f"Error animating loading bar: {e}")
-            raise
-        
-    def _blend_colors(
-        self,
-        color1: Tuple[int, int, int],
-        color2: Tuple[int, int, int],
-        factor: float
-    ) -> Tuple[int, int, int]:
-        """Blend two colors with a factor between 0 and 1"""
-        journaling_manager.recordScope(
-            "AssociativeVisualArea._blend_colors",
-            color1=color1,
-            color2=color2,
-            factor=factor
-        )
-        try:
-            blended = tuple(
-                int(c1 + (c2 - c1) * factor)
-                for c1, c2 in zip(color1, color2)
-            )
-            journaling_manager.recordDebug(f"Blended colors: {color1} + {color2} = {blended}")
-            return blended
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error blending colors: {e}")
             raise
         
     async def _fade_transition(self) -> None:
@@ -1764,4 +1758,124 @@ class AssociativeVisualArea:
             
         except Exception as e:
             journaling_manager.recordError(f"Error drawing menu title: {e}")
+            raise
+
+    def count_neighbors(self, x: int, y: int) -> int:
+        """Count live neighbors for a cell"""
+        return sum(
+            self.grid[(y + dy) % self.HEIGHT][(x + dx) % self.WIDTH]
+            for dy in [-1, 0, 1]
+            for dx in [-1, 0, 1]
+            if not (dx == 0 and dy == 0)
+        )
+
+    def update_grid(self):
+        """Update the game grid"""
+        new_grid = [[0]*self.WIDTH for _ in range(self.HEIGHT)]
+        for y in range(self.HEIGHT):
+            for x in range(self.WIDTH):
+                neighbors = self.count_neighbors(x, y)
+                if self.grid[y][x] == 1:
+                    new_grid[y][x] = 1 if neighbors in [2, 3] else 0
+                else:
+                    new_grid[y][x] = 1 if neighbors == 3 else 0
+        self.grid = new_grid
+
+    async def draw_game_of_life(self) -> None:
+        """Draw current game state"""
+        image = Image.new("RGB", (self.WIDTH, self.HEIGHT))
+        pixels = image.load()
+        for y in range(self.HEIGHT):
+            for x in range(self.WIDTH):
+                if self.grid[y][x]:
+                    fitness = self.count_neighbors(x, y)
+                    color = (0, min(255, fitness * 40), 255 - fitness * 20)
+                    pixels[x, y] = color
+                else:
+                    pixels[x, y] = (0, 0, 0)
+        
+        # Use primary area to display the image
+        await self.primary_area.set_image(image)
+
+    def _setup_spectrum_char_map(self):
+        """Map each character to a unique color in the full spectrum"""
+        # Define all characters we want to map
+        chars = (
+            'abcdefghijklmnopqrstuvwxyz'  # 26 lowercase letters
+            '0123456789'                   # 10 numbers
+            ' .,!?-_:;\'\"()[]{}#@$%^&*+=' # 22 punctuation/special chars
+        )
+        total_chars = len(chars)  # 58 total characters
+
+        journaling_manager.recordDebug(f"[Visual Cortex] Mapping {total_chars} characters to spectrum")
+
+        # Map each character to a color in the spectrum
+        for i, char in enumerate(chars):
+            # Convert position to hue (0-1)
+            hue = i / total_chars
+            # Convert HSV to RGB (S and V at 100% for vibrant colors)
+            rgb = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+            # Convert to 8-bit color values
+            color = tuple(int(c * 255) for c in rgb)
+            self.char_map[char] = color
+            journaling_manager.recordDebug(f"[Visual Cortex] Mapped '{char}' to RGB{color}")
+
+    async def update_llm_visualization(self, text: str) -> None:
+        """
+        Update the LED matrix with new LLM text
+        
+        Args:
+            text: New text to visualize
+        """
+        journaling_manager.recordScope("[Visual Cortex] update_llm_visualization")
+        try:
+            # Create or get existing image
+            if not hasattr(self, 'llm_image'):
+                self.llm_image = Image.new("RGB", (64, 64), (0, 0, 0))
+                self.pixels = self.llm_image.load()
+
+            # Process each character
+            for char in text.lower():
+                if char in self.char_map:
+                    # Get spectrum color for character
+                    color = self.char_map[char]
+                    
+                    # Set pixel color
+                    self.pixels[self.current_col, self.current_row] = color
+                    
+                    # Move to next position
+                    self.current_col += 1
+                    if self.current_col >= 64:
+                        self.current_col = 0
+                        self.current_row += 1
+                        if self.current_row >= 64:
+                            # Reset to top when full
+                            self.current_row = 0
+                    
+                    # Update display
+                    await self.primary_area.set_image(self.llm_image)
+                    # Small delay for visual effect
+                    await asyncio.sleep(0.01)
+
+            journaling_manager.recordDebug(
+                f"Updated visualization at position ({self.current_col}, {self.current_row})"
+            )
+
+        except Exception as e:
+            journaling_manager.recordError(f"Error updating LLM visualization: {e}")
+            raise
+
+    async def clear_llm_visualization(self) -> None:
+        """Clear the LLM visualization"""
+        journaling_manager.recordScope("[Visual Cortex] clear_llm_visualization")
+        try:
+            if hasattr(self, 'llm_image'):
+                self.llm_image = Image.new("RGB", (64, 64), (0, 0, 0))
+                self.pixels = self.llm_image.load()
+                self.current_col = 0
+                self.current_row = 0
+                await self.primary_area.set_image(self.llm_image)
+                journaling_manager.recordDebug("Cleared LLM visualization")
+        except Exception as e:
+            journaling_manager.recordError(f"Error clearing LLM visualization: {e}")
             raise 

@@ -9,6 +9,8 @@ from Mind.config import CONFIG
 from .primary_visual_area import PrimaryVisualArea
 from .secondary_visual_area import SecondaryVisualArea
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+import asyncio
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,13 @@ class IntegrationArea:
     
     def __init__(self):
         """Initialize the visual integration area"""
-        journaling_manager.recordScope("VisualIntegrationArea.__init__")
+        journaling_manager.recordScope("[Visual Cortex] IntegrationArea.__init__")
         self._initialized = False
         self._processing = False
         self.primary_area = PrimaryVisualArea()
         self.secondary_area = SecondaryVisualArea()
+        self.grid = [[0 for _ in range(64)] for _ in range(64)]  # Initialize empty grid
+        self.is_running = False
         
     async def initialize(self):
         """Initialize the visual integration area"""
@@ -406,4 +410,129 @@ class IntegrationArea:
             
         except Exception as e:
             journaling_manager.recordError(f"Error cleaning up visual integration area: {e}")
-            raise 
+            raise
+
+    async def update_cell(self, x: int, y: int, state: int) -> None:
+        """
+        Update a single cell in the grid
+        
+        Args:
+            x: X coordinate (0-63)
+            y: Y coordinate (0-63)
+            state: Cell state (0 or 1)
+        """
+        journaling_manager.recordScope("[Visual Cortex] update_cell", x=x, y=y, state=state)
+        try:
+            if 0 <= x < 64 and 0 <= y < 64 and state in (0, 1):
+                self.grid[y][x] = state
+                journaling_manager.recordDebug(f"Updated cell at ({x}, {y}) to {state}")
+            else:
+                journaling_manager.recordError(f"Invalid cell update parameters: x={x}, y={y}, state={state}")
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error updating cell: {e}")
+            raise
+
+    async def update_region(self, x: int, y: int, region: list[list[int]]) -> None:
+        """
+        Update a rectangular region of the grid
+        
+        Args:
+            x: Starting X coordinate
+            y: Starting Y coordinate
+            region: 2D list of cell states (0s and 1s)
+        """
+        journaling_manager.recordScope("[Visual Cortex] update_region", x=x, y=y, region_size=f"{len(region)}x{len(region[0])}")
+        try:
+            height = len(region)
+            width = len(region[0])
+            
+            for dy in range(height):
+                for dx in range(width):
+                    grid_x = x + dx
+                    grid_y = y + dy
+                    if 0 <= grid_x < 64 and 0 <= grid_y < 64:
+                        self.grid[grid_y][grid_x] = region[dy][dx]
+                        
+            journaling_manager.recordDebug(f"Updated region at ({x}, {y}) with size {width}x{height}")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error updating region: {e}")
+            raise
+
+    async def set_grid(self, new_grid: list[list[int]]) -> None:
+        """
+        Replace the entire grid
+        
+        Args:
+            new_grid: New 64x64 grid of cell states
+        """
+        journaling_manager.recordScope("[Visual Cortex] set_grid")
+        try:
+            if len(new_grid) == 64 and all(len(row) == 64 for row in new_grid):
+                self.grid = [row[:] for row in new_grid]  # Deep copy
+                journaling_manager.recordDebug("Grid replaced successfully")
+            else:
+                journaling_manager.recordError("Invalid grid dimensions")
+                raise ValueError("Grid must be 64x64")
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error setting grid: {e}")
+            raise
+
+    async def run_game_of_life(self):
+        """Run the Game of Life simulation"""
+        journaling_manager.recordScope("[Visual Cortex] run_game_of_life")
+        try:
+            self.is_running = True
+            while self.is_running:
+                # Create image from current grid state
+                image = Image.new("RGB", (64, 64))
+                pixels = image.load()
+                
+                for y in range(64):
+                    for x in range(64):
+                        if self.grid[y][x]:
+                            # Calculate neighbors for color
+                            neighbors = sum(
+                                self.grid[(y + dy) % 64][(x + dx) % 64]
+                                for dy in [-1, 0, 1]
+                                for dx in [-1, 0, 1]
+                                if not (dx == 0 and dy == 0)
+                            )
+                            color = (0, min(255, neighbors * 40), 255 - neighbors * 20)
+                            pixels[x, y] = color
+                
+                # Display current state
+                await self.primary_area.set_image(image)
+                
+                # Update grid for next generation
+                new_grid = [[0]*64 for _ in range(64)]
+                for y in range(64):
+                    for x in range(64):
+                        neighbors = sum(
+                            self.grid[(y + dy) % 64][(x + dx) % 64]
+                            for dy in [-1, 0, 1]
+                            for dx in [-1, 0, 1]
+                            if not (dx == 0 and dy == 0)
+                        )
+                        if self.grid[y][x]:
+                            new_grid[y][x] = 1 if neighbors in [2, 3] else 0
+                        else:
+                            new_grid[y][x] = 1 if neighbors == 3 else 0
+                
+                self.grid = new_grid
+                await asyncio.sleep(0.1)
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error in game of life: {e}")
+            raise
+        finally:
+            self.is_running = False
+            await self.primary_area.clear()
+
+    async def stop_game(self) -> None:
+        """Stop the Game of Life simulation"""
+        journaling_manager.recordScope("[Visual Cortex] stop_game")
+        self.is_running = False
+        journaling_manager.recordInfo("Game of Life stopped") 
