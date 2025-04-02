@@ -11,7 +11,7 @@ import json
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.mind import setup_connection
-from Interaction.chat_interface import interactive_chat
+# from Interaction.chat_interface import interactive_chat  # This causes circular import
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -167,18 +167,61 @@ async def display_model_list() -> str:
 async def select_model_for_chat(model_dict, count):
     """Select a model for chat from the available models"""
     print("\nSelect a model for chat:")
-    model_number = input("Enter model number: ").strip()
+    
+    # First, show only LLM models for easier selection
+    print("\nLLM Models (recommended):")
+    llm_options = {}
+    option_count = 1
+    
+    # Find and display LLM models first
+    for idx, model in model_dict.items():
+        model_name = model.get("mode", "")
+        model_type = model.get("type", "").lower()
+        
+        if model_type == "llm":
+            llm_options[option_count] = idx
+            print(f"{option_count}) {model_name}")
+            option_count += 1
+    
+    # If no LLM models found, show a message
+    if not llm_options:
+        print("  No dedicated LLM models found.")
+    
+    print("\nOther Models (may not work for chat):")
+    for idx, model in model_dict.items():
+        model_name = model.get("mode", "")
+        model_type = model.get("type", "").lower()
+        
+        if model_type != "llm":
+            llm_options[option_count] = idx
+            print(f"{option_count}) {model_name} (Type: {model_type})")
+            option_count += 1
+    
+    print("\n0) Cancel")
+    
+    # Get user choice
+    model_option = input("\nEnter option number: ").strip()
+    
+    # Handle cancel
+    if model_option == "0":
+        print("Model selection cancelled.")
+        input("Press Enter to continue...")
+        return
     
     try:
-        model_num = int(model_number)
-        if 1 <= model_num < count:
-            model = model_dict[model_num]
+        option_num = int(model_option)
+        if 1 <= option_num < option_count:
+            # Get the actual model index from our mapping
+            model_idx = llm_options[option_num]
+            model = model_dict[model_idx]
+            
             model_name = model.get("mode", "")
             model_type = model.get("type", "").lower()
             
-            # Check if it's a valid LLM model
+            # Warn if not an LLM
             if model_type != "llm":
                 print(f"\nWarning: Model '{model_name}' is type '{model_type}', not an LLM model.")
+                print("It may not work properly for chat.")
                 confirm = input("Use anyway? (y/n): ").strip().lower()
                 if confirm != "y":
                     print("Model selection cancelled.")
@@ -187,19 +230,20 @@ async def select_model_for_chat(model_dict, count):
             
             # Set as default model
             SynapticPathways.default_llm_model = model_name
+            print(f"\nSelected '{model_name}' as the active model.")
             
-            # Try to set active model
-            success = await SynapticPathways.set_active_model(model_name)
-            
-            if success:
-                print(f"\nSuccessfully set '{model_name}' as the active model.")
-            else:
-                print(f"\nModel '{model_name}' is selected but setting it active failed.")
-                print("It will be used the next time you start a chat.")
+            # Try to also set it on the device
+            try:
+                success = await SynapticPathways.set_active_model(model_name)
+                if success:
+                    print("Model activated successfully on the device.")
+            except Exception as e:
+                journaling_manager.recordError(f"Error setting active model: {e}")
+                print("Note: Model will be activated when you start the chat.")
             
             input("Press Enter to continue...")
         else:
-            print("Invalid model number.")
+            print("Invalid option number.")
             input("Press Enter to continue...")
     except (ValueError, KeyError):
         print("Invalid selection.")
@@ -318,54 +362,68 @@ async def start_chat():
     print("\nWelcome to PenphinMind Chat\n")
     print("🔧 Initializing thought loop...\n")
     
-    # Check if we have a default LLM model set
-    if not SynapticPathways.default_llm_model:
-        # Try to get models and set a default
+    # Initialize LLM with setup command
+    llm_work_id = f"llm.{int(time.time())}"
+    
+    # Get the model from SynapticPathways
+    model_name = SynapticPathways.default_llm_model
+    
+    # If no model selected, try to find one
+    if not model_name:
         models = await SynapticPathways.get_available_models()
         journaling_manager.recordInfo(f"Available models: {models}")
         
         if models:
-            # Find the first LLM model
-            found_llm = False
-            for model in models:
-                model_name = model.get("mode", "")
-                model_type = model.get("type", "").lower()
-                
-                if model_name and model_type == "llm":
-                    SynapticPathways.default_llm_model = model_name
-                    journaling_manager.recordInfo(f"Found LLM model, setting default to: {model_name}")
-                    print(f"Using LLM model: {model_name}")
-                    found_llm = True
-                    break
+            # IMPORTANT: First filter for only LLM models
+            llm_models = [m for m in models if m.get("type", "").lower() == "llm"]
+            journaling_manager.recordInfo(f"Found {len(llm_models)} LLM models: {llm_models}")
             
-            # If no LLM model found, try any model
-            if not found_llm:
-                for model in models:
-                    model_name = model.get("mode", "")
-                    if model_name:
-                        SynapticPathways.default_llm_model = model_name
-                        journaling_manager.recordInfo(f"No LLM found. Using model: {model_name}")
-                        print(f"Using model: {model_name} (not an LLM model)")
+            if llm_models:
+                # First try to find small LLM models
+                for model in llm_models:
+                    model_mode = model.get("mode", "")
+                    if "0.5b" in model_mode or "tiny" in model_mode:
+                        model_name = model_mode
+                        journaling_manager.recordInfo(f"Selected small LLM model: {model_name}")
                         break
+                
+                # If no small model found, use the first LLM model
+                if not model_name:
+                    model_name = llm_models[0].get("mode", "")
+                    journaling_manager.recordInfo(f"Selected first available LLM model: {model_name}")
+            else:
+                # No LLM models found, log this problem
+                journaling_manager.recordWarning("No models with type 'llm' found. Trying any model.")
+                
+                # Then try non-LLM models with small size
+                for model in models:
+                    model_mode = model.get("mode", "")
+                    if "0.5b" in model_mode or "tiny" in model_mode:
+                        model_name = model_mode
+                        journaling_manager.recordInfo(f"No LLM models found. Using small model: {model_name}")
+                        break
+                
+                # If still no model, use the first one
+                if not model_name and models:
+                    model_name = models[0].get("mode", "")
+                    journaling_manager.recordInfo(f"Using first available model (not LLM): {model_name}")
         
-        if not SynapticPathways.default_llm_model:
-            # If still no model, try a common default
-            SynapticPathways.default_llm_model = "qwen2.5-0.5b"
-            journaling_manager.recordInfo(f"Using default fallback model: {SynapticPathways.default_llm_model}")
-            print(f"Using default model: {SynapticPathways.default_llm_model}")
+        # If still no model, use a fallback
+        if not model_name:
+            model_name = "qwen2.5-0.5b"
+            journaling_manager.recordInfo(f"No suitable models found. Using default: {model_name}")
+        
+        # Set as default
+        SynapticPathways.default_llm_model = model_name
     
-    # Log which model we're using
-    journaling_manager.recordInfo(f"Attempting to use model: {SynapticPathways.default_llm_model}")
-    
-    # Initialize LLM with setup command
-    llm_work_id = f"llm.{int(time.time())}"
+    # Set up the model
     setup_command = {
         "request_id": f"setup_{int(time.time())}",
         "work_id": llm_work_id,
         "action": "setup",
         "object": "llm.setup",
         "data": {
-            "model": SynapticPathways.default_llm_model,
+            "model": model_name,
             "response_format": "llm.utf-8", 
             "input": "llm.utf-8", 
             "enoutput": True,
@@ -375,47 +433,77 @@ async def start_chat():
         }
     }
     
+    # Log which model we're using
+    journaling_manager.recordInfo(f"Using model: {model_name}")
+    print(f"Setting up model: {model_name}...")
+    
     # Send setup command
-    print(f"Setting up model: {SynapticPathways.default_llm_model}...")
     setup_response = await SynapticPathways.transmit_json(setup_command)
-    journaling_manager.recordInfo(f"LLM setup response: {setup_response}")
     
     if setup_response and setup_response.get("error", {}).get("code", 1) == 0:
         print("LLM initialized successfully.\n")
     else:
-        # Try fallback to smallest model if not already using it
         error_msg = setup_response.get("error", {}).get("message", "Unknown error")
-        journaling_manager.recordWarning(f"LLM setup error: {error_msg}")
+        print(f"Error initializing LLM: {error_msg}")
         
-        if SynapticPathways.default_llm_model != "qwen2.5-0.5b":
-            print(f"First model failed: {error_msg}")
-            print("Trying fallback model...\n")
+        # Only try alternative models if the error indicates a model issue
+        model_error = "model" in error_msg.lower() or "failed" in error_msg.lower()
+        if model_error:
+            print("\nTrying to find an alternative model...")
             
-            # Update model to smallest one
-            SynapticPathways.default_llm_model = "qwen2.5-0.5b"
-            setup_command["data"]["model"] = SynapticPathways.default_llm_model
+            # Get available models again
+            models = await SynapticPathways.get_available_models()
+            llm_models = [m for m in models if m.get("type", "").lower() == "llm"]
             
-            # Try again with fallback model
-            setup_response = await SynapticPathways.transmit_json(setup_command)
-            
-            if setup_response and setup_response.get("error", {}).get("code", 1) == 0:
-                print(f"Successfully initialized with fallback model: {SynapticPathways.default_llm_model}\n")
+            # Try different models
+            for alt_model in llm_models:
+                alt_name = alt_model.get("mode", "")
+                if alt_name != model_name:  # Skip the one that just failed
+                    print(f"Trying model: {alt_name}...")
+                    setup_command["data"]["model"] = alt_name
+                    alt_response = await SynapticPathways.transmit_json(setup_command)
+                    
+                    if alt_response and alt_response.get("error", {}).get("code", 1) == 0:
+                        print(f"Successfully initialized with model: {alt_name}\n")
+                        SynapticPathways.default_llm_model = alt_name  # Update default
+                        model_name = alt_name
+                        break
             else:
-                error_msg = setup_response.get("error", {}).get("message", "Unknown error")
-                print(f"Error initializing LLM: {error_msg}")
-                print("\nYou may need to select a different model from the model list menu.")
-                print("Press Enter to return to main menu...")
+                print("All LLM models failed. Please try again later or select a different model.")
+                print("\nPress Enter to return to main menu...")
                 input()
                 return
         else:
-            print(f"Error initializing LLM: {error_msg}")
-            print("\nYou may need to select a different model from the model list menu.")
-            print("Press Enter to return to main menu...")
-            input()
-            return
+            # Ask if user wants to try reset
+            print("\nWould you like to try resetting the LLM system? (y/n)")
+            choice = input().strip().lower()
+            
+            if choice == 'y':
+                print("\nResetting LLM system...")
+                await SynapticPathways.reset_llm()
+                
+                # Try one more time
+                print("\nRetrying initialization...")
+                setup_response = await SynapticPathways.transmit_json(setup_command)
+                
+                if setup_response and setup_response.get("error", {}).get("code", 1) == 0:
+                    print("LLM initialized successfully after reset.\n")
+                else:
+                    error_msg = setup_response.get("error", {}).get("message", "Unknown error")
+                    print(f"Error initializing LLM after reset: {error_msg}")
+                    print("\nPress Enter to return to main menu...")
+                    input()
+                    return
+            else:
+                print("\nPress Enter to return to main menu...")
+                input()
+                return
     
     # Get existing BasalGanglia instance
     bg = SynapticPathways.get_basal_ganglia()
+    
+    # Import interactive_chat here to avoid circular imports
+    from Interaction.chat_interface import interactive_chat
     
     # Start the interactive chat with the existing BasalGanglia instance
     await interactive_chat(bg)
@@ -436,10 +524,11 @@ async def system_menu() -> None:
         print("2) List Models")
         print("3) Ping System")
         print("4) Reboot Device")
+        print("5) Manage Tasks")  # New option
         print("0) Back to Main Menu")
         print()
         
-        choice = input("Enter your choice (0-4): ").strip()
+        choice = input("Enter your choice (0-5): ").strip()
         
         try:
             if choice == "0":
@@ -469,6 +558,10 @@ async def system_menu() -> None:
                 # Reboot (using existing reboot_system function)
                 await reboot_system()
                 
+            elif choice == "5":
+                # New option: Manage Tasks
+                await manage_tasks()
+                
             else:
                 print("\nInvalid choice. Press Enter to continue...")
                 input()
@@ -476,6 +569,138 @@ async def system_menu() -> None:
         except Exception as e:
             print(f"\nError: {e}")
             input("\nPress Enter to continue...")
+
+async def manage_tasks():
+    """Display and manage active tasks"""
+    clear_screen()
+    print_header()
+    
+    # Display hardware info
+    hw_info = SynapticPathways.format_hw_info()
+    print(hw_info)
+    
+    print("\n=== Task Management ===")
+    
+    # Get BasalGanglia instance to examine tasks
+    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+    bg = SynapticPathways.get_basal_ganglia()
+    
+    # Display local tasks
+    print("\nLocal Tasks:")
+    
+    # Handle both BasalGanglia and BasalGangliaIntegration types
+    if hasattr(bg, "_tasks"):
+        # BasalGangliaIntegration has _tasks dict
+        tasks = list(bg._tasks.values())
+        print(f"Total tasks: {len(tasks)}")
+        
+        # Group tasks by active status
+        active_tasks = [t for t in tasks if hasattr(t, "active") and t.active]
+        inactive_tasks = [t for t in tasks if hasattr(t, "active") and not t.active]
+        
+        # Show active tasks
+        print("\nActive tasks:")
+        if active_tasks:
+            for i, task in enumerate(active_tasks):
+                task_name = getattr(task, "name", f"Task {i+1}")
+                task_type = getattr(task, "task_type", "Unknown")
+                created_time = getattr(task, "creation_time", None)
+                
+                time_str = "unknown time"
+                if created_time and isinstance(created_time, (int, float)):
+                    age = time.time() - created_time
+                    time_str = f"{age:.1f} seconds ago"
+                
+                print(f"  {i+1}. {task_name} (Type: {task_type}, Created: {time_str})")
+        else:
+            print("  No active tasks")
+            
+        # Show inactive tasks
+        print("\nInactive tasks:")
+        if inactive_tasks:
+            for i, task in enumerate(inactive_tasks):
+                task_name = getattr(task, "name", f"Task {i+1}")
+                task_type = getattr(task, "task_type", "Unknown")
+                
+                print(f"  {i+1}. {task_name} (Type: {task_type})")
+        else:
+            print("  No inactive tasks")
+            
+    elif hasattr(bg, "task_queue"):
+        # Original BasalGanglia has task_queue list
+        tasks = bg.task_queue
+        print(f"Total tasks: {len(tasks)}")
+        
+        # Group tasks by active status
+        active_tasks = [t for t in tasks if hasattr(t, "active") and t.active]
+        inactive_tasks = [t for t in tasks if hasattr(t, "active") and not t.active]
+        
+        # Show active tasks
+        print("\nActive tasks:")
+        if active_tasks:
+            for i, task in enumerate(active_tasks):
+                task_name = getattr(task, "name", f"Task {i+1}")
+                task_priority = getattr(task, "priority", "Unknown")
+                created_time = getattr(task, "creation_time", None)
+                
+                time_str = "unknown time"
+                if created_time and isinstance(created_time, (int, float)):
+                    age = time.time() - created_time
+                    time_str = f"{age:.1f} seconds ago"
+                
+                print(f"  {i+1}. {task_name} (Priority: {task_priority}, Created: {time_str})")
+        else:
+            print("  No active tasks")
+            
+        # Show inactive tasks
+        print("\nInactive tasks:")
+        if inactive_tasks:
+            for i, task in enumerate(inactive_tasks):
+                task_name = getattr(task, "name", f"Task {i+1}")
+                task_priority = getattr(task, "priority", "Unknown")
+                completed = "Yes" if hasattr(task, "has_completed") and task.has_completed() else "No"
+                
+                print(f"  {i+1}. {task_name} (Priority: {task_priority}, Completed: {completed})")
+        else:
+            print("  No inactive tasks")
+    else:
+        print("  No task information available for this brain type")
+    
+    # Display device resource usage (indirect way to see task load)
+    print("\nDevice Resource Usage:")
+    await SynapticPathways.get_hardware_info()  # Refresh hardware info
+    hw_info = SynapticPathways.current_hw_info
+    
+    cpu_load = hw_info.get("cpu_loadavg", "N/A")
+    mem_usage = hw_info.get("mem", "N/A")
+    temp = hw_info.get("temperature", "N/A")
+    
+    print(f"  CPU Load: {cpu_load}%")
+    print(f"  Memory Usage: {mem_usage}%")
+    if temp and temp != "N/A":
+        temp_val = f"{temp:.1f}°C" if isinstance(temp, (int, float)) else temp
+        print(f"  Temperature: {temp_val}")
+    
+    # Options for task management
+    print("\nTask Management Options:")
+    print("1) Refresh task information")
+    print("2) Reset LLM system")
+    print("0) Back to System Menu")
+    
+    option = input("\nEnter option: ").strip()
+    
+    if option == "1":
+        # Just refresh by calling this function again
+        await manage_tasks()
+    elif option == "2":
+        # Reset LLM
+        print("\nResetting LLM system...")
+        result = await SynapticPathways.reset_llm()
+        print(f"Reset result: {result}")
+        input("\nPress Enter to continue...")
+    else:
+        # Any other input returns to system menu
+        return
 
 async def run_menu_system(mind=None):
     """Run the main menu system

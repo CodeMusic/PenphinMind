@@ -4,7 +4,7 @@ from enum import Enum, auto
 
 class TaskType(Enum):
     """Enumeration of different neural task types"""
-    THINK = auto()                 # Thinking/reasoning tasks using LLM
+    THINKING = auto()                 # Thinking/reasoning tasks using LLM
     SYSTEM_COMMAND = auto()        # System operation commands
     DISPLAY_VISUAL = auto()        # Visual display operations
     SPEECH = auto()                # Speech generation
@@ -31,7 +31,7 @@ class TaskCategory(Enum):
 
 # Optional: tag mapping
 TASK_CATEGORY_MAP = {
-    TaskType.THINK: TaskCategory.COGNITIVE,
+    TaskType.THINKING: TaskCategory.COGNITIVE,
     TaskType.SYSTEM_COMMAND: TaskCategory.META,
     TaskType.DISPLAY_VISUAL: TaskCategory.MOTOR,
     TaskType.SPEECH: TaskCategory.MOTOR,

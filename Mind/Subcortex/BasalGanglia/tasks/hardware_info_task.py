@@ -69,6 +69,23 @@ class HardwareInfoTask(NeuralTask):
                 
                 # Log updated values
                 journaling_manager.recordInfo(f"[HardwareInfoTask] ✅ Hardware info updated: {self.hardware_info}")
+                
+                # Add cleanup for the hardware info command
+                try:
+                    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+                    bg = SynapticPathways.get_basal_ganglia()
+                    comm_task = bg.get_communication_task()
+                    
+                    if comm_task:
+                        cleanup_command = {
+                            "request_id": f"hwinfo_cleanup_{int(time.time())}",
+                            "work_id": "sys",
+                            "action": "exit"
+                        }
+                        await comm_task.send_command(cleanup_command)
+                        journaling_manager.recordInfo("[HardwareInfoTask] Sent cleanup command")
+                except Exception as e:
+                    journaling_manager.recordWarning(f"[HardwareInfoTask] Cleanup error: {e}")
             
             # Always return the current info (cached or freshly fetched)
             return self.hardware_info
@@ -101,9 +118,25 @@ class HardwareInfoTask(NeuralTask):
             journaling_manager.recordInfo("[HardwareInfoTask] 📤 Requesting hardware info")
             response = await comm_task.send_command(hwinfo_command)
             
+            # Fix: Handle the case where response might be a string
+            if isinstance(response, str):
+                journaling_manager.recordWarning(f"[HardwareInfoTask] Received string response: {response}")
+                # Try to parse JSON if possible
+                try:
+                    import json
+                    response = json.loads(response)
+                except json.JSONDecodeError:
+                    journaling_manager.recordError(f"[HardwareInfoTask] Failed to parse string response as JSON")
+                    return False
+            
             # Process response with proper field mapping
-            if response and "data" in response:
+            if response and isinstance(response, dict) and "data" in response:
                 api_data = response["data"]
+                
+                # Check if api_data is a dictionary
+                if not isinstance(api_data, dict):
+                    journaling_manager.recordError(f"[HardwareInfoTask] API data is not a dictionary: {type(api_data)}")
+                    return False
                 
                 # Update hardware info with exact field names from API
                 self.hardware_info = {
@@ -117,12 +150,16 @@ class HardwareInfoTask(NeuralTask):
                 SynapticPathways.current_hw_info = self.hardware_info
                 
                 journaling_manager.recordInfo(f"[HardwareInfoTask] ✅ Hardware info refreshed: {self.hardware_info}")
+                return True
             else:
                 journaling_manager.recordError(f"[HardwareInfoTask] ❌ Invalid API response: {response}")
+                return False
                 
         except Exception as e:
             journaling_manager.recordError(f"[HardwareInfoTask] ❌ Error refreshing hardware info: {e}")
-            raise
+            import traceback
+            journaling_manager.recordError(f"[HardwareInfoTask] Stack trace: {traceback.format_exc()}")
+            return False
 
     def run(self):
         """Implementation of abstract method from Task base class."""

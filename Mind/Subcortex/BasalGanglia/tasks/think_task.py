@@ -25,7 +25,14 @@ class ThinkTask(NeuralTask):
         self.result = None
         self.active = True
         self.stream = stream
-        self.task_type = TaskType.THINKING
+        self.creation_time = time.time()  # Add creation timestamp
+        
+        # Use a valid task type that exists in your enum
+        # This might be different based on your actual enum values
+        self.task_type = TaskType.THINKING  # Or whatever value is appropriate
+        
+        # For debugging, log the available TaskType values
+        journaling_manager.recordDebug(f"Available TaskType values: {[t.name for t in TaskType]}")
         
     async def execute(self):
         """Execute the thinking task asynchronously."""
@@ -35,10 +42,13 @@ class ThinkTask(NeuralTask):
             # Only import SynapticPathways here when needed
             from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
             
+            # Create unique work_id for this task
+            work_id = f"think_{int(time.time())}"
+            
             # Create thinking command
             inference_command = {
                 "request_id": f"inference_{int(time.time())}",
-                "work_id": f"think_{int(time.time())}",
+                "work_id": work_id,
                 "action": "inference",
                 "object": "llm.utf-8",
                 "data": {
@@ -70,9 +80,22 @@ class ThinkTask(NeuralTask):
                     error_msg = response.get("error", {}).get("message", "Unknown error")
                     self.result = f"Error {error_code}: {error_msg}"
             
-            # Task is complete
-            self.active = False
-            journaling_manager.recordInfo(f"[BasalGanglia] Thinking task completed: {self.result[:50]}...")
+            # CRITICAL: Clean up the LLM task on the device
+            try:
+                exit_command = {
+                    "request_id": f"exit_{int(time.time())}",
+                    "work_id": work_id,
+                    "action": "exit",
+                    "object": "llm"  # Add object field for proper cleanup
+                }
+                await SynapticPathways.transmit_json(exit_command)
+                journaling_manager.recordInfo(f"[ThinkTask] Cleaned up LLM task: {work_id}")
+            except Exception as e:
+                journaling_manager.recordError(f"[ThinkTask] Error cleaning up LLM task: {e}")
+            
+            # Task is complete - IMPORTANT: Use stop() not just setting active=False
+            self.stop()  # This sets active=False AND marks the task as having completed
+            journaling_manager.recordInfo(f"[BasalGanglia] Thinking task completed and stopped")
             
             return self.result
             
@@ -81,7 +104,7 @@ class ThinkTask(NeuralTask):
             import traceback
             journaling_manager.recordError(f"[BasalGanglia] Stack trace: {traceback.format_exc()}")
             self.result = f"Error: {str(e)}"
-            self.active = False
+            self.stop()  # Make sure to stop on error too
             return self.result
     
     async def _stream_response(self, command):

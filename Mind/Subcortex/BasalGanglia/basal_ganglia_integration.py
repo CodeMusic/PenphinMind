@@ -18,11 +18,16 @@ from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJo
 journaling_manager = SystemJournelingManager()
 
 class BasalGangliaIntegration:
-    """Integration for the basal ganglia task system."""
+    """Integration class for Basal Ganglia task system"""
     
     def __init__(self):
         """Initialize the basal ganglia integration."""
-        self._tasks = {}  # Dictionary to store tasks
+        self._tasks = {}
+        self._task_history = []  # Keep track of completed tasks
+        self._max_tasks = 10  # Maximum number of active tasks
+        self._max_history = 20  # Maximum number of tasks to keep in history
+        self._last_cleanup = time.time()  # Track when we last cleaned up
+        self._cleanup_interval = 60  # Clean up every minute
         self._running = True
         
         # Log initialization
@@ -34,6 +39,9 @@ class BasalGangliaIntegration:
         # Start task loop
         self._task_loop = asyncio.create_task(self.task_loop())
         journaling_manager.recordInfo("[BasalGanglia] 🔄 Task loop started")
+        
+        # Start cleanup task
+        asyncio.create_task(self._background_cleanup())
     
     def _create_core_tasks(self):
         """Create and register core tasks."""
@@ -129,12 +137,132 @@ class BasalGangliaIntegration:
             self._task_loop.cancel()
         journaling_manager.recordInfo("[BasalGanglia] 🛑 Task system shutdown")
 
-    def think(self, prompt: str, stream: bool = False, priority: int = 3) -> ThinkTask:
-        """Create and register a ThinkTask for LLM operations"""
-        journaling_manager.recordScope("[BasalGanglia] Creating ThinkTask", prompt=prompt[:50])
-        task = ThinkTask(prompt=prompt, stream=stream, priority=priority)
-        self.basal_ganglia.register_task(task)
-        journaling_manager.recordInfo(f"[BasalGanglia] Registered ThinkTask with prompt: {prompt[:50]}...")
+    async def _background_cleanup(self):
+        """Background task to periodically clean up stale tasks."""
+        while True:
+            try:
+                # Only clean up every cleanup_interval seconds
+                await asyncio.sleep(self._cleanup_interval)
+                
+                # Don't hold reference to this function in the tasks dict
+                self._cleanup_tasks()
+            except Exception as e:
+                journaling_manager.recordError(f"Error in background cleanup: {e}")
+                # Continue running even if there's an error
+    
+    def _cleanup_tasks(self):
+        """Clean up completed and stale tasks."""
+        current_time = time.time()
+        
+        # Track tasks to remove
+        tasks_to_remove = []
+        
+        # Check each task
+        for task_id, task in self._tasks.items():
+            # 1. Task is inactive and completed - can be removed
+            if not task.active and task.has_completed():
+                tasks_to_remove.append(task_id)
+                
+            # 2. Task is inactive for too long - can be removed
+            elif not task.active and hasattr(task, 'creation_time'):
+                age = current_time - task.creation_time
+                if age > 300:  # 5 minutes
+                    tasks_to_remove.append(task_id)
+            
+            # 3. Task has been active for too long - likely hung
+            elif task.active and hasattr(task, 'creation_time'):
+                age = current_time - task.creation_time
+                if age > 600:  # 10 minutes
+                    # Force stop the task
+                    journaling_manager.recordWarning(f"Force-stopping hung task: {task.name} (ID: {task_id})")
+                    task.stop()
+                    tasks_to_remove.append(task_id)
+        
+        # Remove the tasks and add to history
+        for task_id in tasks_to_remove:
+            if task_id in self._tasks:
+                task = self._tasks[task_id]
+                # Add to history
+                self._task_history.append({
+                    "id": task_id,
+                    "name": task.name if hasattr(task, "name") else "Unknown",
+                    "removed_at": current_time
+                })
+                # Remove from active tasks
+                del self._tasks[task_id]
+        
+        # Trim history if needed
+        if len(self._task_history) > self._max_history:
+            self._task_history = self._task_history[-self._max_history:]
+        
+        # Update last cleanup time
+        self._last_cleanup = current_time
+        
+        # Log cleanup
+        if tasks_to_remove:
+            journaling_manager.recordInfo(f"Cleaned up {len(tasks_to_remove)} tasks. {len(self._tasks)} active tasks remaining.")
+    
+    def get_task_count(self):
+        """Return the current number of active tasks."""
+        return len(self._tasks)
+    
+    def get_task_stats(self):
+        """Return statistics about tasks."""
+        active_count = 0
+        inactive_count = 0
+        
+        for task in self._tasks.values():
+            if task.active:
+                active_count += 1
+            else:
+                inactive_count += 1
+        
+        return {
+            "active": active_count,
+            "inactive": inactive_count,
+            "total": len(self._tasks),
+            "history": len(self._task_history),
+            "last_cleanup": self._last_cleanup
+        }
+    
+    def think(self, prompt, stream=False, priority=5):
+        """Register a thinking task and return it.
+        
+        Args:
+            prompt: The prompt to send to the model
+            stream: Whether to stream the response
+            priority: Task priority (lower is higher)
+            
+        Returns:
+            The ThinkTask instance
+        """
+        # Clean up tasks before adding a new one
+        self._cleanup_tasks()
+        
+        # Check if we have capacity for a new task
+        if len(self._tasks) >= self._max_tasks:
+            journaling_manager.recordError(f"Cannot add thinking task: Task system is full ({len(self._tasks)}/{self._max_tasks})")
+            return None
+        
+        from Mind.Subcortex.BasalGanglia.tasks.think_task import ThinkTask
+        import time
+        
+        # Create think task
+        task = ThinkTask(prompt=prompt, priority=priority, stream=stream)
+        
+        # Generate a unique ID for the task
+        unique_id = f"think_{id(task)}_{int(time.time())}"
+        
+        # Add the ID to the task
+        task.id = unique_id
+        
+        # Schedule the task
+        self._tasks[task.id] = task
+        task.active = True
+        
+        # Use asyncio.create_task to schedule execution
+        asyncio.create_task(self._execute_task(task))
+        
         return task
     
     def system_command(self, command_type: str, data: Dict[str, Any] = None, 
