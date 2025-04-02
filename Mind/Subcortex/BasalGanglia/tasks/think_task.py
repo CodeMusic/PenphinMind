@@ -118,11 +118,12 @@ class ThinkTask(NeuralTask):
                 "object": "llm.setup",
                 "data": {
                     "model": SynapticPathways.default_llm_model,
-                    "response_format": "llm.utf-8", 
-                    "input": "llm.utf-8", 
+                    "response_format": "llm.utf-8.stream", 
+                    "input": "llm.utf-8.stream", 
                     "enoutput": True,
-                    "enkws": False,
-                    "max_token_len": 127
+                    "enkws": True,
+                    "max_token_len": 127,
+                    "unit": "llm"
                 }
             }
             
@@ -161,7 +162,7 @@ class ThinkTask(NeuralTask):
                 return response
             
             # Initialize streaming result
-            self.result = ""
+                self.result = ""
             
             # Extract initial response
             if isinstance(response["data"], dict) and "delta" in response["data"]:

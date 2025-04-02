@@ -45,7 +45,7 @@ class HardwareInfoTask(NeuralTask):
             await asyncio.sleep(0.5)
             
             # Refresh hardware info
-            journaling_manager.recordInfo("[HardwareInfoTask] Performing initial refresh")
+            journaling_manager.recordInfo("[HardwareInfoTask] 🐬 Performing initial refresh")
             await self._refresh_hardware_info()
             self.last_refresh_time = time.time()
             
@@ -98,7 +98,7 @@ class HardwareInfoTask(NeuralTask):
             }
             
             # Send command
-            journaling_manager.recordInfo("[HardwareInfoTask] 📤 Requesting hardware info")
+            journaling_manager.recordInfo("[HardwareInfoTask] 🐬 Requesting hardware info")
             response = await comm_task.send_command(hwinfo_command)
             
             # Fix: Handle the case where response might be a string
@@ -132,14 +132,14 @@ class HardwareInfoTask(NeuralTask):
                 # Update shared cache in SynapticPathways
                 SynapticPathways.current_hw_info = self.hardware_info
                 
-                journaling_manager.recordInfo(f"[HardwareInfoTask] ✅ Hardware info refreshed: {self.hardware_info}")
+                journaling_manager.recordInfo(f"[HardwareInfoTask] 🐧 Hardware info refreshed: {self.hardware_info}")
                 return True
             else:
-                journaling_manager.recordError(f"[HardwareInfoTask] ❌ Invalid API response: {response}")
+                journaling_manager.recordError(f"[HardwareInfoTask] 🐬 Invalid API response: {response}")
                 return False
                 
         except Exception as e:
-            journaling_manager.recordError(f"[HardwareInfoTask] ❌ Error refreshing hardware info: {e}")
+            journaling_manager.recordError(f"[HardwareInfoTask] 🐧 Error refreshing hardware info: {e}")
             import traceback
             journaling_manager.recordError(f"[HardwareInfoTask] Stack trace: {traceback.format_exc()}")
             return False

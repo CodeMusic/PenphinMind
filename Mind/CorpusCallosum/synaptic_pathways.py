@@ -602,79 +602,65 @@ class SynapticPathways:
             time.sleep(0.01)
 
     @classmethod
-    async def get_hardware_info(cls) -> Dict[str, Any]:
-        """Get hardware information without forcing a refresh."""
-        journaling_manager.recordDebug("[SynapticPathways] Getting hardware info")
-        
+    async def get_hardware_info(cls):
+        """Get hardware information from the device"""
         try:
-            # Get hardware info task
-            bg = cls.get_basal_ganglia()
-            hw_task = bg.get_hardware_info_task()
+            # Create request with exact API format
+            hwinfo_command = {
+                "request_id": f"hwinfo_{int(time.time())}",
+                "work_id": "sys",
+                "action": "hwinfo"
+            }
             
-            if not hw_task:
-                journaling_manager.recordError("[SynapticPathways] ❌ Hardware info task not found")
-                return cls.current_hw_info
+            # Send command
+            journaling_manager.recordInfo("[SynapticPathways] 🐬 Requesting hardware info")
+            response = await cls.transmit_json(hwinfo_command)
             
-            # Return current cached info without forcing refresh
-            hw_info = hw_task.hardware_info
-            journaling_manager.recordDebug(f"[SynapticPathways] 📊 Retrieved hardware info: {hw_info}")
-            return hw_info
-            
+            # Check if response is valid before updating
+            if response and not response.get("error", {}).get("code", 1):
+                # Store in BOTH variables to ensure consistency
+                cls.hardware_info = response.get("data", {})
+                cls.current_hw_info = cls.hardware_info  # Sync both variables
+                journaling_manager.recordInfo(f"[SynapticPathways] 🐧🐬 Updated hardware info: {cls.hardware_info}")
+            else:
+                error_msg = response.get("error", {}).get("message", "Unknown response format") if response else "No response"
+                journaling_manager.recordWarning(f"[SynapticPathways] 🐧 Failed to get hardware info: {error_msg}")
+                
+            return cls.hardware_info
         except Exception as e:
-            journaling_manager.recordError(f"[SynapticPathways] ❌ Error getting hardware info: {e}")
-            journaling_manager.recordError(f"[SynapticPathways] Stack trace: {traceback.format_exc()}")
-            return cls.current_hw_info  # Fallback to cached info
+            journaling_manager.recordError(f"[SynapticPathways] 🐧 Error getting hardware info: {e}")
+            return {}
 
     @classmethod
     def format_hw_info(cls) -> str:
-        """Format hardware info with proper field names and unit conversions."""
-        try:
-            # Get hardware info task
-            bg = cls.get_basal_ganglia()
-            hw_task = bg.get_hardware_info_task() if hasattr(bg, "get_hardware_info_task") else None
-            
-            # Get current info - either from task or fallback
-            hw = hw_task.hardware_info if hw_task else cls.current_hw_info
-            
-            # Format timestamp
-            timestamp = hw.get("timestamp", 0)
-            time_str = time.strftime("%H:%M:%S", time.localtime(timestamp)) if timestamp else "N/A"
-            
-            # Get CPU and memory with exact field names from API
-            cpu = hw.get("cpu_loadavg", "N/A")
-            mem = hw.get("mem", "N/A")
-            
-            # Handle temperature conversion from millidegrees to degrees
-            # API returns temperature in millidegrees (e.g., 39350 = 39.35°C)
-            temp_millideg = hw.get("temperature", 0)
-            if isinstance(temp_millideg, str):
-                try:
-                    temp_millideg = int(temp_millideg)
-                except (ValueError, TypeError):
-                    temp_millideg = 0
-            
-            # Convert temperature to degrees with proper formatting
-            if temp_millideg:
-                temp_c = f"{temp_millideg/1000:.1f}"  # Format to one decimal place
-            else:
-                temp_c = "N/A"
-            
-            # Format IP if available
-            ip_address = hw.get("ip_address", "N/A")
-            ip_display = f"IP: {ip_address} | " if ip_address != "N/A" else ""
-            
-            # Create the formatted string
-            return f"""~
-{ip_display}CPU: {cpu}% | Memory: {mem}% | Temp: {temp_c}°C | Updated: {time_str}
-~"""
-            
-        except Exception as e:
-            journaling_manager.recordError(f"Error formatting hardware info: {e}")
-            import traceback
-            journaling_manager.recordError(f"Traceback: {traceback.format_exc()}")
-            
-            # Emergency fallback with empty values
-            return "~\nCPU: N/A | Memory: N/A | Temp: N/A | Updated: N/A\n~"
+        """Format hardware info for display"""
+        # Problem: You're using hardware_info but data is in current_hw_info
+        hw = cls.hardware_info or {}
+        
+        # Extract values with proper defaults
+        cpu = hw.get("cpu_loadavg", "N/A")
+        mem = hw.get("mem", "N/A")
+        temp_raw = hw.get("temperature", "N/A")
+        
+        # Format temperature properly - convert from millicelsius to celsius
+        if isinstance(temp_raw, (int, float)) and temp_raw > 1000:
+            temp = f"{temp_raw/1000:.1f}"
+        else:
+            temp = str(temp_raw)
+        
+        # Format network info
+        net_info = ""
+        if "eth_info" in hw and isinstance(hw["eth_info"], list) and len(hw["eth_info"]) > 0:
+            eth = hw["eth_info"][0]  # Take first network interface
+            ip = eth.get("ip", "N/A")
+            net_info = f" | IP: {ip}"
+        
+        # Get update timestamp
+        updated = time.strftime("%H:%M:%S") if hw else "N/A"
+        
+        # Format the hardware info string
+        hw_info = f"🐧🐬 Hardware: CPU: {cpu}% | Memory: {mem}% | Temp: {temp}°C{net_info} | Updated: {updated}"
+        return hw_info
 
     @classmethod
     async def get_available_models(cls) -> List[Dict[str, Any]]:

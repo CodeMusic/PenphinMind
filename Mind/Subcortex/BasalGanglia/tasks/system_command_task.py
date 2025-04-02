@@ -118,7 +118,7 @@ class SystemCommandTask(NeuralTask):
             comm_task = bg.get_communication_task()
             
             if not comm_task:
-                journaling_manager.recordError("[SystemCommandTask] ❌ Communication task not found")
+                journaling_manager.recordError("[SystemCommandTask] 🐧 Communication task not found")
                 return {"success": False, "error": "Communication task not found"}
             
             # Use EXACT format that works for model calls
@@ -129,12 +129,12 @@ class SystemCommandTask(NeuralTask):
             }
             
             # Log command
-            journaling_manager.recordInfo("[SystemCommandTask] 📤 Sending ping command")
+            journaling_manager.recordInfo("[SystemCommandTask] 🐬 Sending ping command")
             
             # Send command using same method that works for models
             response = await comm_task.send_command(ping_command)
-            journaling_manager.recordInfo(f"[SystemCommandTask] 📥 Ping response received")
-            journaling_manager.recordDebug(f"[SystemCommandTask] 📥 Response: {response}")
+            journaling_manager.recordInfo(f"[SystemCommandTask] 🐬 Ping response received")
+            journaling_manager.recordDebug(f"[SystemCommandTask] 🐬 Response: {response}")
             
             # Check response - EXACT format from your shared example
             if response and "error" in response:
@@ -147,7 +147,7 @@ class SystemCommandTask(NeuralTask):
                     "timestamp": time.time()
                 }
             else:
-                journaling_manager.recordError(f"[SystemCommandTask] ❌ Invalid ping response")
+                journaling_manager.recordError(f"[SystemCommandTask] 🐧 Invalid ping response")
                 return {"success": False, "error": "Invalid response"}
             
         except Exception as e:

@@ -164,12 +164,13 @@ class NeurocorticalBridge:
                 "action": "setup",
                 "object": "llm.setup",
                 "data": {
-                    "model": SynapticPathways.default_llm_model or "qwen2.5-0.5b",
-                    "response_format": "llm.utf-8", 
-                    "input": "llm.utf-8", 
+                    "model": SynapticPathways.default_llm_model,
+                    "response_format": "llm.utf-8.stream", 
+                    "input": "llm.utf-8.stream", 
                     "enoutput": True,
-                    "enkws": False,
-                    "max_token_len": 127
+                    "enkws": True,
+                    "max_token_len": 127,
+                    "unit": "llm"
                 }
             }
             
@@ -310,11 +311,12 @@ class NeurocorticalBridge:
                 "object": "llm.setup",
                 "data": {
                     "model": model_name,
-                    "response_format": "llm.utf-8", 
-                    "input": "llm.utf-8", 
+                    "response_format": "llm.utf-8.stream", 
+                    "input": "llm.utf-8.stream", 
                     "enoutput": True,
-                    "enkws": False,
-                    "max_token_len": 127
+                    "enkws": True,
+                    "max_token_len": 127,
+                    "unit": "llm"
                 }
             }
             

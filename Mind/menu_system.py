@@ -49,9 +49,11 @@ async def display_main_menu() -> str:
     """Display main menu and get user choice"""
     print_header()
     
-    # Use the NeurocorticalBridge for hardware info
-    from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
-    await NeurocorticalBridge.execute("hardware_info", use_task=False)
+    # First establish connection with ping
+    ping_response = await SynapticPathways.transmit_json({"request_id": "init_ping", "work_id": "sys", "action": "ping"})
+    
+    # Then get hardware info
+    await SynapticPathways.get_hardware_info()
     
     # Display hardware info
     hw_info = SynapticPathways.format_hw_info()
@@ -353,7 +355,15 @@ async def start_chat():
     clear_screen()
     print_header()
     
-    # Refresh hardware info before displaying
+    # First establish a basic ping connection
+    print("Establishing connection...")
+    ping_response = await SynapticPathways.transmit_json({"request_id": "init_ping", "work_id": "sys", "action": "ping"})
+    if not ping_response or ping_response.get("error", {}).get("code", 1) != 0:
+        print("Error connecting to hardware. Press Enter to return to main menu...")
+        input()
+        return
+    
+    # Now refresh hardware info before displaying
     await SynapticPathways.get_hardware_info()
     
     # Display hardware info at the top of chat
