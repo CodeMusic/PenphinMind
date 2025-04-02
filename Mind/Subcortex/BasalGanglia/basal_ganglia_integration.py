@@ -226,26 +226,16 @@ class BasalGangliaIntegration:
         }
     
     def think(self, prompt, stream=False, priority=5):
-        """Register a thinking task and return it.
-        
-        Args:
-            prompt: The prompt to send to the model
-            stream: Whether to stream the response
-            priority: Task priority (lower is higher)
-            
-        Returns:
-            The ThinkTask instance
-        """
-        # Clean up tasks before adding a new one
-        self._cleanup_tasks()
+        """Register a thinking task and return it."""
+        # Import these at the method level to avoid circular imports
+        from Mind.Subcortex.BasalGanglia.tasks.think_task import ThinkTask
+        import time
+        import asyncio
         
         # Check if we have capacity for a new task
         if len(self._tasks) >= self._max_tasks:
             journaling_manager.recordError(f"Cannot add thinking task: Task system is full ({len(self._tasks)}/{self._max_tasks})")
             return None
-        
-        from Mind.Subcortex.BasalGanglia.tasks.think_task import ThinkTask
-        import time
         
         # Create think task
         task = ThinkTask(prompt=prompt, priority=priority, stream=stream)
@@ -260,10 +250,30 @@ class BasalGangliaIntegration:
         self._tasks[task.id] = task
         task.active = True
         
-        # Use asyncio.create_task to schedule execution
-        asyncio.create_task(self._execute_task(task))
+        # FIX: Don't call _execute_task which doesn't exist
+        # Instead, just create a task with execute directly
+        asyncio.create_task(task.execute())
         
         return task
+
+    async def _execute_think_task(self, task):
+        """Execute a thinking task asynchronously."""
+        journaling_manager.recordInfo(f"[BasalGanglia] Executing task: {task.name}")
+        
+        try:
+            # Call the task's execute method
+            if hasattr(task, 'execute') and callable(task.execute):
+                result = await task.execute()
+                journaling_manager.recordInfo(f"[BasalGanglia] Task completed: {task.name}")
+            else:
+                journaling_manager.recordError(f"[BasalGanglia] Task has no execute method: {task.name}")
+        except Exception as e:
+            journaling_manager.recordError(f"[BasalGanglia] Error executing task: {e}")
+            import traceback
+            journaling_manager.recordError(f"[BasalGanglia] Stack trace: {traceback.format_exc()}")
+            
+            # Make sure task is marked as inactive
+            task.active = False
     
     def system_command(self, command_type: str, data: Dict[str, Any] = None, 
                       priority: int = 1) -> SystemCommandTask:

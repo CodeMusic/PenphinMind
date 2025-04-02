@@ -17,84 +17,67 @@ class HardwareInfoTask(NeuralTask):
     def __init__(self, priority=5):
         """Initialize hardware info task with default values."""
         super().__init__("HardwareInfoTask", priority)
-        self.hardware_info = {
+        # Initialize with shared cache values if available
+        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+        self.hardware_info = SynapticPathways.current_hw_info.copy() if hasattr(SynapticPathways, 'current_hw_info') else {
             "cpu_loadavg": "N/A",
             "mem": "N/A",
             "temperature": "N/A",
             "timestamp": 0
         }
-        self.last_refresh_time = 0
+        self.last_refresh_time = 0  # Initialize to 0 to force immediate refresh
         self.refresh_interval = 60.0  # Refresh once per minute
-        self.active = True  # Make sure it's active by default
-        self.first_run = True  # Flag to indicate first run
+        self.active = True
         
         # Schedule immediate initial refresh
+        self._schedule_immediate_refresh()
+        
+        journaling_manager.recordInfo("[HardwareInfoTask] Initialized, scheduled immediate refresh")
+        
+    def _schedule_immediate_refresh(self):
+        """Schedule immediate refresh"""
         asyncio.create_task(self._initial_refresh())
         
     async def _initial_refresh(self):
-        """Perform immediate initial refresh after a slight delay to ensure connections are ready."""
-        await asyncio.sleep(1.0)  # Short delay to let system initialize
-        journaling_manager.recordInfo("[HardwareInfoTask] 🔄 Performing initial hardware info refresh")
-        
+        """Perform immediate hardware info refresh"""
         try:
-            # First refresh might fail if connections aren't ready, so try a few times
-            for attempt in range(3):
-                try:
-                    await self._refresh_hardware_info()
-                    self.last_refresh_time = time.time()
-                    journaling_manager.recordInfo(f"[HardwareInfoTask] ✅ Initial hardware info obtained: {self.hardware_info}")
-                    break
-                except Exception as e:
-                    if attempt < 2:  # Try again if not last attempt
-                        journaling_manager.recordWarning(f"[HardwareInfoTask] Initial refresh attempt {attempt+1} failed: {e}")
-                        await asyncio.sleep(1.0)  # Wait before retrying
-                    else:
-                        journaling_manager.recordError(f"[HardwareInfoTask] All initial refresh attempts failed: {e}")
+            # Small delay to ensure other systems are ready
+            await asyncio.sleep(0.5)
+            
+            # Refresh hardware info
+            journaling_manager.recordInfo("[HardwareInfoTask] Performing initial refresh")
+            await self._refresh_hardware_info()
+            self.last_refresh_time = time.time()
+            
+            # Update SynapticPathways shared cache
+            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            SynapticPathways.current_hw_info = self.hardware_info.copy()
+            
+            journaling_manager.recordInfo(f"[HardwareInfoTask] Initial refresh completed: {self.hardware_info}")
         except Exception as e:
             journaling_manager.recordError(f"[HardwareInfoTask] Error in initial refresh: {e}")
         
     async def execute(self):
-        """Execute the hardware info task."""
-        try:
-            current_time = time.time()
+        """Background task to update hardware info every minute."""
+        current_time = time.time()
+        
+        # Check if it's time for a refresh
+        if current_time - self.last_refresh_time >= self.refresh_interval:
+            journaling_manager.recordInfo("[HardwareInfoTask] 🔄 Performing background refresh")
             
-            # Check if it's time to refresh or if it's the first run
-            if self.first_run or (current_time - self.last_refresh_time >= self.refresh_interval):
-                journaling_manager.recordInfo("[HardwareInfoTask] 🔄 Refreshing hardware info")
-                
-                # Refresh the hardware info
+            try:
                 await self._refresh_hardware_info()
                 self.last_refresh_time = current_time
-                self.first_run = False
+                journaling_manager.recordInfo(f"[HardwareInfoTask] ✅ Background refresh completed: {self.hardware_info}")
                 
-                # Log updated values
-                journaling_manager.recordInfo(f"[HardwareInfoTask] ✅ Hardware info updated: {self.hardware_info}")
-                
-                # Add cleanup for the hardware info command
-                try:
-                    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-                    bg = SynapticPathways.get_basal_ganglia()
-                    comm_task = bg.get_communication_task()
-                    
-                    if comm_task:
-                        cleanup_command = {
-                            "request_id": f"hwinfo_cleanup_{int(time.time())}",
-                            "work_id": "sys",
-                            "action": "exit"
-                        }
-                        await comm_task.send_command(cleanup_command)
-                        journaling_manager.recordInfo("[HardwareInfoTask] Sent cleanup command")
-                except Exception as e:
-                    journaling_manager.recordWarning(f"[HardwareInfoTask] Cleanup error: {e}")
-            
-            # Always return the current info (cached or freshly fetched)
-            return self.hardware_info
-            
-        except Exception as e:
-            journaling_manager.recordError(f"[HardwareInfoTask] ❌ Error in execute: {e}")
-            import traceback
-            journaling_manager.recordError(f"[HardwareInfoTask] Stack trace: {traceback.format_exc()}")
-            return self.hardware_info
+                # Make sure to update the shared cache 
+                from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+                SynapticPathways.current_hw_info = self.hardware_info.copy()
+            except Exception as e:
+                journaling_manager.recordError(f"[HardwareInfoTask] ❌ Background refresh error: {e}")
+        
+        # Return current info without logging every time
+        return self.hardware_info
             
     async def _refresh_hardware_info(self):
         """Refresh hardware information from API."""

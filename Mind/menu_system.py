@@ -49,8 +49,9 @@ async def display_main_menu() -> str:
     """Display main menu and get user choice"""
     print_header()
     
-    # Refresh hardware info before displaying
-    await SynapticPathways.get_hardware_info()
+    # Use the NeurocorticalBridge for hardware info
+    from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+    await NeurocorticalBridge.execute("hardware_info", use_task=False)
     
     # Display hardware info
     hw_info = SynapticPathways.format_hw_info()
@@ -575,6 +576,10 @@ async def manage_tasks():
     clear_screen()
     print_header()
     
+    # Import SynapticPathways at the beginning of the function
+    # to ensure it's properly associated with a value
+    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+    
     # Display hardware info
     hw_info = SynapticPathways.format_hw_info()
     print(hw_info)
@@ -582,7 +587,6 @@ async def manage_tasks():
     print("\n=== Task Management ===")
     
     # Get BasalGanglia instance to examine tasks
-    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
     bg = SynapticPathways.get_basal_ganglia()
     
     # Display local tasks

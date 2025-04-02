@@ -45,16 +45,14 @@ class ThinkTask(NeuralTask):
             # Create unique work_id for this task
             work_id = f"think_{int(time.time())}"
             
-            # Create thinking command
+            # FIX: Use exactly the correct API format for inference
             inference_command = {
                 "request_id": f"inference_{int(time.time())}",
                 "work_id": work_id,
                 "action": "inference",
-                "object": "llm.utf-8",
+                "object": "llm.inference",  # Added object field
                 "data": {
-                    "delta": self.prompt,
-                    "index": 0,
-                    "finish": True
+                    "delta": self.prompt  # Keep it simple - just the prompt
                 }
             }
             
@@ -80,21 +78,20 @@ class ThinkTask(NeuralTask):
                     error_msg = response.get("error", {}).get("message", "Unknown error")
                     self.result = f"Error {error_code}: {error_msg}"
             
-            # CRITICAL: Clean up the LLM task on the device
+            # Make sure to clean up the LLM task on the device
             try:
                 exit_command = {
                     "request_id": f"exit_{int(time.time())}",
                     "work_id": work_id,
                     "action": "exit",
-                    "object": "llm"  # Add object field for proper cleanup
+                    "object": "llm"
                 }
                 await SynapticPathways.transmit_json(exit_command)
-                journaling_manager.recordInfo(f"[ThinkTask] Cleaned up LLM task: {work_id}")
             except Exception as e:
                 journaling_manager.recordError(f"[ThinkTask] Error cleaning up LLM task: {e}")
             
-            # Task is complete - IMPORTANT: Use stop() not just setting active=False
-            self.stop()  # This sets active=False AND marks the task as having completed
+            # Task is complete
+            self.stop()  # Use stop() not just setting active=False
             journaling_manager.recordInfo(f"[BasalGanglia] Thinking task completed and stopped")
             
             return self.result
@@ -113,7 +110,7 @@ class ThinkTask(NeuralTask):
         from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
         
         try:
-            # Initialize the LLM
+            # Initialize the LLM with better setup
             setup_command = {
                 "request_id": f"setup_{int(time.time())}",
                 "work_id": command["work_id"],
@@ -121,7 +118,7 @@ class ThinkTask(NeuralTask):
                 "object": "llm.setup",
                 "data": {
                     "model": SynapticPathways.default_llm_model,
-                    "response_format": "llm.utf-8.stream", 
+                    "response_format": "llm.utf-8", 
                     "input": "llm.utf-8", 
                     "enoutput": True,
                     "enkws": False,
@@ -129,11 +126,33 @@ class ThinkTask(NeuralTask):
                 }
             }
             
-            # Send setup command
-            await SynapticPathways.transmit_json(setup_command)
+            # Log the exact command we're sending
+            journaling_manager.recordInfo(f"[ThinkTask] Sending setup command: {setup_command}")
+            
+            # Send setup command and check for success
+            setup_response = await SynapticPathways.transmit_json(setup_command)
+            
+            if setup_response and setup_response.get("error", {}).get("code", 0) != 0:
+                error_msg = setup_response.get("error", {}).get("message", "Unknown error")
+                journaling_manager.recordError(f"[ThinkTask] Setup error: {error_msg}")
+                self.result = f"Error during setup: {error_msg}"
+                return setup_response
+            
+            # Fixed: Use exact inference format that we know works
+            inference_command = {
+                "request_id": f"inference_{int(time.time())}",
+                "work_id": command["work_id"],
+                "action": "inference",
+                "data": {
+                    "delta": self.prompt,
+                    "index": 0,  
+                    "finish": True
+                }
+            }
             
             # Send inference command
-            response = await SynapticPathways.transmit_json(command)
+            journaling_manager.recordInfo(f"[ThinkTask] Sending inference command")
+            response = await SynapticPathways.transmit_json(inference_command)
             
             if not response or "data" not in response:
                 error_code = response.get("error", {}).get("code", -1)
@@ -148,37 +167,6 @@ class ThinkTask(NeuralTask):
             if isinstance(response["data"], dict) and "delta" in response["data"]:
                 delta = response["data"]["delta"]
                 self.result += delta
-                
-                # Keep getting streaming responses until finished
-                finish = response["data"].get("finish", False)
-                
-                while not finish:
-                    # Create streaming request
-                    stream_command = {
-                        "request_id": f"stream_{int(time.time())}",
-                        "work_id": command["work_id"],
-                        "action": "inference.stream",
-                        "object": "llm.utf-8.stream"
-                    }
-                    
-                    # Send stream command
-                    stream_response = await SynapticPathways.transmit_json(stream_command)
-                    
-                    # Process response
-                    if not stream_response or "data" not in stream_response:
-                        break
-                        
-                    data = stream_response["data"]
-                    if isinstance(data, dict):
-                        delta = data.get("delta", "")
-                        self.result += delta
-                        finish = data.get("finish", False)
-                    else:
-                        break
-                    
-                    # Don't overwhelm the device with requests
-                    await asyncio.sleep(0.1)
-            
             elif isinstance(response["data"], str):
                 # Handle direct string response
                 self.result = response["data"]
