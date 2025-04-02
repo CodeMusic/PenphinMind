@@ -21,7 +21,7 @@ from Mind.mind import Mind, setup_connection
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-from Mind.menu_system import clear_screen, run_menu_system
+from menu_system import clear_screen, run_menu_system
 from Mind.CorpusCallosum.transport_layer import run_adb_command, get_transport
 
 # Create logs directory if it doesn't exist
@@ -237,28 +237,34 @@ async def run_frontal_cortex_test(mind: Mind) -> None:
 
 async def run_menu(mind: Mind, connection_type: str) -> None:
     """Run the interactive menu system"""
-    was_initialized = SynapticPathways._initialized
+    was_initialized = False
     
     try:
         logger.info("Starting interactive menu system...")
         
         # Ensure the connection is initialized if not done already
-        if not SynapticPathways._initialized:
-            logger.info("Initializing SynapticPathways for menu system...")
-            await SynapticPathways.initialize(connection_type)
+        if connection_type:
+            logger.info(f"Initializing connection with type: {connection_type}")
+            # Use Mind to establish connection
+            result = await mind.connect(connection_type)
+            was_initialized = result
+        else:
+            # Try to auto-detect connection
+            logger.info("Auto-detecting connection...")
+            # Use Mind to establish connection with auto-detection
+            result = await mind.connect()
+            was_initialized = result
         
         # Run the menu system with the Mind instance
-        await run_menu_system(mind=mind)
+        await run_menu_system(mind)
         
     except Exception as e:
         logger.error(f"Menu system error: {e}")
-        logger.exception("Full exception details:")
-        raise
     finally:
-        # Only clean up if we initialized it in this function
-        if not was_initialized and SynapticPathways._initialized:
-            logger.info("Menu system exited, cleaning up...")
-            await SynapticPathways.cleanup()
+        # Only clean up if we initialized here
+        if was_initialized:
+            logger.info("Cleaning up after menu system...")
+            await mind.cleanup()
 
 def parse_args():
     """Parse command line arguments"""
@@ -373,14 +379,18 @@ async def main():
         logger.error(f"Error in main: {e}")
         raise
 
-# Add this where the program exits or in a signal handler
-async def shutdown():
+async def shutdown(mind_instance: Mind = None):
     """Clean up resources before shutdown"""
     try:
-        # Import here to avoid circular imports
-        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-        await SynapticPathways.final_shutdown()
-        print("All connections and port forwarding cleaned up.")
+        if mind_instance:
+            # Use the provided Mind instance
+            await mind_instance.complete_cleanup()
+        else:
+            # Create a new Mind instance if none provided
+            mind = Mind()
+            await mind.complete_cleanup()
+            
+        print("All connections and resources cleaned up.")
     except Exception as e:
         print(f"Error during shutdown cleanup: {e}")
 

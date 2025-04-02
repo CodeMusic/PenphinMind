@@ -160,23 +160,16 @@ class ModelManagementTask(NeuralTask):
         """Reset the LLM system"""
         journaling_manager.recordScope("[BasalGanglia] Resetting LLM system")
         try:
-            # Import here to avoid circular imports
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            # Use NeurocorticalBridge for proper architectural layering
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Create reset command
-            reset_command = {
-                "request_id": f"reset_{int(time.time())}",
-                "work_id": "sys",
-                "action": "reset",
-                "object": "system"
-            }
-            
-            # Send command
-            response = await SynapticPathways.transmit_json(reset_command)
+            # Execute the reset operation through the bridge
+            journaling_manager.recordInfo("[ModelManagementTask] Executing reset via NeurocorticalBridge")
+            result = await NeurocorticalBridge.execute_operation("reset_llm")
             
             # Check response
-            if response and response.get("error", {}).get("code", -1) == 0:
-                message = response.get("error", {}).get("message", "")
+            if result and result.get("status") == "ok":
+                message = result.get("message", "Reset completed successfully")
                 journaling_manager.recordInfo(f"[BasalGanglia] Reset successful: {message}")
                 
                 # Clear caches
@@ -190,7 +183,7 @@ class ModelManagementTask(NeuralTask):
                 self.result = {"success": True, "message": message}
                 return True
             else:
-                error_msg = response.get("error", {}).get("message", "Unknown error")
+                error_msg = result.get("message", "Unknown error") if result else "No response from bridge"
                 journaling_manager.recordError(f"[BasalGanglia] Failed to reset LLM: {error_msg}")
                 self.result = {"success": False, "error": error_msg}
                 return False

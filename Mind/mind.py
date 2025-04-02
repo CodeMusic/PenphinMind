@@ -17,6 +17,7 @@ from .OccipitalLobe.VisualCortex.integration_area import IntegrationArea as Visu
 from .FrontalLobe.MotorCortex.integration_area import IntegrationArea as MotorIntegration
 from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from .config import CONFIG
+from .Subcortex.neurocortical_bridge import NeurocorticalBridge
 # Add other lobe imports as needed
 
 # Initialize journaling manager
@@ -26,7 +27,10 @@ logger = logging.getLogger(__name__)
 
 class Mind:
     """
-    High-level coordinator for all brain regions
+    The central cognitive system integrating all neural functions
+    
+    Acts as the public interface to the system's cognitive operations.
+    Lower-level components must be accessed only through this interface.
     """
     def __init__(self):
         # Initialize instance variables
@@ -38,6 +42,8 @@ class Mind:
         self._initialized = False
         self._processing = False
         self._language_processor = None  # Language processor instance
+        self._connection_type = None
+        self._system_journeling_manager = SystemJournelingManager()
         
         # Initialize all lobes
         self._temporal_lobe = {
@@ -294,13 +300,13 @@ class Mind:
 
     async def process_input(self, input_text: str) -> Dict[str, Any]:
         """
-        Process text input through language system
+        Process text input and generate a response
         
         Args:
-            input_text: Text to process
+            input_text: The text input to process
             
         Returns:
-            Dict[str, Any]: Processing result containing response and status
+            Dict[str, Any]: Response with status and generated text
         """
         journaling_manager.recordScope("Mind.process_input", input_text=input_text)
         try:
@@ -308,19 +314,14 @@ class Mind:
                 journaling_manager.recordDebug("Mind not initialized, initializing now")
                 await self.initialize()
                 
-            if not self._language_processor:
-                journaling_manager.recordError("Language processor not initialized")
-                raise RuntimeError("Language processor not initialized")
-                
-            journaling_manager.recordDebug("Processing input through language processor")
-            # Process through language processor
-            response = await self._language_processor.process_input(input_text)
+            journaling_manager.recordInfo("Processing input text through language processor")
             
-            journaling_manager.recordInfo("Successfully processed input")
-            return {
-                "status": "ok",
-                "response": response.get("response", {})
-            }
+            # Use self.execute_operation instead of direct NeurocorticalBridge access
+            return await self.execute_operation(
+                "think", 
+                {"prompt": input_text},
+                stream=True
+            )
             
         except Exception as e:
             journaling_manager.recordError(f"Error processing input: {e}")
@@ -329,21 +330,215 @@ class Mind:
                 "message": str(e)
             }
 
-async def setup_connection(connection_type=None):
-    """Set up the connection to the device using the specified connection type"""
-    from FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-    journaling_manager = SystemJournelingManager()
+    async def execute_operation(self, operation: str, data=None, use_task=None, stream=False):
+        """
+        Execute a cognitive operation
+        
+        This is the public interface to the NeurocorticalBridge, respecting architectural boundaries.
+        External components must use this method instead of accessing the bridge directly.
+        
+        Args:
+            operation: The operation to perform
+            data: Optional data for the operation
+            use_task: Whether to use the task system
+            stream: Whether to stream results
+            
+        Returns:
+            Result of the operation
+        """
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        journaling_manager.recordInfo(f"[Mind] Executing operation: {operation}")
+        
+        # Execute via NeurocorticalBridge using standardized operation format
+        return await NeurocorticalBridge.execute_operation(operation, data, use_task, stream)
     
-    journaling_manager.recordInfo(f"Mind setting up connection of type: {connection_type}")
+    async def think(self, prompt: str, stream: bool = False):
+        """
+        Perform thinking operation with the LLM
+        
+        Args:
+            prompt: The input prompt
+            stream: Whether to stream the results
+            
+        Returns:
+            Thinking result from the LLM
+        """
+        journaling_manager.recordInfo(f"[Mind] Thinking: {prompt[:50]}...")
+        return await self.execute_operation("think", {"prompt": prompt}, stream=stream)
     
-    if connection_type:
-        # Forward to SynapticPathways
+    async def reset_system(self):
+        """Reset the LLM system"""
+        journaling_manager.recordInfo("[Mind] Resetting system")
+        return await self.execute_operation("reset_llm")
+    
+    async def get_hardware_info(self):
+        """Get hardware information"""
+        return await self.execute_operation("hardware_info")
+    
+    async def ping_system(self):
+        """Ping the system to check connectivity"""
+        return await self.execute_operation("ping")
+    
+    async def list_models(self):
+        """List available models"""
+        return await self.execute_operation("list_models")
+    
+    async def set_model(self, model_name: str):
+        """Set the active model"""
+        journaling_manager.recordInfo(f"[Mind] Setting model: {model_name}")
+        return await self.execute_operation("set_model", {"model": model_name})
+        
+    async def reboot_device(self):
+        """Reboot the connected device"""
+        journaling_manager.recordInfo("[Mind] Rebooting device")
+        return await self.execute_operation("reboot_device")
+    
+    async def connect(self, connection_type=None):
+        """Connect to hardware using the specified connection type"""
+        journaling_manager.recordInfo(f"[Mind] Connecting with type: {connection_type}")
+        self._connection_type = connection_type
+        result = await self.execute_operation("initialize_connection", {"connection_type": connection_type})
+        return result.get("status") == "ok"
+    
+    def get_system_info(self):
+        """Get system information"""
+        return {
+            "initialized": self._initialized,
+            "connection_type": self._connection_type
+        }
+        
+    def format_hardware_info(self):
+        """Format hardware info in a human-readable format"""
+        from .CorpusCallosum.synaptic_pathways import SynapticPathways
+        return SynapticPathways.format_hw_info()
+        
+    def get_task_status(self):
+        """
+        Get status information about all active and inactive tasks
+        
+        This method provides a higher-level abstraction over BasalGanglia's task system
+        without exposing the implementation details.
+        
+        Returns:
+            Dict with task information including active and inactive tasks
+        """
+        journaling_manager.recordInfo("[Mind] Getting task status information")
+        
+        # Access BasalGanglia through NeurocorticalBridge only
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Structure the response to avoid exposing BasalGanglia internals
+        result = {
+            "active_tasks": [],
+            "inactive_tasks": [],
+            "total_count": 0
+        }
+        
         try:
-            await SynapticPathways.set_device_mode(connection_type)
+            # Get task information through NeurocorticalBridge
+            bg_result = NeurocorticalBridge.get_basal_ganglia()
+            
+            if bg_result and hasattr(bg_result, "_tasks"):
+                # BasalGangliaIntegration has _tasks dict
+                tasks = list(bg_result._tasks.values())
+                result["total_count"] = len(tasks)
+                
+                # Group tasks by active status
+                for task in tasks:
+                    task_info = {
+                        "name": getattr(task, "name", "Unknown"),
+                        "type": getattr(task, "task_type", "Unknown"),
+                        "priority": getattr(task, "priority", 0),
+                        "created_at": getattr(task, "creation_time", 0)
+                    }
+                    
+                    if hasattr(task, "active") and task.active:
+                        result["active_tasks"].append(task_info)
+                    else:
+                        result["inactive_tasks"].append(task_info)
+                        
+            elif bg_result and hasattr(bg_result, "task_queue"):
+                # Original BasalGanglia has task_queue list
+                tasks = getattr(bg_result, "task_queue", [])
+                result["total_count"] = len(tasks)
+                
+                # Group tasks by active status
+                for task in tasks:
+                    task_info = {
+                        "name": getattr(task, "name", "Unknown"),
+                        "priority": getattr(task, "priority", 0),
+                        "created_at": getattr(task, "creation_time", 0)
+                    }
+                    
+                    if hasattr(task, "active") and task.active:
+                        result["active_tasks"].append(task_info)
+                    else:
+                        result["inactive_tasks"].append(task_info)
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Error getting task status: {e}")
+            
+        return result
+        
+    def get_default_model(self):
+        """Get the currently selected default model"""
+        from .CorpusCallosum.synaptic_pathways import SynapticPathways
+        return SynapticPathways.default_llm_model
+        
+    def set_default_model(self, model_name: str):
+        """Set the default model name in memory"""
+        from .CorpusCallosum.synaptic_pathways import SynapticPathways
+        SynapticPathways.default_llm_model = model_name
+        journaling_manager.recordInfo(f"[Mind] Set default model to: {model_name}")
+        
+    async def get_model(self):
+        """Get the currently active model from the device"""
+        journaling_manager.recordInfo("[Mind] Getting active model")
+        return await self.execute_operation("get_model")
+
+    async def complete_cleanup(self):
+        """
+        Complete cleanup of all resources
+        
+        This method combines brain region cleanup with connection cleanup
+        to ensure proper shutdown of all systems.
+        """
+        journaling_manager.recordInfo("[Mind] Performing complete cleanup")
+        
+        try:
+            # Clean up brain regions first
+            await self.cleanup()
+            
+            # Then clean up connection resources
+            from .CorpusCallosum.synaptic_pathways import SynapticPathways
+            await SynapticPathways.cleanup()
+            
+            journaling_manager.recordInfo("[Mind] Complete cleanup successful")
             return True
         except Exception as e:
-            journaling_manager.recordError(f"Error setting up connection: {e}")
+            journaling_manager.recordError(f"[Mind] Error during complete cleanup: {e}")
+            import traceback
+            journaling_manager.recordError(f"[Mind] Cleanup error trace: {traceback.format_exc()}")
             return False
-    else:
-        journaling_manager.recordInfo("No connection type specified, using default")
-        return await SynapticPathways.initialize() 
+
+async def setup_connection(connection_type=None):
+    """
+    Set up the connection to the hardware
+    
+    Args:
+        connection_type: Type of connection to use (serial, adb, tcp)
+    """
+    from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+    from .Subcortex.neurocortical_bridge import NeurocorticalBridge
+    journaling_manager = SystemJournelingManager()
+    
+    journaling_manager.recordScope("setup_connection", connection_type=connection_type)
+    
+    # Use the NeurocorticalBridge with standardized response format
+    result = await NeurocorticalBridge.execute_operation(
+        "initialize_connection", 
+        {"connection_type": connection_type}
+    )
+    
+    # Return true if status is ok
+    return result.get("status") == "ok" 

@@ -447,10 +447,10 @@ class LLMInterface:
     def _find_serial_port(self) -> Optional[str]:
         """Find the device port through serial"""
         if platform.system() == "Windows":
-            ports = serial.tools.list_ports.comports()
+        ports = serial.tools.list_ports.comports()
             
             print("\nChecking all available ports...")
-            for port in ports:
+        for port in ports:
                 print(f"\nChecking port: {port.device}")
                 print(f"Description: {port.description}")
                     if port.vid is not None and port.pid is not None:
@@ -476,8 +476,8 @@ class LLMInterface:
                 # return it anyway (some Windows systems might not report the VID/PID correctly)
                 if "CH340" in port.description.upper():
                     print(f"\nFound CH340 device by description on port: {port.device}")
-                    return port.device
-            
+                return port.device
+    
             print("\nNo suitable serial port found")
             return None
             
@@ -653,18 +653,18 @@ class LLMInterface:
                 
                 # Configure port with recommended settings
                 print("Configuring port with recommended settings...")
-                setup_commands = [
+    setup_commands = [
                     f"stty -F {self.port} {BAUD_RATE} raw -echo -crtscts -ixon -ixoff -parodd -cstopb cs8"
-                ]
-                
-                for cmd in setup_commands:
-                    result = subprocess.run(
-                        ["adb", "shell", cmd],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode != 0:
-                        print(f"Warning: Failed to run {cmd}: {result.stderr}")
+    ]
+    
+    for cmd in setup_commands:
+        result = subprocess.run(
+            ["adb", "shell", cmd],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print(f"Warning: Failed to run {cmd}: {result.stderr}")
                     else:
                         print(f"Successfully ran: {cmd}")
                 
@@ -696,10 +696,10 @@ class LLMInterface:
                     # Read one character at a time
                     read_result = subprocess.run(
                         ["adb", "shell", f"dd if={self.port} bs=1 count=1 iflag=nonblock 2>/dev/null"],
-                        capture_output=True,
-                        text=True
-                    )
-                    
+        capture_output=True,
+        text=True
+    )
+    
                     if read_result.returncode == 0 and read_result.stdout:
                         char = read_result.stdout
                         buffer += char
@@ -835,9 +835,9 @@ class LLMInterface:
                 # Try to find WiFi port
                 if self._is_adb_available():
                     # Try to find WiFi-specific port
-                    result = subprocess.run(
+            result = subprocess.run(
                         ["adb", "shell", "ip addr show wlan0"],
-                        capture_output=True,
+                capture_output=True,
                         text=True
                     )
                     if result.returncode == 0:
@@ -1086,16 +1086,16 @@ def main():
                 
                 if choice == "1":
                     print("\n📡 Sending ping command...")
-                    ping_command = {
-                        "type": "SYSTEM",
-                        "command": "ping",
-                        "data": {
-                            "timestamp": int(time.time() * 1000),
-                            "version": "1.0",
-                            "request_id": "ping_test",
-                            "echo": True
-                        }
-                    }
+        ping_command = {
+            "type": "SYSTEM",
+            "command": "ping",
+            "data": {
+                "timestamp": int(time.time() * 1000),
+                "version": "1.0",
+                "request_id": "ping_test",
+                "echo": True
+            }
+        }
                     try:
                     response = llm.send_command(ping_command)
                     print(f"Ping response: {response}")
@@ -1107,13 +1107,13 @@ def main():
                     prompt = input("\n💭 Enter your prompt: ").strip()
                     if prompt:
                         print("\n🤖 Generating response...")
-                        command = {
-                            "type": "LLM",
-                            "command": "generate",
-                            "data": {
+            command = {
+                "type": "LLM",
+                "command": "generate",
+                "data": {
                                 "prompt": prompt,
-                                "timestamp": int(time.time() * 1000),
-                                "version": "1.0",
+                    "timestamp": int(time.time() * 1000),
+                    "version": "1.0",
                                 "request_id": f"generate_{int(time.time())}"
                             }
                         }

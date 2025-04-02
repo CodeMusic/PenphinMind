@@ -91,6 +91,10 @@ class SystemCommandTask(NeuralTask):
             # Special handling for ping command
             if self.command == "ping":
                 self.result = await self._ping_system()
+            # Special handling for reset command
+            elif self.command == "reset":
+                self.result = await self._reset_system()
+            
             # Handle other commands...
             # ...
             
@@ -110,48 +114,63 @@ class SystemCommandTask(NeuralTask):
             return self.result
             
     async def _ping_system(self):
-        """Send ping command using same pattern as working model call."""
+        """Send ping command using proper architectural patterns."""
         try:
-            # Get communication task
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-            bg = SynapticPathways.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
-            
-            if not comm_task:
-                journaling_manager.recordError("[SystemCommandTask] 🐧 Communication task not found")
-                return {"success": False, "error": "Communication task not found"}
-            
-            # Use EXACT format that works for model calls
-            ping_command = {
-                "request_id": "001",
-                "work_id": "sys",
-                "action": "ping"
-            }
+            # Use NeurocorticalBridge instead of direct access
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
             # Log command
-            journaling_manager.recordInfo("[SystemCommandTask] 🐬 Sending ping command")
+            journaling_manager.recordInfo("[SystemCommandTask] 🐬 Sending ping command via NeurocorticalBridge")
             
-            # Send command using same method that works for models
-            response = await comm_task.send_command(ping_command)
-            journaling_manager.recordInfo(f"[SystemCommandTask] 🐬 Ping response received")
-            journaling_manager.recordDebug(f"[SystemCommandTask] 🐬 Response: {response}")
+            # Use the bridge for proper architectural layering
+            ping_result = await NeurocorticalBridge.execute_operation("ping", use_task=False)
+            journaling_manager.recordInfo(f"[SystemCommandTask] 🐬 Ping response received through bridge")
             
-            # Check response - EXACT format from your shared example
-            if response and "error" in response:
-                error_code = response["error"].get("code", -1)
-                success = (error_code == 0)
-                
+            # Process result from bridge's standardized response format  
+            if ping_result and ping_result.get("status") == "ok":
                 return {
-                    "success": success,
-                    "response": response,
+                    "success": True,
+                    "response": ping_result.get("response", {}),
                     "timestamp": time.time()
                 }
             else:
-                journaling_manager.recordError(f"[SystemCommandTask] 🐧 Invalid ping response")
-                return {"success": False, "error": "Invalid response"}
+                error_msg = ping_result.get("message", "Unknown error") if ping_result else "No response from bridge"
+                journaling_manager.recordError(f"[SystemCommandTask] 🐧 Ping failed: {error_msg}")
+                return {"success": False, "error": error_msg}
             
         except Exception as e:
             journaling_manager.recordError(f"[SystemCommandTask] ❌ Error in ping: {e}")
+            import traceback
+            journaling_manager.recordError(f"[SystemCommandTask] Stack trace: {traceback.format_exc()}")
+            return {"success": False, "error": str(e)}
+            
+    async def _reset_system(self):
+        """Send reset command to reset the LLM system."""
+        try:
+            # Use NeurocorticalBridge instead of direct access
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            # Log command
+            journaling_manager.recordInfo("[SystemCommandTask] 🔄 Sending reset command via NeurocorticalBridge")
+            
+            # Use the bridge for proper architectural layering
+            reset_result = await NeurocorticalBridge.execute_operation("reset_llm", use_task=False)
+            journaling_manager.recordInfo(f"[SystemCommandTask] 🔄 Reset response received through bridge")
+            
+            # Process result from bridge's standardized response format
+            if reset_result and reset_result.get("status") == "ok":
+                return {
+                    "success": True,
+                    "message": "Reset completed successfully",
+                    "timestamp": time.time()
+                }
+            else:
+                error_msg = reset_result.get("message", "Unknown error") if reset_result else "No response from bridge"
+                journaling_manager.recordError(f"[SystemCommandTask] 🐧 Reset failed: {error_msg}")
+                return {"success": False, "error": error_msg}
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[SystemCommandTask] ❌ Error in reset: {e}")
             import traceback
             journaling_manager.recordError(f"[SystemCommandTask] Stack trace: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}

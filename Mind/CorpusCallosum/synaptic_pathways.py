@@ -48,8 +48,6 @@ from Mind.CorpusCallosum.command_loader import CommandLoader
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager, SystemJournelingLevel
 from Mind.CorpusCallosum.transport_layer import get_transport, ConnectionError, CommandError, run_adb_command
-from Mind.Subcortex.BasalGanglia.basal_ganglia_integration import BasalGangliaIntegration
-from Mind.Subcortex.BasalGanglia.tasks.display_visual_task import DisplayVisualTask
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager(CONFIG.log_level)
@@ -158,35 +156,33 @@ class SynapticPathways:
         journaling_manager.recordInfo(f"Initializing SynapticPathways with connection type: {connection_type}")
         
         try:
-            # Get BG integration
-            bg = cls.get_basal_ganglia()
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Get communication task - use get_communication_task or direct _tasks access
-            if hasattr(bg, "get_communication_task"):
-                comm_task = bg.get_communication_task()
-            else:
-                # Fallback to direct task access if method doesn't exist
-                comm_task = bg._tasks.get("CommunicationTask")
-                if not comm_task:
-                    # Create it if needed
-                    from Mind.Subcortex.BasalGanglia.tasks.communication_task import CommunicationTask
-                    comm_task = CommunicationTask(priority=1)
-                    bg.add_task(comm_task)
-            
-            # Initialize communication
-            if connection_type and comm_task:
+            # Use initialize_connection operation through NeurocorticalBridge
+            if connection_type:
                 journaling_manager.recordInfo(f"Initializing communication with {connection_type}")
-                success = await comm_task.initialize(connection_type)
-                cls._initialized = success
-                cls._connection_type = connection_type if success else None
+                comm_task = await NeurocorticalBridge.execute("get_communication_task")
                 
-                if success:
-                    journaling_manager.recordInfo(f"Successfully connected using {connection_type}")
-                    return True
+                if comm_task:
+                    success = await comm_task.initialize(connection_type)
+                    cls._initialized = success
+                    cls._connection_type = connection_type if success else None
+                    
+                    if success:
+                        journaling_manager.recordInfo(f"Successfully connected using {connection_type}")
+                        return True
+                else:
+                    journaling_manager.recordError("Communication task not available")
+                    return False
             
             # Try existing connection
-            elif cls._connection_type and comm_task:
-                return await comm_task.initialize(cls._connection_type)
+            elif cls._connection_type:
+                comm_task = await NeurocorticalBridge.execute("get_communication_task")
+                if comm_task:
+                    return await comm_task.initialize(cls._connection_type)
+                else:
+                    return False
             
             # No connection specified
             else:
@@ -338,34 +334,114 @@ class SynapticPathways:
                 journaling_manager.recordInfo("Transport disconnected successfully")
             except Exception as e:
                 journaling_manager.recordError(f"Error during transport cleanup: {e}")
-                    
-            # Shutdown BasalGanglia if it exists
-            if cls._basal_ganglia:
-                journaling_manager.recordInfo("Shutting down BasalGanglia task system")
-                cls._basal_ganglia.shutdown()
-                cls._basal_ganglia = None
         
         # Reset state
         cls._transport = None
         cls._initialized = False
         cls._connection_type = None
         cls._mode = None
+        cls._basal_ganglia = None  # Clear reference but don't shutdown - NeurocorticalBridge handles that
         journaling_manager.recordInfo("Synaptic pathways cleaned up")
 
     @classmethod
     async def transmit_json(cls, command: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Transmit a command as JSON and get response using CommunicationTask
+        Transmit a command as JSON and get response using the NeurocorticalBridge
         
-        This method is kept for backward compatibility but uses CommunicationTask
+        This method uses the NeurocorticalBridge to decide between direct or task-based execution
         """
         try:
-            # Get communication task
-            bg = cls.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Send command
-            return await comm_task.send_command(command)
+            # Extract command information
+            action = command.get("action", "unknown")
+            work_id = command.get("work_id", "")
+            object_type = command.get("object", "")
+            request_id = command.get("request_id", "")
+            
+            # Log the command information for debugging
+            journaling_manager.recordInfo(f"[SynapticPathways] Transmitting command: action={action}, work_id={work_id}, object={object_type}")
+            
+            # Special case for "lsmode" to prevent recursion
+            if action == "lsmode" and work_id == "sys":
+                journaling_manager.recordInfo("[SynapticPathways] Handling lsmode command directly to prevent recursion")
+                # Use list_models operation directly to avoid recursion
+                return await NeurocorticalBridge.execute("list_models")
+            
+            # Continue with normal routing through NeurocorticalBridge
+            if work_id == "sys" or object_type == "system":
+                # System commands - use system command task for reset
+                journaling_manager.recordInfo(f"[SynapticPathways] Routing system command: {action}")
+                
+                # Handle reset command via system task
+                if action == "reset":
+                    # Execute reset command through NeurocorticalBridge
+                    journaling_manager.recordInfo("[SynapticPathways] Executing reset command via NeurocorticalBridge")
+                    return await NeurocorticalBridge.execute("reset_system", {"command": command})
+                else:
+                    # Other system commands - use bridge with appropriate operation name
+                    journaling_manager.recordInfo(f"[SynapticPathways] Routing system command via bridge: {action}")
+                    result = await NeurocorticalBridge.execute(action, {"command": command})
+                    return result
+                
+            elif work_id == "llm" or object_type == "llm.setup" or action in ["setup", "inference", "exit", "reset"]:
+                # LLM-related commands - special handling
+                if action == "setup":
+                    # Setup commands go directly to model management
+                    journaling_manager.recordInfo(f"[SynapticPathways] Routing LLM setup command: {request_id}")
+                    result = await NeurocorticalBridge.execute("set_model", {
+                        "model": command.get("data", {}).get("model", ""),
+                        "command": command
+                    })
+                elif action == "inference":
+                    # Inference uses think operation
+                    journaling_manager.recordInfo(f"[SynapticPathways] Routing LLM inference command: {request_id}")
+                    
+                    # Get prompt from data.delta
+                    prompt = ""
+                    if "data" in command and isinstance(command["data"], dict):
+                        prompt = command["data"].get("delta", "")
+                    
+                    # Use streaming if requested
+                    stream = True  # Default to streaming for inference
+                    if "stream" in command:
+                        stream = command["stream"]
+                        
+                    # Send through bridge with think operation
+                    result = await NeurocorticalBridge.execute("think", {
+                        "prompt": prompt,
+                        "command": command  # Include full command for reference
+                    }, stream=stream)
+                    
+                    # Format the response for compatibility with existing code
+                    if isinstance(result, str):
+                        # Direct string response
+                        return {"data": {"delta": result}}
+                    elif hasattr(result, "result") and isinstance(result.result, str):
+                        # Task with result
+                        return {"data": {"delta": result.result}}
+                    else:
+                        # Return original result
+                        return result
+                        
+                elif action == "reset":
+                    # Reset command
+                    journaling_manager.recordInfo(f"[SynapticPathways] Routing LLM reset command: {request_id}")
+                    result = await NeurocorticalBridge.execute("reset_llm")
+                else:
+                    # Other LLM commands - general llm_command handler
+                    journaling_manager.recordInfo(f"[SynapticPathways] Routing LLM command via llm_command: {action}")
+                    result = await NeurocorticalBridge.execute("llm_command", {"command": command})
+                
+                return result
+                
+            else:
+                # Other commands - direct transmission through communication task
+                journaling_manager.recordInfo(f"[SynapticPathways] Routing direct command: {action}")
+                
+                # Use direct_command operation through NeurocorticalBridge
+                return await NeurocorticalBridge.execute("direct_command", {"command": command})
             
         except Exception as e:
             journaling_manager.recordError(f"Error in transmit_json: {e}")
@@ -375,6 +451,9 @@ class SynapticPathways:
     async def send_command(cls, command: Dict[str, Any]) -> Dict[str, Any]:
         """Send a command to the appropriate processor"""
         journaling_manager.recordInfo(f"\nProcessing command: {command}")
+        
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
         
         command_type = command.get("type", "")
         command_action = command.get("command", "")
@@ -406,8 +485,8 @@ class SynapticPathways:
             # For actual generation, use the ThinkTask
             elif command_action == "generate":
                 prompt = command.get("data", {}).get("prompt", "")
-                # Use BasalGanglia for thinking tasks
-                return await cls.think(prompt, stream=True)
+                # Use NeurocorticalBridge for thinking tasks
+                return await NeurocorticalBridge.execute("think", {"prompt": prompt}, stream=True)
             
             # Other LLM command types can be handled similarly
             else:
@@ -435,20 +514,19 @@ class SynapticPathways:
         journaling_manager.recordScope("SynapticPathways.send_system_command", command_type=command_type, data=data)
         
         try:
-            # Use BasalGanglia for task management
-            task = cls.get_basal_ganglia().system_command(command_type, data)
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Wait for task to complete (this is a blocking operation)
-            while task.active or not task.has_completed():
-                await asyncio.sleep(0.1)
-            
-            # Return task result
-            return task.result if task.result is not None else {"error": "Task completed with no result"}
+            # Execute the system command through NeurocorticalBridge
+            return await NeurocorticalBridge.execute("system_command", {
+                "command_type": command_type,
+                "data": data
+            })
             
         except Exception as e:
             journaling_manager.recordError(f"Error sending system command: {e}")
             raise CommandTransmissionError(f"Failed to send system command: {e}")
-            
+
     @classmethod
     def _validate_command(cls, command: BaseCommand) -> None:
         """Validate a command"""
@@ -634,8 +712,8 @@ class SynapticPathways:
     @classmethod
     def format_hw_info(cls) -> str:
         """Format hardware info for display"""
-        # Problem: You're using hardware_info but data is in current_hw_info
-        hw = cls.hardware_info or {}
+        # Use current_hw_info instead of hardware_info which doesn't exist
+        hw = cls.current_hw_info or {}
         
         # Extract values with proper defaults
         cpu = hw.get("cpu_loadavg", "N/A")
@@ -668,26 +746,15 @@ class SynapticPathways:
         journaling_manager.recordInfo("[SynapticPathways] 🔍 Getting available models")
         
         try:
-            # Get model management task
-            bg = cls.get_basal_ganglia()
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            if not bg:
-                journaling_manager.recordError("[SynapticPathways] ❌ BasalGanglia not initialized")
-                return cls.available_models
-            
-            # Get model task
-            model_task = bg.get_model_management_task() if hasattr(bg, "get_model_management_task") else None
-            
-            if not model_task:
-                journaling_manager.recordError("[SynapticPathways] ❌ ModelManagementTask not found")
-                return cls.available_models
-            
-            # Request models
-            journaling_manager.recordInfo("[SynapticPathways] 🔄 Requesting models from task")
-            models = await model_task.get_available_models()
+            # Request models through NeurocorticalBridge.execute
+            journaling_manager.recordInfo("[SynapticPathways] 🔄 Requesting models through NeurocorticalBridge")
+            models = await NeurocorticalBridge.execute("list_models")
             
             # Check if we got models
-            if models and len(models) > 0:
+            if models and isinstance(models, list) and len(models) > 0:
                 journaling_manager.recordInfo(f"[SynapticPathways] ✅ Retrieved {len(models)} models")
                 cls.available_models = models
                 return models
@@ -705,18 +772,19 @@ class SynapticPathways:
     async def set_active_model(cls, model_name: str) -> bool:
         """Set active model using ModelManagementTask"""
         try:
-            # Get model management task
-            bg = cls.get_basal_ganglia()
-            model_task = bg.get_model_management_task()
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Set active model
-            success = await model_task.set_active_model(model_name)
+            # Set model through NeurocorticalBridge.execute
+            success = await NeurocorticalBridge.execute("set_model", {
+                "model": model_name
+            })
             
             # Update default model if successful
-            if success:
+            if success and isinstance(success, dict) and success.get("success", False):
                 cls.default_llm_model = model_name
-                
-            return success
+                return True
+            return False
                 
         except Exception as e:
             journaling_manager.recordError(f"Error setting active model: {e}")
@@ -726,12 +794,18 @@ class SynapticPathways:
     async def reset_llm(cls) -> bool:
         """Reset LLM using ModelManagementTask"""
         try:
-            # Get model management task
-            bg = cls.get_basal_ganglia()
-            model_task = bg.get_model_management_task()
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Reset LLM
-            return await model_task.reset_llm()
+            # Reset LLM through NeurocorticalBridge.execute
+            result = await NeurocorticalBridge.execute("reset_llm")
+            
+            # Check if reset was successful
+            if isinstance(result, dict):
+                return result.get("success", False)
+            elif isinstance(result, bool):
+                return result
+            return False
             
         except Exception as e:
             journaling_manager.recordError(f"Error resetting LLM: {e}")
@@ -838,41 +912,19 @@ class SynapticPathways:
             return False
         
         try:
-            # Get the system command task using the correct method
-            bg = cls.get_basal_ganglia()
-            # Try both methods in case one exists
-            if hasattr(bg, "get_system_command_task"):
-                system_task = bg.get_system_command_task()
-            elif hasattr(bg, "get_task"):
-                system_task = bg.get_task("SystemCommandTask")
-            else:
-                # Direct access to _tasks if neither method exists
-                system_task = bg._tasks.get("SystemCommandTask")
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            if not system_task:
-                journaling_manager.recordError("System command task not found")
-                return False
-            
-            # Configure task for ping
-            system_task.command = "ping"
-            system_task.data = None
-            system_task.completed = False
-            system_task.active = True
-            
-            # Wait for task to complete
-            max_wait = 5  # seconds
-            start_time = time.time()
-            
-            while not system_task.completed and (time.time() - start_time) < max_wait:
-                await asyncio.sleep(0.1)
+            # Send ping through NeurocorticalBridge.execute
+            result = await NeurocorticalBridge.execute("ping")
             
             # Check result
-            if system_task.completed and system_task.result:
-                success = system_task.result.get("success", False)
+            if result and isinstance(result, dict):
+                success = result.get("success", False)
                 journaling_manager.recordInfo(f"Ping {'successful' if success else 'failed'}")
                 return success
             else:
-                journaling_manager.recordError("Ping timed out or failed")
+                journaling_manager.recordError("Ping failed with invalid response")
                 return False
             
         except Exception as e:
@@ -882,39 +934,19 @@ class SynapticPathways:
             return False
 
     @classmethod
-    def get_basal_ganglia(cls):
-        """Get or create the BasalGanglia instance."""
-        if cls._basal_ganglia is None:
-            journaling_manager.recordInfo("[SynapticPathways] 🏗️ Creating new BasalGanglia instance")
-            
-            # Import here to avoid circular imports
-            from Mind.Subcortex.BasalGanglia.basal_ganglia_integration import BasalGangliaIntegration
-            cls._basal_ganglia = BasalGangliaIntegration()
-            
-            # Verify initialization
-            if hasattr(cls._basal_ganglia, "_tasks") and cls._basal_ganglia._tasks:
-                task_names = list(cls._basal_ganglia._tasks.keys())
-                journaling_manager.recordInfo(f"[SynapticPathways] ✅ BasalGanglia initialized with tasks: {task_names}")
-            else:
-                journaling_manager.recordWarning("[SynapticPathways] ⚠️ BasalGanglia may not be fully initialized")
-        
-        return cls._basal_ganglia
-
-    @classmethod
     async def think(cls, prompt: str, stream: bool = False) -> Dict[str, Any]:
         """Use BasalGanglia to perform a thinking task with LLM"""
         journaling_manager.recordInfo(f"Initiating thinking task: {prompt[:50]}...")
         
         try:
-            # Register thinking task
-            task = cls.get_basal_ganglia().think(prompt, stream)
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Wait for task to complete
-            while task.active or not task.has_completed():
-                await asyncio.sleep(0.1)
+            # Execute thinking task through NeurocorticalBridge.execute
+            return await NeurocorticalBridge.execute("think", {
+                "prompt": prompt
+            }, stream=stream)
             
-            # Return thinking result
-            return task.result
         except Exception as e:
             journaling_manager.recordError(f"Error in thinking task: {e}")
             return {"error": str(e)}
@@ -931,43 +963,54 @@ class SynapticPathways:
             visualization_type: Special visualization type ("splash_screen", "game_of_life")
             visualization_params: Parameters for special visualizations
         """
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
         if visualization_type:
             journaling_manager.recordInfo(f"Registering {visualization_type} visualization task")
         else:
             journaling_manager.recordInfo(f"Registering display task for: {display_type}")
         
-        # Register display task - non-blocking
-        cls.get_basal_ganglia().display_visual(
-            content=content, 
-            display_type=display_type,
-            visualization_type=visualization_type,
-            visualization_params=visualization_params
-        )
+        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
+        NeurocorticalBridge.execute("display_visual", {
+            "content": content,
+            "display_type": display_type,
+            "visualization_type": visualization_type,
+            "visualization_params": visualization_params
+        })
 
     @classmethod 
     def show_splash_screen(cls, title: str = "Penphin Mind", subtitle: str = "Neural Architecture") -> None:
         """Show application splash screen"""
-        cls.display_visual(
-            visualization_type="splash_screen",
-            visualization_params={
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
+        NeurocorticalBridge.execute("display_visual", {
+            "visualization_type": "splash_screen",
+            "visualization_params": {
                 "title": title,
                 "subtitle": subtitle
             }
-        )
+        })
         
     @classmethod
     def run_game_of_life(cls, width: int = 20, height: int = 20, iterations: int = 10, 
                         initial_state: list = None) -> None:
         """Run Conway's Game of Life visualization"""
-        cls.display_visual(
-            visualization_type="game_of_life",
-            visualization_params={
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
+        NeurocorticalBridge.execute("display_visual", {
+            "visualization_type": "game_of_life",
+            "visualization_params": {
                 "width": width,
                 "height": height, 
                 "iterations": iterations,
                 "initial_state": initial_state
             }
-        )
+        })
 
     @classmethod
     async def setup_llm(cls, model_name: str, params: dict = None) -> Dict[str, Any]:
@@ -1005,15 +1048,20 @@ class SynapticPathways:
         journaling_manager.recordInfo(f"Initiating thinking task with pixel grid: {prompt[:50]}...")
         
         try:
-            # Create pixel grid visualization task
-            visual_task = cls.get_basal_ganglia().display_llm_pixel_grid(
-                width=width,
-                height=height,
-                color_mode=color_mode
-            )
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Register thinking task
-            task = cls.get_basal_ganglia().think(prompt, stream=True)
+            # Create pixel grid visualization task using execute
+            visual_task = await NeurocorticalBridge.execute("create_llm_pixel_grid", {
+                "width": width,
+                "height": height,
+                "color_mode": color_mode
+            })
+            
+            # Call think through NeurocorticalBridge.execute
+            task = await NeurocorticalBridge.execute("think", {
+                "prompt": prompt
+            }, stream=True)
             
             # Continuously update visualization as we get results
             result = ""
@@ -1041,36 +1089,44 @@ class SynapticPathways:
                              width: int = 64, 
                              height: int = 64,
                              wrap: bool = True,
-                             color_mode: str = "grayscale") -> DisplayVisualTask:
+                             color_mode: str = "grayscale") -> Any:
         """
         Create an LLM token-to-pixel grid visualization task that can be updated manually
         
         Returns:
             The DisplayVisualTask instance that can be updated with update_stream()
         """
-        return cls.get_basal_ganglia().display_llm_pixel_grid(
-            width=width,
-            height=height,
-            wrap=wrap,
-            color_mode=color_mode
-        )
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
+        return NeurocorticalBridge.execute("create_llm_pixel_grid", {
+            "width": width,
+            "height": height,
+            "wrap": wrap,
+            "color_mode": color_mode
+        })
 
     @classmethod
     def create_llm_stream_visualization(cls, 
                                       highlight_keywords: bool = False,
                                       keywords: list = None,
-                                      show_tokens: bool = False) -> DisplayVisualTask:
+                                      show_tokens: bool = False) -> Any:
         """
         Create an LLM stream visualization task that can be updated manually
         
         Returns:
             The DisplayVisualTask instance that can be updated with update_stream()
         """
-        return cls.get_basal_ganglia().display_llm_stream(
-            highlight_keywords=highlight_keywords,
-            keywords=keywords,
-            show_tokens=show_tokens
-        )
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
+        return NeurocorticalBridge.execute("create_llm_stream", {
+            "highlight_keywords": highlight_keywords,
+            "keywords": keywords,
+            "show_tokens": show_tokens
+        })
 
     @classmethod
     async def think_with_stream_visualization(cls, prompt: str, 
@@ -1092,6 +1148,9 @@ class SynapticPathways:
         journaling_manager.recordInfo(f"Initiating thinking task with stream visualization: {prompt[:50]}...")
         
         try:
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
             # Extract keywords if not provided but highlighting is requested
             if highlight_keywords and not keywords:
                 # Simple keyword extraction (in a real system, use NLP for better extraction)
@@ -1102,15 +1161,17 @@ class SynapticPathways:
                 keywords = [word for word in words if word.lower() not in common_words][:5]
                 journaling_manager.recordInfo(f"Extracted keywords: {keywords}")
             
-            # Create visualization task first
-            visual_task = cls.get_basal_ganglia().display_llm_stream(
-                highlight_keywords=highlight_keywords,
-                keywords=keywords,
-                show_tokens=show_tokens
-            )
+            # Create visualization task through execute
+            visual_task = await NeurocorticalBridge.execute("create_llm_stream", {
+                "highlight_keywords": highlight_keywords,
+                "keywords": keywords,
+                "show_tokens": show_tokens
+            })
             
-            # Register thinking task
-            task = cls.get_basal_ganglia().think(prompt, stream=True)
+            # Thinking task through execute
+            task = await NeurocorticalBridge.execute("think", {
+                "prompt": prompt
+            }, stream=True)
             
             # Continuously update visualization as we get results
             result = ""
@@ -1211,13 +1272,15 @@ class SynapticPathways:
             else:
                 # Headless or unknown mode - just think with no visualization
                 journaling_manager.recordInfo("[CorpusCallosum] Using basic thinking (no visualization)")
-                return await cls.think(prompt, stream=False)
+                from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+                return await NeurocorticalBridge.execute("think", {"prompt": prompt}, stream=False)
                 
         except Exception as e:
             journaling_manager.recordError(f"[CorpusCallosum] Error in think_with_visualization: {e}")
             # Fallback to basic thinking
             journaling_manager.recordInfo("[CorpusCallosum] Falling back to basic thinking due to error")
-            return await cls.think(prompt, stream=False)
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            return await NeurocorticalBridge.execute("think", {"prompt": prompt}, stream=False)
 
     @classmethod
     def enable_cortex_communication(cls, enabled: bool = True) -> None:
