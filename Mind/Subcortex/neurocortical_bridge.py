@@ -39,7 +39,12 @@ class NeurocorticalBridge:
         "ping": (CommandType.SYSTEM, "ping"),
         "hardware_info": (CommandType.SYSTEM, "hwinfo"),
         "reboot": (CommandType.SYSTEM, "reboot"),
-        "debug_transport": (CommandType.SYSTEM, "debug_transport"),  # Add debug transport operation
+        "debug_transport": (CommandType.SYSTEM, "debug_transport"),
+        "set_model": (CommandType.SYSTEM, "set_model"),
+        "get_model": (CommandType.SYSTEM, "get_model"),
+        "list_models": (CommandType.SYSTEM, "lsmode"),
+        "reset_llm": (CommandType.SYSTEM, "reset_llm"),
+        "reset_system": (CommandType.SYSTEM, "reset_system"),
         
         # Audio Operations
         "setup_audio": (CommandType.AUDIO, "setup"),
@@ -47,7 +52,7 @@ class NeurocorticalBridge:
         "tts": (CommandType.AUDIO, "tts"),
         "vad": (CommandType.AUDIO, "vad"),
         "whisper": (CommandType.AUDIO, "whisper"),
-        "kws": (CommandType.AUDIO, "kws")  # Add keyword spotting
+        "kws": (CommandType.AUDIO, "kws")
     }
     
     # Class variables for hardware transport management
@@ -58,6 +63,36 @@ class NeurocorticalBridge:
     @classmethod
     async def execute_operation(cls, operation: str, data: Dict[str, Any] = None, use_task: bool = None, stream: bool = False):
         try:
+            # Special debug for set_model operation
+            if operation == "set_model":
+                print("\n==================================")
+                print("🔍 SET MODEL OPERATION DEBUG")
+                print("==================================")
+                print(f"• Model: {data.get('model', 'not specified')}")
+                print(f"• Connection: {cls._connection_type}")
+                print(f"• Initialized: {cls._initialized}")
+                if data and 'persona' in data:
+                    persona = data.get('persona', '')
+                    # Truncate persona for display
+                    if len(persona) > 100:
+                        persona_display = f"{persona[:50]}...{persona[-50:]}"
+                    else:
+                        persona_display = persona
+                    print(f"• Persona: {persona_display}")
+                print(f"• Use task: {use_task}")
+                print(f"• Stream: {stream}")
+                print("==================================")
+            
+            # Special debug for hardware_info operation
+            if operation == "hardware_info":
+                print("\n==================================")
+                print("🔍 HARDWARE INFO OPERATION DEBUG")
+                print("==================================")
+                print(f"• Connection: {cls._connection_type}")
+                print(f"• Initialized: {cls._initialized}")
+                print(f"• Transport exists: {cls._transport is not None}")
+                print("==================================")
+                
             # Start debug log for operation execution
             journaling_manager.recordInfo("==================================")
             journaling_manager.recordInfo(f"🛠️ EXECUTING OPERATION: {operation}")
@@ -105,6 +140,10 @@ class NeurocorticalBridge:
             )
             journaling_manager.recordInfo(f"✅ Command created: {command.get('request_id', 'unknown')}")
 
+            # Special debug for operations - print out the command
+            if operation in ["set_model", "hardware_info"]:
+                print(f"📦 {operation.upper()} COMMAND: {json.dumps(command, indent=2)}")
+
             # Determine execution path
             if use_task:
                 journaling_manager.recordInfo("🔄 Executing via task system...")
@@ -116,11 +155,46 @@ class NeurocorticalBridge:
                 journaling_manager.recordInfo("🔄 Executing via direct execution...")
                 result = await cls.execute(command)
             
+            # Special post-processing for hardware_info operation
+            if operation == "hardware_info" and result and isinstance(result, dict):
+                # Check if this is a successful API response with error code 0
+                if "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
+                    # Extract data field
+                    if "data" in result:
+                        # Return in a standardized format
+                        return {
+                            "status": "ok",
+                            "data": result["data"]
+                        }
+            
+            # Special post-processing for list_models operation
+            if operation == "list_models" and result and isinstance(result, dict):
+                # Check if this is a successful API response with error code 0
+                if "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
+                    # Extract data field which contains the model list
+                    if "data" in result and isinstance(result["data"], list):
+                        # Return in standardized format
+                        return {
+                            "status": "ok",
+                            "response": result["data"]
+                        }
+                    else:
+                        # Data missing or not a list
+                        return {
+                            "status": "error",
+                            "message": "Invalid model list response"
+                        }
+            
             # Log execution result
             status = result.get("status", "unknown") 
             journaling_manager.recordInfo(f"📋 Operation result: {status}")
             if status != "ok":
                 journaling_manager.recordError(f"❌ Error message: {result.get('message', 'No message')}")
+            
+            # Special debug for operations - print out the result
+            if operation in ["set_model", "hardware_info"]:
+                print(f"📋 {operation.upper()} RESULT: {json.dumps(result, indent=2)}")
+                print("==================================")
             
             journaling_manager.recordInfo("==================================")
             return result
@@ -872,110 +946,123 @@ class NeurocorticalBridge:
             # Import here to avoid circular imports
             from .transport_layer import get_transport
             
-            # Log detailed command execution information
-            journaling_manager.recordInfo("==================================")
-            journaling_manager.recordInfo("🚀 HARDWARE COMMAND EXECUTION:")
-            journaling_manager.recordInfo("==================================")
+            # Log detailed command execution information - always print this regardless of log level
+            print("\n==================================")
+            print("🚀 HARDWARE COMMAND EXECUTION:")
+            print("==================================")
             
             # Check if we have an initialized transport
-            journaling_manager.recordInfo(f"• Transport state: initialized={cls._initialized}, type={cls._connection_type}")
-            journaling_manager.recordInfo(f"• Transport object exists: {cls._transport is not None}")
-            journaling_manager.recordInfo(f"• Command: {command.get('action', 'unknown')} (work_id: {command.get('work_id', 'unknown')})")
+            print(f"• Transport state: initialized={cls._initialized}, type={cls._connection_type}")
+            print(f"• Transport object exists: {cls._transport is not None}")
+            print(f"• Command: {command.get('action', 'unknown')} (work_id: {command.get('work_id', 'unknown')})")
             
             # Get transport if needed (we'll store it on first use)
             if not cls._transport or not cls._initialized:
                 # If connection_type is None, default to "tcp"
                 if cls._connection_type is None:
-                    journaling_manager.recordWarning("⚠️ No connection type specified, defaulting to TCP")
+                    print("⚠️ No connection type specified, defaulting to TCP")
                     cls._connection_type = "tcp"
                 
-                journaling_manager.recordInfo(f"🔄 Creating new transport for {cls._connection_type}")
+                print(f"🔄 Creating new transport for {cls._connection_type}")
                 cls._transport = get_transport(cls._connection_type)
                 
                 # Initialize transport if not already connected
                 if not cls._initialized or not cls._transport:
-                    journaling_manager.recordInfo(f"🔌 Initializing transport: {cls._connection_type}")
+                    print(f"🔌 Initializing transport: {cls._connection_type}")
                     success = await cls._initialize_transport(cls._connection_type)
                     if not success:
-                        journaling_manager.recordError(f"❌ Failed to initialize transport with {cls._connection_type}")
+                        print(f"❌ Failed to initialize transport with {cls._connection_type}")
                         return {"status": "error", "message": f"Failed to initialize transport with {cls._connection_type}"}
                 
             if not cls._transport:
-                journaling_manager.recordError("❌ Transport not initialized - unable to create transport instance")
+                print("❌ Transport not initialized - unable to create transport instance")
                 return {"status": "error", "message": "Transport not initialized - unable to create transport instance"}
             
             # Log the command in full detail
-            journaling_manager.recordInfo("📦 COMMAND DETAILS:")
-            journaling_manager.recordInfo(f"• Request ID: {command.get('request_id', 'not set')}")
-            journaling_manager.recordInfo(f"• Work ID: {command.get('work_id', 'not set')}")
-            journaling_manager.recordInfo(f"• Action: {command.get('action', 'not set')}")
-            journaling_manager.recordInfo(f"• Object: {command.get('object', 'not set')}")
+            print("📦 COMMAND DETAILS:")
+            print(f"• Request ID: {command.get('request_id', 'not set')}")
+            print(f"• Work ID: {command.get('work_id', 'not set')}")
+            print(f"• Action: {command.get('action', 'not set')}")
+            print(f"• Object: {command.get('object', 'not set')}")
             
             if 'data' in command and command['data'] and isinstance(command['data'], dict):
-                journaling_manager.recordInfo("• Data:")
+                print("• Data:")
                 for k, v in command['data'].items():
                     # Truncate long values
                     if isinstance(v, str) and len(v) > 100:
                         v = f"{v[:50]}...{v[-50:]}"
-                    journaling_manager.recordInfo(f"  - {k}: {v}")
+                    print(f"  - {k}: {v}")
             
-            # Log the full raw JSON that will be sent
+            # Log the full raw JSON that will be sent - always print regardless of log level
             raw_json = json.dumps(command, indent=2)
-            journaling_manager.recordInfo("📤 RAW JSON REQUEST:")
-            for line in raw_json.split('\n'):
-                journaling_manager.recordInfo(f"  {line}")
+            print("📤 RAW JSON REQUEST:")
+            print(raw_json)
             
             # Use the transport's transmit method (correct method name)
             try:
-                journaling_manager.recordInfo("🔄 Transmitting command via transport...")
+                print("🔄 Transmitting command via transport...")
                 start_time = time.time()
                 
                 # The transport expects a Dict[str, Any] or already formatted JSON string
                 if isinstance(command, str):
-                    journaling_manager.recordInfo("⚠️ Command is string, converting to JSON...")
+                    print("⚠️ Command is string, converting to JSON...")
                     response = await cls._transport.transmit(json.loads(command))
                 else:
-                    journaling_manager.recordInfo("✅ Sending command as dictionary...")
+                    print("✅ Sending command as dictionary...")
                     response = await cls._transport.transmit(command)
                 
                 # Log timing and detailed response
                 elapsed = time.time() - start_time
-                journaling_manager.recordInfo(f"⏱️ Command completed in {elapsed:.2f} seconds")
+                print(f"⏱️ Command completed in {elapsed:.2f} seconds")
                 
-                # Log the full raw JSON that was received
-                raw_response = json.dumps(response, indent=2)
-                journaling_manager.recordInfo("🐧 RAW JSON RESPONSE 🐬:")
-                for line in raw_response.split('\n'):
-                    journaling_manager.recordInfo(f"  {line}")
+                # Log the full raw JSON that was received - always print regardless of log level
+                if response:
+                    raw_response = json.dumps(response, indent=2)
+                    print("🐧 RAW JSON RESPONSE 🐬:")
+                    print(raw_response)
+                else:
+                    print("⚠️ Empty or null response received")
                 
                 # Log response details
-                journaling_manager.recordInfo("📦 RESPONSE DETAILS:")
+                print("📦 RESPONSE DETAILS:")
                 if response:
-                    journaling_manager.recordInfo(f"• Status: {response.get('error', {}).get('code', 'not found')}")
-                    journaling_manager.recordInfo(f"• Message: {response.get('error', {}).get('message', 'not found')}")
-                    
-                    # Log data if present but truncate if too large
-                    if 'data' in response:
-                        data_str = str(response['data'])
-                        if len(data_str) > 200:
-                            data_str = f"{data_str[:100]}...{data_str[-100:]}"
-                        journaling_manager.recordInfo(f"• Data: {data_str}")
+                    if isinstance(response, dict):
+                        error = response.get('error', {})
+                        if isinstance(error, dict):
+                            print(f"• Status: {error.get('code', 'not found')}")
+                            print(f"• Message: {error.get('message', 'not found')}")
+                        else:
+                            print(f"• Error: {error}")
+                        
+                        # Log data if present but truncate if too large
+                        if 'data' in response:
+                            data_str = str(response['data'])
+                            if len(data_str) > 200:
+                                data_str = f"{data_str[:100]}...{data_str[-100:]}"
+                            print(f"• Data: {data_str}")
+                    else:
+                        print(f"• Non-dictionary response: {type(response)}")
+                        print(f"• Content: {response}")
                 else:
-                    journaling_manager.recordInfo("⚠️ Empty response received")
+                    print("⚠️ Empty response received")
                 
-                journaling_manager.recordInfo("==================================")
+                print("==================================")
+                
+                # Still use journaling manager to record the information in case it's needed
+                journaling_manager.recordInfo("Command transmission completed")
+                
                 return response
                 
             except Exception as e:
-                journaling_manager.recordError(f"❌ Transport transmit error: {e}")
-                journaling_manager.recordError(f"❌ Stack trace: {traceback.format_exc()}")
-                journaling_manager.recordInfo("==================================")
+                print(f"❌ Transport transmit error: {e}")
+                print(f"❌ Stack trace: {traceback.format_exc()}")
+                print("==================================")
                 return {"status": "error", "message": f"Transport transmit error: {e}"}
             
         except Exception as e:
-            journaling_manager.recordError(f"❌ Hardware communication error: {e}")
-            journaling_manager.recordError(f"❌ Stack trace: {traceback.format_exc()}")
-            journaling_manager.recordInfo("==================================")
+            print(f"❌ Hardware communication error: {e}")
+            print(f"❌ Stack trace: {traceback.format_exc()}")
+            print("==================================")
             return {"status": "error", "message": str(e)}
 
     @classmethod

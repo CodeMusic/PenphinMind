@@ -45,12 +45,32 @@ class SystemJournelingManager:
             level: Either a SystemJournelingLevel enum value or a string representing the level
         """
         if isinstance(level, str):
-            level = SystemJournelingLevel.from_string(level)
+            try:
+                level = SystemJournelingLevel.from_string(level)
+            except ValueError as e:
+                # Fall back to DEBUG if the specified level is invalid
+                print(f"[WARNING] ⚠️ Invalid log level: {level}. Falling back to DEBUG.")
+                level = SystemJournelingLevel.DEBUG
         elif not isinstance(level, SystemJournelingLevel):
-            raise ValueError(f"Invalid log level: {level}. Must be a SystemJournelingLevel enum value or string.")
+            print(f"[WARNING] ⚠️ Invalid log level type: {type(level)}. Falling back to DEBUG.")
+            level = SystemJournelingLevel.DEBUG
             
         self.currentLevel = level
-        self.recordDebug(f"SystemJournelingManager initialized with level: {level.name}")
+        
+        # Always print the initialization message regardless of log level
+        print(f"\n[SYSTEM] 🧠 SystemJournelingManager initialized with level: {level.name}")
+        print(f"[SYSTEM] 🧠 Log levels enabled: ", end="")
+        
+        # Show which log levels are active
+        if self.currentLevel.value >= SystemJournelingLevel.ERROR.value:
+            print("ERROR", end=" ")
+        if self.currentLevel.value >= SystemJournelingLevel.INFO.value:
+            print("INFO", end=" ")
+        if self.currentLevel.value >= SystemJournelingLevel.DEBUG.value:
+            print("DEBUG", end=" ")
+        if self.currentLevel.value >= SystemJournelingLevel.SCOPE.value:
+            print("SCOPE", end=" ")
+        print("\n")
 
     def setLevel(self, newLevel: Union[str, SystemJournelingLevel]) -> None:
         """

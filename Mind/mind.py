@@ -4,6 +4,7 @@ Main Mind class that coordinates all brain regions
 
 import logging
 import platform
+import json
 from typing import Dict, Any, Optional
 from .CorpusCallosum.synaptic_pathways import SynapticPathways
 from .TemporalLobe.SuperiorTemporalGyrus.HeschlGyrus.primary_acoustic_area import PrimaryAcousticArea
@@ -404,31 +405,40 @@ class Mind:
         try:
             # Use NeurocorticalBridge for hardware info
             result = await self.execute_operation("hardware_info")
+            
+            print(f"\n[Mind.get_hardware_info] 📊 Result: {json.dumps(result, indent=2)}")
+            
             if result.get("status") == "ok":
-                # Format the hardware info for display
-                hw = result.get("data", {})
-                formatted = self._format_hardware_info(hw)
-                return {"status": "ok", "hardware_info": formatted}
+                # API response might have data in different formats
+                # Check all possible places where the hardware data might be
+                hw_data = None
+                
+                # Check in the response->data
+                if "response" in result and isinstance(result["response"], dict) and "data" in result["response"]:
+                    hw_data = result["response"]["data"]
+                # Check directly in data field
+                elif "data" in result and isinstance(result["data"], dict):
+                    hw_data = result["data"]
+                # Check in response field
+                elif "response" in result and isinstance(result["response"], dict):
+                    hw_data = result["response"]
+                
+                # If we found hardware data, update the cached info
+                if hw_data:
+                    # Update the hardware info in SynapticPathways
+                    from .CorpusCallosum.synaptic_pathways import SynapticPathways
+                    SynapticPathways.update_hardware_info(hw_data)
+                    
+                    # Format the hardware info for display
+                    formatted = SynapticPathways.format_hw_info()
+                    return {"status": "ok", "hardware_info": formatted}
+                
+                # Could not find hardware data in the response
+                return {"status": "error", "message": "No hardware data in response"}
+            
             return {"status": "error", "message": result.get("message", "Failed to get hardware info")}
         except Exception as e:
             return {"status": "error", "message": str(e)}
-    
-    def _format_hardware_info(self, hw: Dict[str, Any]) -> str:
-        """Internal method to format hardware info"""
-        cpu = hw.get("cpu_loadavg", "N/A")
-        mem = hw.get("mem", "N/A")
-        temp_raw = hw.get("temperature", "N/A")
-        
-        # Format temperature
-        temp = f"{temp_raw/1000:.1f}" if isinstance(temp_raw, (int, float)) and temp_raw > 1000 else str(temp_raw)
-        
-        # Format network info
-        net_info = ""
-        if "eth_info" in hw and isinstance(hw["eth_info"], list) and len(hw["eth_info"]) > 0:
-            ip = hw["eth_info"][0].get("ip", "N/A")
-            net_info = f" | IP: {ip}"
-        
-        return f"🐧🐬 Hardware: CPU: {cpu}% | Memory: {mem}% | Temp: {temp}°C{net_info}"
     
     async def ping_system(self):
         """Ping the system to check connectivity"""
@@ -436,12 +446,54 @@ class Mind:
     
     async def list_models(self):
         """List available models"""
-        return await self.execute_operation("list_models")
-    
+        print(f"\n[Mind.list_models] 🔍 Listing models...")
+        print(f"[Mind.list_models] 🔄 Connection type: {self._connection_type}")
+        print(f"[Mind.list_models] 🔄 Initialized: {self._initialized}")
+        
+        # Execute the list_models operation (which maps to lsmode command)
+        result = await self.execute_operation("list_models")
+        
+        # Log the result for debugging
+        print(f"[Mind.list_models] 📊 Result status: {result.get('status', 'unknown')}")
+        if result.get('status') == "ok":
+            models_count = len(result.get("response", [])) if isinstance(result.get("response", []), list) else 0
+            print(f"[Mind.list_models] ✅ Found {models_count} models")
+        else:
+            print(f"[Mind.list_models] ❌ Error: {result.get('message', 'Unknown error')}")
+            
+        # Record in regular logging too
+        journaling_manager.recordInfo(f"[Mind] List models result: {result}")
+        
+        return result
+        
     async def set_model(self, model_name: str):
         """Set the active model"""
-        journaling_manager.recordInfo(f"[Mind] Setting model: {model_name}")
-        return await self.execute_operation("set_model", {"model": model_name})
+        print(f"\n[Mind.set_model] 🔄 Setting model: {model_name}")
+        print(f"[Mind.set_model] 🔄 Connection type: {self._connection_type}")
+        print(f"[Mind.set_model] 🔄 Initialized: {self._initialized}")
+        
+        # Create a detailed command for setting the model with persona 
+        command_data = {
+            "model": model_name,
+            "persona": self._persona
+        }
+        
+        print(f"[Mind.set_model] 📋 Command data prepared with persona")
+        
+        # Execute the operation with detailed debug
+        result = await self.execute_operation("set_model", command_data)
+        
+        # Log the result in detail
+        print(f"[Mind.set_model] 📊 Result status: {result.get('status', 'unknown')}")
+        if result.get('status') != "ok":
+            print(f"[Mind.set_model] ❌ Error: {result.get('message', 'Unknown error')}")
+        else:
+            print(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
+            
+        # Record in regular logging too
+        journaling_manager.recordInfo(f"[Mind] Set model result: {result}")
+        
+        return result
         
     async def reboot_device(self):
         """Reboot the connected device"""

@@ -80,12 +80,8 @@ class SynapticPathways:
     _response_callback = None
     _response_thread = None
     _stop_thread = False
-    current_hw_info = {
-        "cpu_load": "N/A",
-        "memory_usage": "N/A",
-        "temperature": "N/A",
-        "timestamp": 0
-    }
+    current_hw_info = {}
+    hw_info_timestamp = None
     # Store available models
     available_models = []
     default_llm_model = ""
@@ -451,35 +447,45 @@ class SynapticPathways:
             time.sleep(0.01)
 
     @classmethod
+    def update_hardware_info(cls, hw_data: Dict[str, Any]) -> None:
+        """Update the stored hardware information"""
+        # Store the data directly
+        cls.current_hw_info = hw_data
+        
+        # Update the timestamp
+        cls.hw_info_timestamp = time.time()
+        
+        # Log the update
+        journaling_manager.recordInfo(f"[SynapticPathways] Updated hardware info: {hw_data}")
+
+    @classmethod
     def format_hw_info(cls) -> str:
-        """Format hardware info for display"""
-        # Use current_hw_info instead of hardware_info which doesn't exist
-        hw = cls.current_hw_info or {}
+        """Format hardware info in a human-readable format"""
+        # If we have no data, return a placeholder
+        if not cls.current_hw_info:
+            return "🐧🐬 Hardware info not available"
         
-        # Extract values with proper defaults
-        cpu = hw.get("cpu_loadavg", "N/A")
-        mem = hw.get("mem", "N/A")
-        temp_raw = hw.get("temperature", "N/A")
+        # Extract values with safe defaults
+        cpu = cls.current_hw_info.get("cpu_loadavg", "N/A")
+        mem = cls.current_hw_info.get("mem", "N/A")
+        temp_raw = cls.current_hw_info.get("temperature", "N/A")
         
-        # Format temperature properly - convert from millicelsius to celsius
-        if isinstance(temp_raw, (int, float)) and temp_raw > 1000:
-            temp = f"{temp_raw/1000:.1f}"
+        # Format timestamp
+        if cls.hw_info_timestamp:
+            timestamp = time.strftime("%H:%M:%S", time.localtime(cls.hw_info_timestamp))
         else:
-            temp = str(temp_raw)
+            timestamp = "N/A"
+        
+        # Format temperature
+        temp = f"{temp_raw/1000:.1f}" if isinstance(temp_raw, (int, float)) and temp_raw > 1000 else str(temp_raw)
         
         # Format network info
         net_info = ""
-        if "eth_info" in hw and isinstance(hw["eth_info"], list) and len(hw["eth_info"]) > 0:
-            eth = hw["eth_info"][0]  # Take first network interface
-            ip = eth.get("ip", "N/A")
+        if "eth_info" in cls.current_hw_info and isinstance(cls.current_hw_info["eth_info"], list) and len(cls.current_hw_info["eth_info"]) > 0:
+            ip = cls.current_hw_info["eth_info"][0].get("ip", "N/A")
             net_info = f" | IP: {ip}"
         
-        # Get update timestamp
-        updated = time.strftime("%H:%M:%S") if hw else "N/A"
-        
-        # Format the hardware info string
-        hw_info = f"🐧🐬 Hardware: CPU: {cpu}% | Memory: {mem}% | Temp: {temp}°C{net_info} | Updated: {updated}"
-        return hw_info
+        return f"🐧🐬 Hardware: CPU: {cpu}% | Memory: {mem}% | Temp: {temp}°C{net_info} | Updated: {timestamp}"
 
     @classmethod
     async def get_available_models(cls) -> List[Dict[str, Any]]:

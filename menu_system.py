@@ -155,15 +155,30 @@ async def display_model_list() -> str:
     print("----------------")
     
     # Get and display models using Mind
+    print("\n🔍 Retrieving models, please wait...")
     models_result = await mind.list_models()
-    models = models_result.get("response", []) if models_result.get("status") == "ok" else []
+    
+    # Debug the models result
+    print(f"\n📊 Model listing result status: {models_result.get('status', 'unknown')}")
+    
+    # Extract models from the response
+    models = []
+    if models_result.get("status") == "ok" and "response" in models_result:
+        models = models_result.get("response", [])
+        print(f"✅ Successfully retrieved {len(models)} models")
+    else:
+        print(f"⚠️ Error retrieving models: {models_result.get('message', 'Unknown error')}")
+        
+    # Use cached models if available and we didn't get any from the API
+    if not models and len(SynapticPathways.available_models) > 0:
+        models = SynapticPathways.available_models
+        using_cached = True
+        print(f"\n[Using cached model information - {len(models)} models available]")
+    else:
+        using_cached = False
     
     # Log the models for debugging
-    using_cached = len(SynapticPathways.available_models) > 0
     journaling_manager.recordInfo(f"Retrieved models (cached: {using_cached}): {models}")
-    
-    if using_cached:
-        print(f"[Using cached model information - {len(models)} models available]")
     
     if not models:
         print("No models available or failed to retrieve model information.")
@@ -183,7 +198,19 @@ async def display_model_list() -> str:
     # Group models by type
     model_types = {}
     for model in models:
-        model_type = model.get("type", "unknown")
+        # Handle different API response formats
+        if isinstance(model, dict):
+            # Newer API returns dict with type and mode fields
+            model_type = model.get("type", "unknown")
+            model_name = model.get("mode", model.get("name", "Unknown"))
+        elif isinstance(model, str):
+            # Older API might just return strings
+            model_type = "unknown"
+            model_name = model
+        else:
+            # Skip invalid model entries
+            continue
+            
         if model_type not in model_types:
             model_types[model_type] = []
         model_types[model_type].append(model)
@@ -192,21 +219,21 @@ async def display_model_list() -> str:
     for model_type, type_models in model_types.items():
         print(f"\n{model_type.upper()} Models:")
         for model in type_models:
-            # Get the model name from the mode field (original API field)
-            model_name = model.get("mode", "Unknown")
-            
-            # Get capabilities and format them for display
-            capabilities = model.get("capabilities", [])
-            capabilities_str = ""
-            if capabilities:
-                capabilities_str = f" [{', '.join(capabilities)}]"
+            # Get the model name (handle different formats)
+            if isinstance(model, dict):
+                model_name = model.get("mode", model.get("name", "Unknown"))
+                
+                # Get capabilities and format them for display
+                capabilities = model.get("capabilities", [])
+                capabilities_str = ""
+                if capabilities:
+                    capabilities_str = f" [{', '.join(capabilities)}]"
+            else:
+                model_name = str(model)
+                capabilities_str = ""
             
             # Mark current active model
             active_marker = " ✓" if model_name == current_model else ""
-            
-            # Log the individual model data for debugging
-            journaling_manager.recordInfo(f"Model data: {model}")
-            journaling_manager.recordInfo(f"Using model name from 'mode' field: {model_name}")
             
             model_dict[count] = model
             print(f"{count}) {model_name}{capabilities_str}{active_marker}")
@@ -530,6 +557,10 @@ async def start_chat(mind_instance=None):
     # Set up the model using Mind
     setup_result = await mind_instance.set_model(model_name)
     
+    # Debug output for the model setup result
+    print(f"\n🔍 Debug - Model setup request: model={model_name}")
+    print(f"🔍 Debug - Model setup response: {setup_result}")
+    
     if setup_result.get("status") == "ok":
         print("LLM initialized successfully.\n")
     else:
@@ -603,7 +634,16 @@ async def start_chat(mind_instance=None):
     if not mind_instance.chat_manager:
         print("Initializing chat manager...")
         mind_instance.chat_manager = ChatManager(mind_instance)
-        await mind_instance.chat_manager.initialize(model_name)
+        
+        # Debug output before initialization
+        print(f"\n🔍 Debug - Before ChatManager initialization")
+        print(f"🔍 Debug - Model name: {model_name}")
+        
+        # Initialize ChatManager with model name
+        chat_init_result = await mind_instance.chat_manager.initialize(model_name)
+        
+        # Debug output after initialization
+        print(f"🔍 Debug - ChatManager initialization result: {chat_init_result}")
     
     # Import interactive_chat here to avoid circular imports
     from Interaction.chat_interface import interactive_chat
