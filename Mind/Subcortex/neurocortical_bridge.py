@@ -35,16 +35,15 @@ class NeurocorticalBridge:
         "setup_llm": (CommandType.LLM, "setup"),
         "exit_llm": (CommandType.LLM, "exit"),
         
-        # System Operations
+        # System Operations - match exact API commands
         "ping": (CommandType.SYSTEM, "ping"),
         "hardware_info": (CommandType.SYSTEM, "hwinfo"),
         "reboot": (CommandType.SYSTEM, "reboot"),
-        "debug_transport": (CommandType.SYSTEM, "debug_transport"),
-        "set_model": (CommandType.SYSTEM, "set_model"),
-        "get_model": (CommandType.SYSTEM, "get_model"),
+        "reset_system": (CommandType.SYSTEM, "reset"),
         "list_models": (CommandType.SYSTEM, "lsmode"),
-        "reset_llm": (CommandType.SYSTEM, "reset_llm"),
-        "reset_system": (CommandType.SYSTEM, "reset_system"),
+        
+        # Set model is handled through LLM setup
+        "set_model": (CommandType.LLM, "setup"),
         
         # Audio Operations
         "setup_audio": (CommandType.AUDIO, "setup"),
@@ -62,147 +61,186 @@ class NeurocorticalBridge:
     
     @classmethod
     async def execute_operation(cls, operation: str, data: Dict[str, Any] = None, use_task: bool = None, stream: bool = False):
+        """
+        Execute a cognitive operation
+        
+        This is the main entry point for executing operations through the bridge.
+        It will determine whether to use task system or direct execution.
+        
+        Args:
+            operation: The operation to execute (mapped through OPERATION_MAP)
+            data: Optional data for the operation
+            use_task: Force task system usage (None = decide automatically)
+            stream: Whether to stream results
+            
+        Returns:
+            Dict[str, Any]: Operation result
+        """
         try:
-            # Special debug for set_model operation
-            if operation == "set_model":
-                print("\n==================================")
-                print("🔍 SET MODEL OPERATION DEBUG")
-                print("==================================")
-                print(f"• Model: {data.get('model', 'not specified')}")
-                print(f"• Connection: {cls._connection_type}")
-                print(f"• Initialized: {cls._initialized}")
-                if data and 'persona' in data:
-                    persona = data.get('persona', '')
-                    # Truncate persona for display
-                    if len(persona) > 100:
-                        persona_display = f"{persona[:50]}...{persona[-50:]}"
-                    else:
-                        persona_display = persona
-                    print(f"• Persona: {persona_display}")
-                print(f"• Use task: {use_task}")
-                print(f"• Stream: {stream}")
-                print("==================================")
+            journaling_manager.recordInfo(f"Execute operation: {operation}")
             
-            # Special debug for hardware_info operation
-            if operation == "hardware_info":
-                print("\n==================================")
-                print("🔍 HARDWARE INFO OPERATION DEBUG")
-                print("==================================")
-                print(f"• Connection: {cls._connection_type}")
-                print(f"• Initialized: {cls._initialized}")
-                print(f"• Transport exists: {cls._transport is not None}")
-                print("==================================")
+            # If this is a special command, show debug info
+            if operation in ["set_model", "hardware_info", "reset_system", "list_models", "ping"]:
+                print(f"📦 {operation.upper()} COMMAND: {json.dumps(data, indent=2) if data else '{}'}")
+            
+            # Special handling for critical system operations - always use direct transport
+            if operation == "ping":
+                return await cls._direct_ping()
                 
-            # Start debug log for operation execution
-            journaling_manager.recordInfo("==================================")
-            journaling_manager.recordInfo(f"🛠️ EXECUTING OPERATION: {operation}")
-            journaling_manager.recordInfo("==================================")
-            journaling_manager.recordInfo(f"• Connection type: {cls._connection_type}")
-            journaling_manager.recordInfo(f"• Initialized: {cls._initialized}")
-            journaling_manager.recordInfo(f"• Transport exists: {cls._transport is not None}")
-            
-            # Log data details if present
-            if data:
-                journaling_manager.recordInfo("• Data parameters:")
-                for k, v in data.items():
-                    # Truncate long values
-                    if isinstance(v, str) and len(v) > 100:
-                        v = f"{v[:50]}...{v[-50:]}"
-                    journaling_manager.recordInfo(f"  - {k}: {v}")
-            
-            # Special handling for debug_transport
-            if operation == "debug_transport":
-                journaling_manager.recordInfo("🔍 Running debug_transport diagnostic...")
-                return await cls.debug_transport()
-            
-            # First ensure transport layer is initialized
-            if not cls._initialized:
-                journaling_manager.recordInfo("⚠️ Transport not initialized, initializing now...")
-                success = await cls._initialize_transport(cls._connection_type or "tcp")
-                if not success:
-                    journaling_manager.recordError("❌ Failed to initialize transport layer")
-                    return {"status": "error", "message": "Failed to initialize transport layer"}
-            
-            if operation not in cls.OPERATION_MAP:
-                journaling_manager.recordError(f"❌ Unknown operation: {operation}")
-                return {"status": "error", "message": f"Unknown operation: {operation}"}
-
-            command_type, action = cls.OPERATION_MAP[operation]
-            journaling_manager.recordInfo(f"• Command type: {command_type}, Action: {action}")
-            
-            # Create command using create_command
-            # The create_command function now handles CommandType enum conversion
-            journaling_manager.recordInfo("🔄 Creating command...")
-            command = create_command(
-                unit_type=command_type,
-                command_name=action,
-                data=data or {}
-            )
-            journaling_manager.recordInfo(f"✅ Command created: {command.get('request_id', 'unknown')}")
-
-            # Special debug for operations - print out the command
-            if operation in ["set_model", "hardware_info"]:
-                print(f"📦 {operation.upper()} COMMAND: {json.dumps(command, indent=2)}")
-
-            # Determine execution path
-            if use_task:
-                journaling_manager.recordInfo("🔄 Executing via task system...")
-                result = await cls._execute_task(command)
-            elif stream:
-                journaling_manager.recordInfo("🔄 Executing via stream handler...")
-                result = await cls._handle_stream(command)
-            else:
-                journaling_manager.recordInfo("🔄 Executing via direct execution...")
-                result = await cls.execute(command)
-            
-            # Special post-processing for hardware_info operation
-            if operation == "hardware_info" and result and isinstance(result, dict):
-                # Check if this is a successful API response with error code 0
-                if "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
-                    # Extract data field
-                    if "data" in result:
-                        # Return in a standardized format
+            elif operation == "hardware_info":
+                # Create direct hwinfo command
+                hw_command = cls.create_sys_command("hwinfo")
+                hw_result = await cls._send_to_hardware(hw_command)
+                
+                # Special post-processing for hardware_info operation
+                if isinstance(hw_result, dict) and "error" in hw_result:
+                    if isinstance(hw_result["error"], dict) and hw_result["error"].get("code") == 0:
+                        # Extract data field
+                        if "data" in hw_result:
+                            return {
+                                "status": "ok",
+                                "response": hw_result["data"]
+                            }
+                
+                # If we got here, there was an error
+                return {
+                    "status": "error",
+                    "message": f"Hardware info failed: {hw_result.get('error', hw_result)}"
+                }
+                
+            elif operation == "list_models":
+                # Create direct lsmode command
+                ls_command = cls.create_sys_command("lsmode")
+                ls_result = await cls._send_to_hardware(ls_command)
+                
+                # Special post-processing for list_models operation
+                if isinstance(ls_result, dict) and "error" in ls_result:
+                    if isinstance(ls_result["error"], dict) and ls_result["error"].get("code") == 0:
+                        # Extract data field (list of models)
+                        if "data" in ls_result and isinstance(ls_result["data"], list):
+                            return {
+                                "status": "ok",
+                                "response": ls_result["data"]
+                            }
+                
+                # If we got here, there was an error
+                return {
+                    "status": "error",
+                    "message": f"List models failed: {ls_result.get('error', ls_result)}"
+                }
+                
+            elif operation == "reset_system":
+                # Create direct reset command
+                reset_command = cls.create_sys_command("reset")
+                reset_result = await cls._send_to_hardware(reset_command)
+                
+                # Special post-processing for reset operation
+                if isinstance(reset_result, dict) and "error" in reset_result:
+                    if isinstance(reset_result["error"], dict) and reset_result["error"].get("code") == 0:
                         return {
                             "status": "ok",
-                            "data": result["data"]
+                            "message": "Reset successful"
                         }
+                
+                # If we got here, there was an error
+                return {
+                    "status": "error",
+                    "message": f"Reset failed: {reset_result.get('error', reset_result)}"
+                }
             
-            # Special post-processing for list_models operation
-            if operation == "list_models" and result and isinstance(result, dict):
-                # Check if this is a successful API response with error code 0
-                if "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
-                    # Extract data field which contains the model list
-                    if "data" in result and isinstance(result["data"], list):
-                        # Return in standardized format
+            # For other operations, follow normal procedure
+            
+            # Look up the command type and unit in the mapping
+            if operation not in cls.OPERATION_MAP:
+                journaling_manager.recordError(f"Unknown operation: {operation}")
+                return {"status": "error", "message": f"Unknown operation: {operation}"}
+                
+            command_type, command_name = cls.OPERATION_MAP[operation]
+            
+            # For set_model, we need to create a proper llm setup command
+            if operation == "set_model" and data:
+                from Mind.Subcortex.api_commands import CommandFactory
+                
+                # Extract model name and persona
+                model_name = data.get("model", "")
+                persona = data.get("prompt", "")
+                
+                # Create setup command
+                setup_command = CommandFactory.create_llm_setup_command(
+                    model_name=model_name,
+                    persona=persona
+                )
+                
+                # Send directly through hardware transport
+                setup_result = await cls._send_to_hardware(setup_command)
+                
+                # Process result
+                if isinstance(setup_result, dict) and "error" in setup_result:
+                    error = setup_result.get("error", {})
+                    if isinstance(error, dict) and error.get("code") == 0:
+                        # Success according to API
                         return {
                             "status": "ok",
-                            "response": result["data"]
+                            "message": "Model set successfully",
+                            "response": setup_result
                         }
                     else:
-                        # Data missing or not a list
+                        # API returned an error
+                        error_message = error.get("message", "Unknown error")
                         return {
                             "status": "error",
-                            "message": "Invalid model list response"
+                            "message": f"API Error: {error_message}",
+                            "response": setup_result
                         }
+                
+                # Fallback response
+                return {
+                    "status": "error",
+                    "message": "Failed to set model, unexpected response format"
+                }
             
-            # Log execution result
-            status = result.get("status", "unknown") 
-            journaling_manager.recordInfo(f"📋 Operation result: {status}")
-            if status != "ok":
-                journaling_manager.recordError(f"❌ Error message: {result.get('message', 'No message')}")
+            # Create a command dict with the right format using helper function
+            command = create_command(command_type, command_name, data)
             
-            # Special debug for operations - print out the result
-            if operation in ["set_model", "hardware_info"]:
-                print(f"📋 {operation.upper()} RESULT: {json.dumps(result, indent=2)}")
-                print("==================================")
+            # Decide between task system and direct execution
+            # Force direct execution for system operations regardless of use_task
+            if command_type == CommandType.SYSTEM:
+                journaling_manager.recordInfo(f"Using direct execution for system operation: {operation}")
+                return await cls._execute_direct(command)
             
-            journaling_manager.recordInfo("==================================")
-            return result
-
+            # For other operations, use the task flag
+            if use_task is True:
+                journaling_manager.recordInfo(f"Using task system for operation: {operation} per explicit flag")
+                # Special handling for streaming in task system
+                if stream and operation == "think":
+                    return await cls._handle_stream(command)
+                return await cls._execute_task(command)
+            elif use_task is False:
+                journaling_manager.recordInfo(f"Using direct execution for operation: {operation} per explicit flag")
+                # Special handling for streaming in direct execution
+                if stream and operation == "think":
+                    return await cls._handle_llm_stream(command)
+                return await cls._execute_direct(command)
+            
+            # For streaming think operations, always use direct mode
+            if stream and operation == "think":
+                journaling_manager.recordInfo(f"Using direct execution for streaming think operation")
+                return await cls._handle_llm_stream(command)
+            
+            # Decide between direct and task based on operation
+            if command_type == CommandType.LLM:
+                # Direct execution for LLM operations
+                journaling_manager.recordInfo(f"Using direct execution for LLM operation: {operation}")
+                return await cls._execute_direct(command)
+            else:
+                # Task system for other operations (like audio)
+                journaling_manager.recordInfo(f"Using task system for operation: {operation}")
+                return await cls._execute_task(command)
+                
         except Exception as e:
-            journaling_manager.recordError(f"❌ Operation execution error: {e}")
-            journaling_manager.recordError(f"❌ Stack trace: {traceback.format_exc()}")
-            journaling_manager.recordInfo("==================================")
+            journaling_manager.recordError(f"Execute operation error: {e}")
+            import traceback
+            journaling_manager.recordError(f"Operation error trace: {traceback.format_exc()}")
             return {"status": "error", "message": str(e)}
 
     @classmethod
@@ -257,10 +295,12 @@ class NeurocorticalBridge:
     async def _execute_task(cls, command: BaseCommand) -> Dict[str, Any]:
         """Execute command through task system"""
         try:
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            # Use our own get_basal_ganglia method 
+            bg = cls.get_basal_ganglia()
+            if not bg:
+                return {"status": "error", "message": "BasalGanglia not available"}
             
-            bg = SynapticPathways.get_basal_ganglia()
-            task = bg.get_task(command.work_id)
+            task = bg.get_task(command.work_id) if hasattr(bg, 'get_task') else None
             
             if task:
                 task.command = command.action
@@ -279,11 +319,33 @@ class NeurocorticalBridge:
     async def execute(cls, command: Union[BaseCommand, Dict[str, Any]]) -> Dict[str, Any]:
         """Execute a command through appropriate pathway"""
         try:
+            # Check if we should print debug information
+            should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+            
             # Log command execution
             journaling_manager.recordInfo("==================================")
             journaling_manager.recordInfo("📋 COMMAND EXECUTION:")
             journaling_manager.recordInfo("==================================")
             
+            # Get command details
+            if isinstance(command, dict):
+                work_id = command.get("work_id", "unknown")
+                action = command.get("action", "unknown")
+            else:
+                work_id = getattr(command, "work_id", "unknown")
+                action = getattr(command, "action", "unknown")
+            
+            # Special handling for lsmode command
+            if action == "lsmode" and should_print_debug:
+                print("\n==================================")
+                print("🔍 LSMODE COMMAND EXECUTION")
+                print("==================================")
+                if isinstance(command, dict):
+                    print(f"📦 Command: {json.dumps(command, indent=2)}")
+                else:
+                    print(f"📦 Command: {command}")
+                print("==================================")
+                
             # First ensure transport layer is initialized
             if not cls._initialized:
                 journaling_manager.recordInfo("⚠️ Transport not initialized in execute method")
@@ -305,13 +367,10 @@ class NeurocorticalBridge:
             # Log command type
             if isinstance(command, dict):
                 command_type = f"Dict with work_id: {command.get('work_id', 'unknown')}"
-                action = command.get('action', 'unknown')
             elif isinstance(command, BaseCommand):
                 command_type = command.__class__.__name__
-                action = getattr(command, 'action', 'unknown')
             else:
                 command_type = type(command).__name__
-                action = 'unknown'
             
             journaling_manager.recordInfo(f"• Command type: {command_type}")
             journaling_manager.recordInfo(f"• Action: {action}")
@@ -369,14 +428,13 @@ class NeurocorticalBridge:
     async def _execute_direct(cls, command: Dict[str, Any]) -> Dict[str, Any]:
         """Execute command directly"""
         try:
-            # Import here to avoid circular imports
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-            
-            # Get BasalGanglia instance
-            bg = SynapticPathways.get_basal_ganglia()
+            # Get BasalGanglia instance from our own method instead of SynapticPathways
+            bg = cls.get_basal_ganglia()
+            if not bg:
+                return {"status": "error", "message": "BasalGanglia not available"}
             
             # Execute command directly
-            comm_task = bg.get_communication_task()
+            comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
             if comm_task:
                 response = await comm_task.send_command(command)
                 if response:
@@ -557,15 +615,16 @@ class NeurocorticalBridge:
     @classmethod
     async def _direct_get_model(cls) -> Dict[str, Any]:
         """Get current active model directly without using task system"""
-        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-        
         try:
-            # Get communication task
+            # Get communication task from our own method
             bg = cls.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
+            if not bg:
+                return {"status": "error", "message": "BasalGanglia not available"}
+                
+            comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
             
             if not comm_task:
-                return {"success": False, "error": "Communication task not available"}
+                return {"status": "error", "message": "Communication task not available"}
                 
             # Create get model command
             get_model_command = {
@@ -579,45 +638,47 @@ class NeurocorticalBridge:
             
             # Process response
             if response and isinstance(response, dict):
-                return {"success": True, "model": response.get("data", "")}
+                return {"status": "ok", "model": response.get("data", "")}
             else:
-                return {"success": False, "error": "Invalid response format"}
+                return {"status": "error", "message": "Invalid response format"}
                 
         except Exception as e:
             journaling_manager.recordError(f"[NeurocorticalBridge] Error getting model: {e}")
-            return {"success": False, "error": str(e)}
+            return {"status": "error", "message": str(e)}
     
     @classmethod
     async def _direct_list_models(cls) -> List[Dict[str, Any]]:
         """Direct model listing without using the task system"""
-        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-        
         try:
-            # Create list models request
-            list_models_command = {
-                "request_id": f"lsmode_{int(time.time())}",
-                "work_id": "sys",
-                "action": "lsmode"
-            }
+            # Import SynapticPathways only for caching model data
+            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            cached_models = getattr(SynapticPathways, "available_models", [])
             
-            # Special handling for lsmode to avoid recursion
-            # We'll use a direct low-level communication here
+            # Create list models request using our system command format method
+            list_models_command = cls.create_sys_command("lsmode")
+            
+            # Use our own get_basal_ganglia method
             bg = cls.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
+            if not bg:
+                journaling_manager.recordError("[NeurocorticalBridge] BasalGanglia not available")
+                return cached_models  # Fall back to cached models
+                
+            comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
             
             if not comm_task:
                 journaling_manager.recordError("[NeurocorticalBridge] Communication task not available")
-                return SynapticPathways.available_models
+                return cached_models  # Fall back to cached models
             
-            # Send the command directly via communication task to avoid the recursion loop
+            # Send the command directly via communication task
             journaling_manager.recordInfo("[NeurocorticalBridge] Using direct communication for lsmode command")
             response = await comm_task.send_command(list_models_command)
             
             if response and isinstance(response, dict) and "data" in response:
                 models_data = response["data"]
                 if isinstance(models_data, list):
-                    # Update shared cache
-                    SynapticPathways.available_models = models_data
+                    # Update shared cache if we have access to SynapticPathways
+                    if 'SynapticPathways' in locals():
+                        SynapticPathways.available_models = models_data
                     
                     return models_data
                 else:
@@ -626,100 +687,263 @@ class NeurocorticalBridge:
                 journaling_manager.recordError(f"[NeurocorticalBridge] Invalid models response: {response}")
             
             # Return cached models if available
-            return SynapticPathways.available_models
+            return cached_models
                 
         except Exception as e:
             journaling_manager.recordError(f"[NeurocorticalBridge] Error listing models: {e}")
-            return SynapticPathways.available_models
+            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            return getattr(SynapticPathways, "available_models", [])
     
     @classmethod
     async def _direct_set_model(cls, model_name: str) -> Dict[str, Any]:
         """Direct model selection without using the task system"""
-        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+        # Check if debug logging is enabled
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
         
         try:
-            # Get communication task directly from BasalGanglia
-            bg = cls.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
+            from .CorpusCallosum.synaptic_pathways import SynapticPathways
             
-            if not comm_task:
-                journaling_manager.recordError("[NeurocorticalBridge] Communication task not available for set model")
-                return {"success": False, "error": "Communication task not available"}
+            if should_print_debug:
+                print(f"\n[NeurocorticalBridge._direct_set_model] Setting model: {model_name}")
             
-            # Create setup command with the selected model
-            setup_command = {
-                "request_id": f"setup_{int(time.time())}",
-                "work_id": "sys",
-                "action": "setup",
-                "object": "llm.setup",
-                "data": {
-                    "model": model_name,
-                    "response_format": "llm.utf-8.stream", 
-                    "input": "llm.utf-8.stream", 
-                    "enoutput": True,
-                    "enkws": True,
-                    "max_token_len": 127,
-                    "unit": "llm"
-                }
-            }
+            # Create command using our format method
+            setup_command = cls.create_llm_setup_command(model_name)
             
-            # Send command directly through communication task
-            journaling_manager.recordInfo("[NeurocorticalBridge] Sending set model request directly through communication task")
-            response = await comm_task.send_command(setup_command)
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_set_model] Command created: {json.dumps(setup_command, indent=2)}")
             
-            if response and response.get("error", {}).get("code", 1) == 0:
-                # Update default model
-                SynapticPathways.default_llm_model = model_name
-                return {"success": True, "model": model_name}
+            # Try direct transport first if available
+            if cls._transport and cls._initialized:
+                if should_print_debug:
+                    print("[NeurocorticalBridge._direct_set_model] Using direct transport")
+                response = await cls._send_to_hardware(setup_command)
             else:
-                error_msg = response.get("error", {}).get("message", "Unknown error")
-                return {"success": False, "error": error_msg}
+                # Try communication task if direct transport not available
+                if should_print_debug:
+                    print("[NeurocorticalBridge._direct_set_model] Transport not initialized, trying BasalGanglia")
+                
+                # Get communication task directly from BasalGanglia
+                bg = cls.get_basal_ganglia()
+                if not bg:
+                    if should_print_debug:
+                        print("[NeurocorticalBridge._direct_set_model] ❌ BasalGanglia not available")
+                    return {"status": "error", "message": "BasalGanglia not available"}
+                
+                comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
+                
+                if not comm_task:
+                    if should_print_debug:
+                        print("[NeurocorticalBridge._direct_set_model] ❌ Communication task not available")
+                    return {"status": "error", "message": "Communication task not available"}
+                
+                # Send command directly through communication task
+                if should_print_debug:
+                    print("[NeurocorticalBridge._direct_set_model] Sending command through communication task")
+                response = await comm_task.send_command(setup_command)
+            
+            # Process response
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_set_model] Response: {json.dumps(response, indent=2)}")
+            
+            # Check for API success in error object with code 0
+            if response and isinstance(response, dict) and "error" in response:
+                error = response.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    # Update default model if we have access to SynapticPathways
+                    if 'SynapticPathways' in locals():
+                        SynapticPathways.default_llm_model = model_name
+                        if should_print_debug:
+                            print(f"[NeurocorticalBridge._direct_set_model] ✅ Updated default model to {model_name}")
+                    
+                    return {"status": "ok", "model": model_name}
+                else:
+                    error_msg = error.get("message", "Unknown error")
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_set_model] ❌ Error: {error_msg}")
+                    return {"status": "error", "message": error_msg}
+            
+            # Fallback
+            return {"status": "error", "message": "Invalid response from device"}
                 
         except Exception as e:
             journaling_manager.recordError(f"[NeurocorticalBridge] Error setting model: {e}")
-            return {"success": False, "error": str(e)}
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_set_model] ❌ Exception: {e}")
+            return {"status": "error", "message": str(e)}
     
     @classmethod
     async def _direct_reset_llm(cls) -> Dict[str, Any]:
         try:
-            reset_command = SystemCommand.create_reset_command(
-                target="llm",
-                request_id=f"reset_{int(time.time())}"
-            )
+            # Create reset command
+            reset_command = {
+                "request_id": f"reset_{int(time.time())}",
+                "work_id": "sys",
+                "action": "reset"
+            }
             
+            # Use our own get_basal_ganglia method
             bg = cls.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
+            if not bg:
+                return {"status": "error", "message": "BasalGanglia not available"}
+                
+            comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
             
             if not comm_task:
-                return {"success": False, "error": "Communication task not available"}
+                return {"status": "error", "message": "Communication task not available"}
                 
-            return await comm_task.send_command(reset_command)
+            # Send command directly
+            response = await comm_task.send_command(reset_command)
+            
+            # Check for success in API response
+            if isinstance(response, dict) and "error" in response:
+                error = response.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    return {"status": "ok", "message": error.get("message", "Reset successful")}
+            
+            return {"status": "error", "message": "Reset failed", "response": response}
         except Exception as e:
             journaling_manager.recordError(f"[NeurocorticalBridge] Error resetting LLM: {e}")
-            return {"success": False, "error": str(e)}
+            return {"status": "error", "message": str(e)}
     
     @classmethod
     async def _direct_ping(cls) -> Dict[str, Any]:
-        """Direct ping without using the task system"""
+        """Send a ping command to verify system connectivity using direct transport"""
+        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
+        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
+        
+        if should_print_debug:
+            print(f"\n[NeurocorticalBridge._direct_ping] ⚡ Creating ping command...")
+        
         try:
-            ping_command = SystemCommand.create_ping_command()
-            bg = cls.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
+            # Create a properly formatted ping command per API spec
+            ping_command = CommandFactory.create_ping_command("001")  # Use fixed request ID for stability
             
-            if not comm_task:
-                return {"success": False, "error": "Communication task not available"}
+            # Log the command we're sending
+            journaling_manager.recordInfo(f"📡 Sending direct ping command: {json.dumps(ping_command)}")
             
-            return await comm_task.send_command(ping_command)
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_ping] 📦 Command: {json.dumps(ping_command, indent=2)}")
+                print(f"[NeurocorticalBridge._direct_ping] 🔌 Connection type: {cls._connection_type}")
+                print(f"[NeurocorticalBridge._direct_ping] 🔄 Initialized: {cls._initialized}")
             
+            # Use direct hardware transport
+            response = await cls._send_to_hardware(ping_command)
+            
+            # Log the raw response
+            journaling_manager.recordInfo(f"📡 Received ping response: {json.dumps(response)}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_ping] 📊 Response: {json.dumps(response, indent=2) if response else 'None'}")
+            
+            # Check for properly formatted API response
+            if isinstance(response, dict) and "error" in response:
+                error_code = response.get("error", {}).get("code", -1)
+                
+                if error_code == 0:
+                    # API success code is 0
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_ping] ✅ Ping successful (error code 0)")
+                    
+                    return {
+                        "status": "ok",
+                        "message": "Ping successful",
+                        "response": response,
+                        "timestamp": time.time()
+                    }
+                else:
+                    # Got an error response from the API
+                    error_msg = response.get("error", {}).get("message", "Unknown error")
+                    journaling_manager.recordError(f"Ping API error: Code {error_code}, Message: {error_msg}")
+                    
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_ping] ❌ Ping failed with error code {error_code}: {error_msg}")
+                    
+                    return {
+                        "status": "error",
+                        "message": f"Ping failed with error code {error_code}: {error_msg}",
+                        "response": response
+                    }
+            else:
+                # Unexpected response format
+                journaling_manager.recordError(f"Unexpected ping response format: {json.dumps(response)}")
+                
+                if should_print_debug:
+                    print(f"[NeurocorticalBridge._direct_ping] ❌ Unexpected response format")
+                
+                return {
+                    "status": "error",
+                    "message": "Unexpected ping response format",
+                    "response": response
+                }
+                
         except Exception as e:
-            journaling_manager.recordError(f"[NeurocorticalBridge] Ping error: {e}")
-            return {"success": False, "error": str(e)}
+            journaling_manager.recordError(f"Direct ping error: {e}")
+            import traceback
+            journaling_manager.recordError(f"Ping error trace: {traceback.format_exc()}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_ping] ❌ Error: {e}")
+            
+            return {
+                "status": "error",
+                "message": f"Ping error: {str(e)}"
+            }
 
     @classmethod
     def get_basal_ganglia(cls):
-        """Get BasalGanglia instance, avoiding circular imports"""
-        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-        return SynapticPathways.get_basal_ganglia()
+        """Get or create a BasalGanglia instance without requiring external modules"""
+        try:
+            # Try to import SynapticPathways only for backward compatibility
+            try:
+                from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+                
+                # Only try to use it if it actually has the basal_ganglia attribute
+                if hasattr(SynapticPathways, 'get_basal_ganglia'):
+                    return SynapticPathways.get_basal_ganglia()
+                elif hasattr(SynapticPathways, 'basal_ganglia'):
+                    return SynapticPathways.basal_ganglia
+            except (ImportError, AttributeError):
+                # SynapticPathways doesn't exist or doesn't have the required attributes
+                pass
+            
+            # Create a minimal BasalGanglia implementation right in this method
+            # This avoids depending on external imports that might fail
+            class MinimalBasalGanglia:
+                """Minimal implementation of BasalGanglia for direct API calls"""
+                
+                def __init__(self):
+                    self.comm_task = None
+                    self.api_client = None
+                    
+                def get_communication_task(self):
+                    """Get communication task - returns None since we handle API calls directly"""
+                    # We will use direct transport in _send_to_hardware instead
+                    return None
+                
+                def get_task(self, task_id):
+                    """Get task by ID - always returns None since we don't use tasks"""
+                    return None
+                
+                async def think(self, prompt, stream=False):
+                    """Minimal think implementation that uses direct API calls"""
+                    # Create an inference command
+                    command = cls.create_llm_inference_command(prompt, stream=stream)
+                    
+                    # Use direct transport layer
+                    should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+                    if should_print_debug:
+                        print(f"[MinimalBasalGanglia.think] Sending inference using direct transport")
+                        
+                    return await cls._send_to_hardware(command)
+            
+            # Return our minimal implementation
+            return MinimalBasalGanglia()
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error creating BasalGanglia: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"BasalGanglia creation stack trace: {traceback.format_exc()}")
+            return None
 
     @classmethod
     async def _direct_reset_system(cls, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -727,30 +951,58 @@ class NeurocorticalBridge:
         try:
             journaling_manager.recordInfo("[NeurocorticalBridge] Handling reset system command")
             
-            # Get SystemCommandTask from BasalGanglia
+            # Use our own get_basal_ganglia method
             bg = cls.get_basal_ganglia()
-            system_task = bg.get_task("SystemCommandTask")
+            if not bg:
+                return {"status": "error", "message": "BasalGanglia not available"}
             
-            if not system_task:
-                journaling_manager.recordInfo("[NeurocorticalBridge] Creating new SystemCommandTask for reset")
-                from Mind.Subcortex.BasalGanglia.tasks.system_command_task import SystemCommandTask
-                system_task = SystemCommandTask(command_type="reset")
-                bg.register_task(system_task)
-            else:
-                # Configure existing task
-                system_task.command = "reset"
-                system_task.data = None
+            # Try to send command directly first
+            if hasattr(bg, 'get_communication_task'):
+                comm_task = bg.get_communication_task()
+                if comm_task:
+                    # Create reset command
+                    reset_command = cls.create_sys_command("reset")
+                    
+                    # Send command through comm task
+                    journaling_manager.recordInfo("[NeurocorticalBridge] Sending reset command directly")
+                    response = await comm_task.send_command(reset_command)
+                    
+                    # Check for success
+                    if isinstance(response, dict) and "error" in response:
+                        error = response.get("error", {})
+                        if isinstance(error, dict) and error.get("code") == 0:
+                            return {"status": "ok", "message": error.get("message", "Reset successful")}
+                    
+                    return {"status": "error", "message": "Reset command failed", "response": response}
             
-            # Execute the task
-            journaling_manager.recordInfo("[NeurocorticalBridge] Executing reset command via SystemCommandTask")
-            system_task.active = True
-            result = await system_task.execute()
-            return result
+            # Fall back to task-based approach if direct communication failed
+            if hasattr(bg, 'get_task'):
+                system_task = bg.get_task("SystemCommandTask")
+                if not system_task:
+                    journaling_manager.recordInfo("[NeurocorticalBridge] Creating new SystemCommandTask for reset")
+                    from Mind.Subcortex.BasalGanglia.tasks.system_command_task import SystemCommandTask
+                    system_task = SystemCommandTask(command_type="reset")
+                    if hasattr(bg, 'register_task'):
+                        bg.register_task(system_task)
+                    else:
+                        return {"status": "error", "message": "Cannot register task"}
+                else:
+                    # Configure existing task
+                    system_task.command = "reset"
+                    system_task.data = None
+                
+                # Execute the task
+                journaling_manager.recordInfo("[NeurocorticalBridge] Executing reset command via SystemCommandTask")
+                system_task.active = True
+                result = await system_task.execute()
+                return result
+            
+            return {"status": "error", "message": "Cannot execute reset command"}
         except Exception as e:
             journaling_manager.recordError(f"[NeurocorticalBridge] Error in reset_system: {e}")
             import traceback
             journaling_manager.recordError(f"[NeurocorticalBridge] Stack trace: {traceback.format_exc()}")
-            return {"success": False, "error": str(e)}
+            return {"status": "error", "message": str(e)}
 
     @classmethod
     async def get_hardware_info(cls) -> Dict[str, Any]:
@@ -806,73 +1058,52 @@ class NeurocorticalBridge:
             return False
 
     @classmethod
-    async def _initialize_transport(cls, connection_type: str) -> bool:
-        """Initialize transport layer
+    async def _initialize_transport(cls, transport_type: str = None) -> bool:
+        """
+        Initialize the transport layer for hardware communication
         
         Args:
-            connection_type: Type of connection to use
-        
+            transport_type: Type of transport to initialize (tcp, serial, adb)
+            
         Returns:
-            bool: Success status
+            bool: True if initialization successful, False otherwise
         """
         try:
-            from Mind.Subcortex.transport_layer import get_transport
-            from Mind.config import CONFIG
+            # Import here to avoid circular imports
+            from .transport_layer import get_transport
             
-            # Log all connection variables for debugging
-            journaling_manager.recordInfo("==================================")
-            journaling_manager.recordInfo("🔍 TRANSPORT INITIALIZATION DEBUG:")
-            journaling_manager.recordInfo("==================================")
-            journaling_manager.recordInfo(f"• Connection Type: {connection_type}")
-            journaling_manager.recordInfo(f"• Previously initialized: {cls._initialized}")
-            journaling_manager.recordInfo(f"• Previous transport exists: {cls._transport is not None}")
+            # Use the provided transport type or default to TCP
+            if transport_type is None:
+                transport_type = "tcp"  # Default to TCP
+                
+            # Store connection type for future use
+            cls._connection_type = transport_type
+            journaling_manager.recordInfo(f"Initializing {transport_type} transport...")
             
-            # Log config values
-            journaling_manager.recordInfo(f"• Config llm_service.ip: {CONFIG.llm_service.get('ip', 'not set')}")
-            journaling_manager.recordInfo(f"• Config llm_service.port: {CONFIG.llm_service.get('port', 'not set')}")
-            journaling_manager.recordInfo(f"• Config adb_path: {getattr(CONFIG, 'adb_path', 'not set')}")
-            
-            # Save connection type
-            old_connection_type = cls._connection_type
-            cls._connection_type = connection_type
-            journaling_manager.recordInfo(f"• Connection type changed: {old_connection_type} → {connection_type}")
-            
-            # Log connection attempt
-            journaling_manager.recordInfo(f"🔌 Initializing {connection_type} transport...")
-            
-            # Get transport instance
-            cls._transport = get_transport(connection_type)
+            # Create transport instance
+            cls._transport = get_transport(transport_type)
             if not cls._transport:
-                journaling_manager.recordError(f"❌ Failed to get transport for {connection_type}")
+                journaling_manager.recordError(f"Failed to create {transport_type} transport")
                 return False
-            
-            journaling_manager.recordInfo(f"✅ Transport object created: {cls._transport.__class__.__name__}")
-            journaling_manager.recordInfo(f"🧪 Testing if transport is available...")
-            is_available = cls._transport.is_available()
-            journaling_manager.recordInfo(f"🔍 Transport available: {is_available}")
-            
+                
             # Connect transport
-            journaling_manager.recordInfo(f"🔌 Connecting to transport...")
-            success = await cls._transport.connect()
+            journaling_manager.recordInfo(f"Connecting {transport_type} transport...")
+            connect_result = await cls._transport.connect()
             
-            if not success:
-                journaling_manager.recordError(f"❌ Failed to connect {connection_type} transport")
+            if connect_result:
+                journaling_manager.recordInfo(f"✅ {transport_type.upper()} transport connected successfully")
+                cls._initialized = True
+                return True
+            else:
+                journaling_manager.recordError(f"❌ Failed to connect {transport_type} transport")
+                cls._initialized = False
                 return False
-            
-            # Log connection details
-            if hasattr(cls._transport, "endpoint"):
-                journaling_manager.recordInfo(f"✅ Connected to endpoint: {cls._transport.endpoint}")
-            
-            # Set initialized flag
-            cls._initialized = True    
-            journaling_manager.recordInfo(f"✅ Successfully initialized {connection_type} transport")
-            journaling_manager.recordInfo("==================================")
-            return True
-            
+                
         except Exception as e:
-            journaling_manager.recordError(f"❌ Transport initialization error: {e}")
+            journaling_manager.recordError(f"Transport initialization error: {e}")
             import traceback
-            journaling_manager.recordError(f"❌ Stack trace: {traceback.format_exc()}")
+            journaling_manager.recordError(f"Initialization error trace: {traceback.format_exc()}")
+            cls._initialized = False
             return False
 
     @classmethod
@@ -930,140 +1161,82 @@ class NeurocorticalBridge:
             return {"status": "error", "message": str(e)}
 
     @classmethod
-    async def _send_to_hardware(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send command directly to hardware through transport layer
-        
-        This method handles the direct hardware communication.
-        SynapticPathways should NOT do this - it should only relay to the bridge.
+    async def _send_to_hardware(cls, command: Union[Dict[str, Any], str]) -> Dict[str, Any]:
+        """
+        Send command to hardware using configured transport
+        Handles transport initialization if necessary
         
         Args:
-            command: Command dictionary to send
+            command: API command to send (dict or string)
             
         Returns:
-            Dict[str, Any]: Response from hardware
+            Dict: Response from the hardware
         """
         try:
-            # Import here to avoid circular imports
-            from .transport_layer import get_transport
-            
-            # Log detailed command execution information - always print this regardless of log level
-            print("\n==================================")
-            print("🚀 HARDWARE COMMAND EXECUTION:")
-            print("==================================")
-            
-            # Check if we have an initialized transport
-            print(f"• Transport state: initialized={cls._initialized}, type={cls._connection_type}")
-            print(f"• Transport object exists: {cls._transport is not None}")
-            print(f"• Command: {command.get('action', 'unknown')} (work_id: {command.get('work_id', 'unknown')})")
-            
-            # Get transport if needed (we'll store it on first use)
-            if not cls._transport or not cls._initialized:
-                # If connection_type is None, default to "tcp"
+            # Initialize transport if not already done
+            if not cls._initialized or not cls._transport:
+                journaling_manager.recordInfo("Transport not initialized, initializing now...")
+                
+                # Make sure we have a connection type
                 if cls._connection_type is None:
-                    print("⚠️ No connection type specified, defaulting to TCP")
-                    cls._connection_type = "tcp"
+                    cls._connection_type = "tcp"  # Default
+                    
+                journaling_manager.recordInfo(f"Using connection type: {cls._connection_type}")
+                    
+                success = await cls._initialize_transport(cls._connection_type)
+                if not success:
+                    journaling_manager.recordError("Failed to initialize transport")
+                    return {
+                        "error": {
+                            "code": -1,
+                            "message": "Failed to initialize transport"
+                        }
+                    }
+                    
+            # Log command being sent (truncate if too large)
+            cmd_str = json.dumps(command) if isinstance(command, dict) else command
+            log_cmd = cmd_str[:200] + "..." if len(cmd_str) > 200 else cmd_str
+            journaling_manager.recordInfo(f"Sending to hardware: {log_cmd}")
                 
-                print(f"🔄 Creating new transport for {cls._connection_type}")
-                cls._transport = get_transport(cls._connection_type)
-                
-                # Initialize transport if not already connected
-                if not cls._initialized or not cls._transport:
-                    print(f"🔌 Initializing transport: {cls._connection_type}")
-                    success = await cls._initialize_transport(cls._connection_type)
-                    if not success:
-                        print(f"❌ Failed to initialize transport with {cls._connection_type}")
-                        return {"status": "error", "message": f"Failed to initialize transport with {cls._connection_type}"}
-                
-            if not cls._transport:
-                print("❌ Transport not initialized - unable to create transport instance")
-                return {"status": "error", "message": "Transport not initialized - unable to create transport instance"}
-            
-            # Log the command in full detail
-            print("📦 COMMAND DETAILS:")
-            print(f"• Request ID: {command.get('request_id', 'not set')}")
-            print(f"• Work ID: {command.get('work_id', 'not set')}")
-            print(f"• Action: {command.get('action', 'not set')}")
-            print(f"• Object: {command.get('object', 'not set')}")
-            
-            if 'data' in command and command['data'] and isinstance(command['data'], dict):
-                print("• Data:")
-                for k, v in command['data'].items():
-                    # Truncate long values
-                    if isinstance(v, str) and len(v) > 100:
-                        v = f"{v[:50]}...{v[-50:]}"
-                    print(f"  - {k}: {v}")
-            
-            # Log the full raw JSON that will be sent - always print regardless of log level
-            raw_json = json.dumps(command, indent=2)
-            print("📤 RAW JSON REQUEST:")
-            print(raw_json)
-            
-            # Use the transport's transmit method (correct method name)
-            try:
-                print("🔄 Transmitting command via transport...")
-                start_time = time.time()
-                
-                # The transport expects a Dict[str, Any] or already formatted JSON string
-                if isinstance(command, str):
-                    print("⚠️ Command is string, converting to JSON...")
-                    response = await cls._transport.transmit(json.loads(command))
-                else:
-                    print("✅ Sending command as dictionary...")
+            # Transmit command through transport
+            if cls._transport:
+                try:
+                    # Send command via transport
                     response = await cls._transport.transmit(command)
+                    
+                    # Log response (truncate if too large)
+                    resp_str = json.dumps(response) if response else "None"
+                    log_resp = resp_str[:200] + "..." if len(resp_str) > 200 else resp_str
+                    journaling_manager.recordInfo(f"Received from hardware: {log_resp}")
+                    
+                    return response or {"error": {"code": -1, "message": "Empty response from hardware"}}
+                except Exception as e:
+                    journaling_manager.recordError(f"Transport transmission error: {e}")
+                    return {
+                        "error": {
+                            "code": -1,
+                            "message": f"Transport error: {str(e)}"
+                        }
+                    }
+            else:
+                journaling_manager.recordError("No transport available")
+                return {
+                    "error": {
+                        "code": -1,
+                        "message": "No transport available"
+                    }
+                }
                 
-                # Log timing and detailed response
-                elapsed = time.time() - start_time
-                print(f"⏱️ Command completed in {elapsed:.2f} seconds")
-                
-                # Log the full raw JSON that was received - always print regardless of log level
-                if response:
-                    raw_response = json.dumps(response, indent=2)
-                    print("🐧 RAW JSON RESPONSE 🐬:")
-                    print(raw_response)
-                else:
-                    print("⚠️ Empty or null response received")
-                
-                # Log response details
-                print("📦 RESPONSE DETAILS:")
-                if response:
-                    if isinstance(response, dict):
-                        error = response.get('error', {})
-                        if isinstance(error, dict):
-                            print(f"• Status: {error.get('code', 'not found')}")
-                            print(f"• Message: {error.get('message', 'not found')}")
-                        else:
-                            print(f"• Error: {error}")
-                        
-                        # Log data if present but truncate if too large
-                        if 'data' in response:
-                            data_str = str(response['data'])
-                            if len(data_str) > 200:
-                                data_str = f"{data_str[:100]}...{data_str[-100:]}"
-                            print(f"• Data: {data_str}")
-                    else:
-                        print(f"• Non-dictionary response: {type(response)}")
-                        print(f"• Content: {response}")
-                else:
-                    print("⚠️ Empty response received")
-                
-                print("==================================")
-                
-                # Still use journaling manager to record the information in case it's needed
-                journaling_manager.recordInfo("Command transmission completed")
-                
-                return response
-                
-            except Exception as e:
-                print(f"❌ Transport transmit error: {e}")
-                print(f"❌ Stack trace: {traceback.format_exc()}")
-                print("==================================")
-                return {"status": "error", "message": f"Transport transmit error: {e}"}
-            
         except Exception as e:
-            print(f"❌ Hardware communication error: {e}")
-            print(f"❌ Stack trace: {traceback.format_exc()}")
-            print("==================================")
-            return {"status": "error", "message": str(e)}
+            journaling_manager.recordError(f"Error sending to hardware: {e}")
+            import traceback
+            journaling_manager.recordError(f"Hardware send error trace: {traceback.format_exc()}")
+            return {
+                "error": {
+                    "code": -1,
+                    "message": f"Hardware communication error: {str(e)}"
+                }
+            }
 
     @classmethod
     async def cleanup(cls) -> None:
@@ -1157,4 +1330,98 @@ class NeurocorticalBridge:
             journaling_manager.recordError(f"Transport debug error: {e}")
             import traceback
             journaling_manager.recordError(f"Debug error trace: {traceback.format_exc()}")
-            return {"status": "error", "message": f"Transport debug failed: {e}"} 
+            return {"status": "error", "message": f"Transport debug failed: {e}"}
+
+    @classmethod
+    def create_sys_command(cls, action, request_id=None):
+        """
+        Create a system command in exact API format
+        
+        Args:
+            action: The system action (ping, hwinfo, lsmode, reset, reboot)
+            request_id: Optional request ID
+            
+        Returns:
+            dict: Command dictionary formatted per API spec
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": action
+        }
+    
+    @classmethod
+    def create_llm_setup_command(cls, model_name, persona=None, request_id=None):
+        """
+        Create an LLM setup command in exact API format
+        
+        Args:
+            model_name: Name of the model to set up
+            persona: Optional system prompt/persona
+            request_id: Optional request ID
+            
+        Returns:
+            dict: Command dictionary formatted per API spec
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "llm",
+            "action": "setup",
+            "object": "llm.setup",
+            "data": {
+                "model": model_name,
+                "response_format": "llm.utf-8",
+                "input": "llm.utf-8",
+                "enoutput": True,
+                "enkws": False,
+                "max_token_len": 127,
+                "prompt": persona or ""
+            }
+        }
+    
+    @classmethod
+    def create_llm_inference_command(cls, prompt, request_id=None, stream=False, work_id=None):
+        """
+        Create an LLM inference command in exact API format
+        
+        Args:
+            prompt: The text to process
+            request_id: Optional request ID
+            stream: Whether to use streaming format
+            work_id: Optional work_id override (for continued conversations)
+            
+        Returns:
+            dict: Command dictionary formatted per API spec
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        if not work_id:
+            work_id = "llm.1003"
+            
+        if stream:
+            return {
+                "request_id": request_id,
+                "work_id": work_id,
+                "action": "inference",
+                "object": "llm.utf-8.stream",
+                "data": {
+                    "delta": prompt,
+                    "index": 0,
+                    "finish": True
+                }
+            }
+        else:
+            return {
+                "request_id": request_id,
+                "work_id": work_id,
+                "action": "inference",
+                "object": "llm.utf-8",
+                "data": prompt
+            } 

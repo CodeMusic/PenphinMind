@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 Transport Layer Abstraction:
 - Handles communication with hardware
@@ -14,11 +16,11 @@ import socket
 import subprocess
 import time
 import traceback
+import re
 from typing import Dict, Any, List, Optional, Union
 import paramiko
 import serial
 import serial.tools.list_ports
-import re
 
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
@@ -386,127 +388,160 @@ class WiFiTransport(BaseTransport):
             initial_connection = False
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(3.0)
+                    s.settimeout(5.0)  # Increased timeout for more reliability
                     journaling_manager.recordInfo(f"Testing socket connection to {self.ip}:{self.port}...")
                     s.connect((self.ip, self.port))
                     
-                    # Try a ping to verify LLM service
+                    # Try a ping to verify LLM service using exact API format
                     ping_command = {
-                        "request_id": "001",
-                        "work_id": "sys",
-                        "action": "ping"
+                        "request_id": "001",  # Use consistent ID from API spec 
+                        "work_id": "sys",     # Exact format from API spec
+                        "action": "ping"      # Simple ping operation
                     }
                     
-                    # Send ping and wait for response
+                    # Log the ping command
+                    journaling_manager.recordInfo(f"Sending ping command: {json.dumps(ping_command)}")
+                    
+                    # Send ping with newline terminator
                     json_data = json.dumps(ping_command) + "\n"
                     s.sendall(json_data.encode())
                     
-                    # Wait for response
-                    response = ""
-                    s.settimeout(3.0)
-                    while True:
-                        chunk = s.recv(1).decode()
-                        if not chunk:
-                            break
-                        response += chunk
-                        if chunk == "\n":
-                            break
+                    # Read response in a more robust way - accumulate all data until timeout
+                    buffer = bytearray()
+                    s.settimeout(5.0)
                     
-                    # Check if ping was successful
-                    if response.strip():
-                        response_data = json.loads(response.strip())
-                        if response_data.get("error", {}).get("code", -1) == 0:
-                            initial_connection = True
-                            journaling_manager.recordInfo(f"✅ TCP connection to {self.ip}:{self.port} successful!")
-                            print(f"✅ TCP connection to {self.ip}:{self.port} successful!")
-                        else:
-                            journaling_manager.recordError(f"Ping response indicated failure: {response_data}")
-                    else:
-                        journaling_manager.recordError("Empty response from ping")
-            except Exception as e:
-                journaling_manager.recordInfo(f"❌ Initial TCP connection failed: {e}")
-                print(f"❌ Initial TCP connection failed: {e}")
-            
-            # If direct connection worked, we're done
-            if initial_connection:
-                self.endpoint = f"{self.ip}:{self.port}"
-                self.connected = True
-                return True
-            
-            # TCP connection failed, temporarily use ADB to discover current IP
-            journaling_manager.recordInfo("🔎 TCP connection failed. Using ADB to discover current device IP...")
-            print("\n🔎 TCP connection failed. Using ADB to discover current device IP...")
-            
-            # Use ADB only for IP discovery
-            ip_from_adb = await self._discover_ip_via_adb()
-            
-            if ip_from_adb:
-                journaling_manager.recordInfo(f"✅ Discovered device IP via ADB: {ip_from_adb}")
-                print(f"✅ Discovered device IP via ADB: {ip_from_adb}")
-                
-                # Update IP in instance and config
-                old_ip = self.ip
-                self.ip = ip_from_adb
-                CONFIG.llm_service["ip"] = ip_from_adb
-                
-                # Save for future use
-                if CONFIG.save():
-                    journaling_manager.recordInfo(f"💾 Updated configuration: IP changed from {old_ip} to {ip_from_adb}")
-                    print(f"💾 Updated configuration: IP changed from {old_ip} to {ip_from_adb}")
-                
-                # Try TCP connection with the new IP (still using TCP transport)
-                try:
-                    journaling_manager.recordInfo(f"🔄 Trying TCP connection with new IP: {ip_from_adb}:{self.port}...")
-                    print(f"🔄 Trying TCP connection with new IP: {ip_from_adb}:{self.port}...")
-                    
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.settimeout(3.0)
-                        s.connect((self.ip, self.port))
-                        
-                        # Send ping to verify
-                        ping_command = {
-                            "request_id": "001",
-                            "work_id": "sys",
-                            "action": "ping"
-                        }
-                        
-                        # Send ping
-                        json_data = json.dumps(ping_command) + "\n"
-                        s.sendall(json_data.encode())
-                        
-                        # Get response
-                        response = ""
-                        s.settimeout(3.0)
+                    try:
                         while True:
-                            chunk = s.recv(1).decode()
+                            chunk = s.recv(4096)  # Larger buffer
                             if not chunk:
                                 break
-                            response += chunk
-                            if chunk == "\n":
+                            buffer.extend(chunk)
+                            if b'\n' in chunk:  # Stop at newline
                                 break
+                    except socket.timeout:
+                        # Timeout is ok if we got any data
+                        if buffer:
+                            journaling_manager.recordInfo("Socket timeout but received data")
+                        else:
+                            journaling_manager.recordInfo("Socket timeout with no data")
+                            
+                    # Parse response if we have any data
+                    if buffer:
+                        response_str = buffer.decode().strip()
+                        journaling_manager.recordInfo(f"Received raw response: {response_str}")
                         
-                        # Verify ping worked
-                        if response.strip():
-                            response_data = json.loads(response.strip())
-                            if response_data.get("error", {}).get("code", -1) == 0:
-                                self.endpoint = f"{self.ip}:{self.port}"
-                                self.connected = True
-                                journaling_manager.recordInfo(f"✅ TCP connection with new IP successful!")
-                                print(f"✅ TCP connection with new IP successful!")
-                                return True
-                except Exception as e:
-                    journaling_manager.recordError(f"❌ TCP connection with new IP failed: {e}")
-                    print(f"❌ TCP connection with new IP failed: {e}")
+                        try:
+                            response_data = json.loads(response_str)
+                            journaling_manager.recordInfo(f"Parsed JSON response: {json.dumps(response_data, indent=2)}")
+                            
+                            # Check for success in error code
+                            if "error" in response_data and isinstance(response_data["error"], dict):
+                                error_code = response_data["error"].get("code", -1)
+                                
+                                if error_code == 0:
+                                    # Success! Connection established
+                                    initial_connection = True
+                                    self.endpoint = f"{self.ip}:{self.port}"
+                                    self.connected = True
+                                    journaling_manager.recordInfo(f"✅ TCP connection to {self.ip}:{self.port} successful!")
+                                    print(f"✅ TCP connection to {self.ip}:{self.port} successful!")
+                                    return True
+                                else:
+                                    journaling_manager.recordError(f"Ping error code {error_code}: {response_data['error'].get('message', 'Unknown error')}")
+                            else:
+                                journaling_manager.recordError(f"Unexpected response format - missing error field: {response_data}")
+                        except json.JSONDecodeError:
+                            journaling_manager.recordError(f"Failed to parse response as JSON: {response_str!r}")
+                    else:
+                        journaling_manager.recordError("Empty response from ping")
+                        
+            except socket.timeout:
+                journaling_manager.recordError(f"Socket timeout connecting to {self.ip}:{self.port}")
+                print(f"❌ Socket timeout connecting to {self.ip}:{self.port}")
+            except socket.error as e:
+                journaling_manager.recordError(f"Socket error connecting to {self.ip}:{self.port}: {e}")
+                print(f"❌ Socket error connecting to {self.ip}:{self.port}: {e}")
+            except Exception as e:
+                journaling_manager.recordError(f"Error establishing TCP connection: {e}")
+                print(f"❌ Error establishing TCP connection: {e}")
+                
+            # If the default connection didn't work, attempt IP discovery with ADB
+            if not initial_connection:
+                journaling_manager.recordInfo("Initial connection failed, trying ADB IP discovery...")
+                ip_from_adb = self._get_ip_from_adb()
+                
+                if ip_from_adb and ip_from_adb != self.ip:
+                    # Try with the new IP from ADB
+                    journaling_manager.recordInfo(f"Found device IP from ADB: {ip_from_adb}")
+                    self.ip = ip_from_adb  # Update the IP
+                    
+                    # Try connecting with the new IP
+                    try:
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.settimeout(5.0)  # Increased timeout
+                            journaling_manager.recordInfo(f"🔄 Trying TCP connection with new IP: {ip_from_adb}:{self.port}...")
+                            print(f"🔄 Trying TCP connection with new IP: {ip_from_adb}:{self.port}...")
+                            s.connect((self.ip, self.port))
+                            
+                            # Send ping to verify in exact API format
+                            ping_command = {
+                                "request_id": "001", 
+                                "work_id": "sys",
+                                "action": "ping"
+                            }
+                            
+                            # Send the ping command with newline
+                            json_data = json.dumps(ping_command) + "\n"
+                            s.sendall(json_data.encode())
+                            
+                            # More robust response reading
+                            buffer = bytearray()
+                            s.settimeout(5.0)
+                            
+                            try:
+                                while True:
+                                    chunk = s.recv(4096)
+                                    if not chunk:
+                                        break
+                                    buffer.extend(chunk)
+                                    if b'\n' in chunk:
+                                        break
+                            except socket.timeout:
+                                pass
+                                
+                            # Process response if we got any data
+                            if buffer:
+                                response_str = buffer.decode().strip()
+                                journaling_manager.recordInfo(f"Received raw response: {response_str}")
+                                
+                                try:
+                                    response_data = json.loads(response_str)
+                                    
+                                    # Check success via error code
+                                    if "error" in response_data and isinstance(response_data["error"], dict):
+                                        error_code = response_data["error"].get("code", -1)
+                                        
+                                        if error_code == 0:
+                                            # Connection succeeded!
+                                            self.endpoint = f"{self.ip}:{self.port}"
+                                            self.connected = True
+                                            journaling_manager.recordInfo(f"✅ TCP connection with new IP successful!")
+                                            print(f"✅ TCP connection with new IP successful!")
+                                            return True
+                                except json.JSONDecodeError:
+                                    journaling_manager.recordError(f"Failed to parse response as JSON: {response_str!r}")
+                    except Exception as e:
+                        journaling_manager.recordError(f"Error connecting with IP from ADB: {e}")
             
-            # Both connection attempts failed
-            journaling_manager.recordError("❌ Failed to establish TCP connection with both original and discovered IPs")
-            print("\n❌ Failed to establish TCP connection with both original and discovered IPs")
-            self.connected = False
+            # If we get here, all connection attempts failed
+            journaling_manager.recordError("All connection attempts failed")
+            print("❌ Failed to establish TCP connection to device")
             return False
-            
+                
         except Exception as e:
-            journaling_manager.recordError(f"❌ TCP connection error: {e}")
-            self.connected = False
+            journaling_manager.recordError(f"Error in TCP connection process: {e}")
+            import traceback
+            journaling_manager.recordError(f"TCP connection error trace: {traceback.format_exc()}")
             return False
     
     async def _discover_ip_via_adb(self) -> Optional[str]:
@@ -584,99 +619,132 @@ class WiFiTransport(BaseTransport):
         self.connected = False
         journaling_manager.recordInfo("TCP connection closed")
     
-    async def transmit(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a command over TCP and get response"""
+    async def transmit(self, command: Union[Dict[str, Any], str]) -> Dict[str, Any]:
+        """Transmit command to device over TCP and get response"""
         if not self.connected:
-            journaling_manager.recordError("TCP connection not established")
-            raise ConnectionError("TCP connection not established")
+            journaling_manager.recordError("Attempting to transmit but not connected")
+            try:
+                # Attempt to reconnect
+                reconnect_result = await self.connect()
+                if not reconnect_result:
+                    return {
+                        "error": {
+                            "code": -1,
+                            "message": "Failed to connect for transmission"
+                        }
+                    }
+            except Exception as e:
+                journaling_manager.recordError(f"Error reconnecting for transmission: {e}")
+                return {
+                    "error": {
+                        "code": -1,
+                        "message": f"Reconnection error: {str(e)}"
+                    }
+                }
         
         try:
-            ip, port = self.endpoint.split(":")
-            port = int(port)
+            # Convert command to string if it's a dict
+            if isinstance(command, dict):
+                command_str = json.dumps(command) + "\n"
+            else:
+                # Ensure string command ends with newline
+                command_str = command if command.endswith("\n") else command + "\n"
             
-            # Log the outgoing command
-            self._log_transport_json("SEND", command, "WiFiTransport")
+            # Debug log showing truncated command
+            cmd_log = command_str[:200] + "..." if len(command_str) > 200 else command_str
+            journaling_manager.recordInfo(f"📤 Transmitting: {cmd_log}")
             
-            # Detailed request logging
-            journaling_manager.recordDebug(f"🔶 API REQUEST to {ip}:{port}:")
-            journaling_manager.recordDebug(f"🔶 {json.dumps(command, indent=2)}")
-            
-            # Prepare JSON data - log the exact string that will be sent
-            json_data = json.dumps(command) + "\n"
-            journaling_manager.recordInfo("🔤 NETWORK RAW REQUEST:")
-            journaling_manager.recordInfo(f"  {json_data.strip()}")
-            
-            # Connect to the LLM service
+            # Create fresh socket for this transmission
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(self.timeout)
+                s.settimeout(10.0)  # Longer timeout for potentially complex operations
                 
                 # Connect and send
-                journaling_manager.recordDebug(f"Connecting to {ip}:{port}...")
-                s.connect((ip, port))
-                s.sendall(json_data.encode())
-                journaling_manager.recordDebug(f"Command sent successfully to {ip}:{port}")
-                
-                # Wait for response using byte-by-byte approach
-                buffer = ""
-                journaling_manager.recordDebug("Waiting for response...")
-                while True:
+                try:
+                    ip, port = self.ip, self.port
+                    journaling_manager.recordInfo(f"Connecting to {ip}:{port} for transmission")
+                    s.connect((ip, port))
+                    
+                    # Send command
+                    s.sendall(command_str.encode())
+                    journaling_manager.recordInfo("Command sent, awaiting response")
+                    
+                    # Receive response in chunks - more robust handling
+                    buffer = bytearray()
+                    s.settimeout(15.0)  # Generous timeout for response
+                    
                     try:
-                        data = s.recv(1).decode()
-                        if not data:
-                            journaling_manager.recordDebug("No more data received")
-                            break
-                        buffer += data
-                        
-                        # For chat responses, print characters as they arrive
-                        if command.get("action") == "inference":
-                            print(data, end="", flush=True)
-                        
-                        if data == "\n":
-                            journaling_manager.recordDebug("Received complete response")
-                            break
+                        while True:
+                            chunk = s.recv(4096)
+                            if not chunk:
+                                break
+                            buffer.extend(chunk)
+                            if b'\n' in chunk:  # Stop at newline
+                                break
                     except socket.timeout:
-                        journaling_manager.recordError("Socket timeout")
-                        break
-            
-            # Log the raw response string before parsing
-            journaling_manager.recordInfo("🔤 NETWORK RAW RESPONSE:")
-            journaling_manager.recordInfo(f"  {buffer.strip()}")
-            
-            # Parse response
-            try:
-                response = json.loads(buffer.strip())
-                
-                # Log the received response
-                self._log_transport_json("RECEIVE", response, "WiFiTransport")
-                
-                # Detailed response logging
-                journaling_manager.recordDebug(f"🔷 API RESPONSE:")
-                journaling_manager.recordDebug(f"🔷 {json.dumps(response, indent=2)}")
-                return response
-            except json.JSONDecodeError:
-                journaling_manager.recordError(f"Failed to parse JSON: {buffer.strip()!r}")
-                journaling_manager.recordDebug(f"Raw response data: {buffer.strip()!r}")
-                
-                # Log the failed response
-                self._log_transport_json("RECEIVE", f"INVALID JSON: {buffer.strip()}", "WiFiTransport")
-                
-                return {
-                    "request_id": command.get("request_id", f"error_{int(time.time())}"),
-                    "work_id": command.get("work_id", "sys"),
-                    "data": "None",
-                    "error": {"code": -1, "message": "Failed to parse response"},
-                    "object": command.get("object", "None"),
-                    "created": int(time.time())
-                }
-            
+                        if buffer:
+                            journaling_manager.recordInfo("Socket timeout but received partial data")
+                        else:
+                            journaling_manager.recordError("Socket timeout with no response data")
+                            return {
+                                "error": {
+                                    "code": -1,
+                                    "message": "Timeout waiting for response"
+                                }
+                            }
+                    
+                    # Process response if we have data
+                    if buffer:
+                        response_str = buffer.decode().strip()
+                        
+                        # Truncate long responses in log
+                        resp_log = response_str[:200] + "..." if len(response_str) > 200 else response_str
+                        journaling_manager.recordInfo(f"📥 Received: {resp_log}")
+                        
+                        try:
+                            # Parse JSON response
+                            response_data = json.loads(response_str)
+                            return response_data
+                        except json.JSONDecodeError:
+                            journaling_manager.recordError(f"Failed to parse response as JSON: {resp_log!r}")
+                            return {
+                                "error": {
+                                    "code": -1,
+                                    "message": f"Invalid JSON response: {resp_log}"
+                                }
+                            }
+                    else:
+                        journaling_manager.recordError("Empty response from transmission")
+                        return {
+                            "error": {
+                                "code": -1,
+                                "message": "Empty response"
+                            }
+                        }
+                            
+                except socket.error as e:
+                    self.connected = False  # Mark as disconnected on socket error
+                    journaling_manager.recordError(f"Socket error during transmission: {e}")
+                    return {
+                        "error": {
+                            "code": -1,
+                            "message": f"Socket error: {str(e)}"
+                        }
+                    }
+                    
         except Exception as e:
-            journaling_manager.recordError(f"TCP communication error: {str(e)}")
-            journaling_manager.recordError(f"Stack trace: {traceback.format_exc()}")
-            raise CommandError(f"TCP communication failed: {str(e)}")
+            journaling_manager.recordError(f"Error in TCP transmission: {e}")
+            import traceback
+            journaling_manager.recordError(f"Transmission error trace: {traceback.format_exc()}")
+            return {
+                "error": {
+                    "code": -1,
+                    "message": f"Transmission error: {str(e)}"
+                }
+            }
 
     def _find_llm_port(self, ssh) -> Optional[int]:
         """Find the port where the LLM service is running"""
-        journaling_manager.recordInfo("\nChecking for LLM service port...")
+        journaling_manager.recordInfo("\n🐧 Checking for LLM service port...")
         
         # Try netstat first to find the LLM service port
         journaling_manager.recordInfo("\nTrying netstat to find port...")
@@ -702,7 +770,7 @@ class WiFiTransport(BaseTransport):
                     return int(port)
         
         # If we get here, try common ports
-        journaling_manager.recordInfo("\nTrying common ports...")
+        journaling_manager.recordInfo("\n🐬 Trying common ports...")
         common_ports = [10001, 8080, 80, 443, 5000, 8000, 3000]  # Put 10001 first since we know it works
         for port in common_ports:
             try:
@@ -720,6 +788,48 @@ class WiFiTransport(BaseTransport):
         # If no port found, use the default
         journaling_manager.recordInfo(f"No LLM service port found, using default {CONFIG.llm_service['port']}")
         return CONFIG.llm_service["port"]
+
+    def _get_ip_from_adb(self) -> Optional[str]:
+        """Get device IP address using ADB"""
+        try:
+            journaling_manager.recordInfo("Attempting to discover device IP via ADB...")
+            
+            # Run ADB command to get device IP address
+            cmd = ["adb", "shell", "ip", "addr", "show", "wlan0"]
+            journaling_manager.recordInfo(f"Executing ADB command: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0:
+                journaling_manager.recordError(f"ADB command failed: {stderr}")
+                return None
+                
+            # Parse IP address from output using regex
+            ip_pattern = r'inet\s+(\d+\.\d+\.\d+\.\d+)'
+            match = re.search(ip_pattern, stdout)
+            
+            if match:
+                ip_address = match.group(1)
+                journaling_manager.recordInfo(f"Found IP address via ADB: {ip_address}")
+                
+                # Update the config with this IP
+                old_ip = self.ip
+                CONFIG.llm_service["ip"] = ip_address
+                
+                if CONFIG.save():
+                    journaling_manager.recordInfo(f"Updated config: IP changed from {old_ip} to {ip_address}")
+                
+                return ip_address
+            else:
+                journaling_manager.recordInfo("No IP address found in ADB output")
+                return None
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error discovering IP via ADB: {e}")
+            import traceback
+            journaling_manager.recordError(f"ADB discovery error trace: {traceback.format_exc()}")
+            return None
 
 class ADBTransport(BaseTransport):
     """ADB communication transport layer"""

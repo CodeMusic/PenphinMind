@@ -392,113 +392,320 @@ class Mind:
 
     async def reset_system(self):
         """Reset the LLM system"""
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+        
+        if should_print_debug:
+            print(f"\n[Mind.reset_system] 🔄 Resetting LLM system...")
         journaling_manager.recordInfo("[Mind] Resetting system")
         
-        reset_command = SystemCommand.create_reset_command(
-            target="llm",
-            request_id=f"reset_{int(time.time())}"
-        )
-        return await NeurocorticalBridge.execute(reset_command)
+        # API doesn't require a target parameter for reset
+        # Just execute the reset operation without data
+        result = await self.execute_operation("reset_system")
+        
+        # Log the result
+        if should_print_debug:
+            print(f"[Mind.reset_system] 📊 Reset result: {json.dumps(result, indent=2)}")
+        
+        return result
     
     async def get_hardware_info(self) -> Dict[str, Any]:
-        """Get formatted hardware information"""
+        """Get hardware information using hwinfo API command with direct transport"""
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+        
         try:
-            # Use NeurocorticalBridge for hardware info
-            result = await self.execute_operation("hardware_info")
+            # Import NeurocorticalBridge here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            print(f"\n[Mind.get_hardware_info] 📊 Result: {json.dumps(result, indent=2)}")
+            # Create hardware info command
+            hw_command = NeurocorticalBridge.create_sys_command("hwinfo")
             
-            if result.get("status") == "ok":
-                # API response might have data in different formats
-                # Check all possible places where the hardware data might be
-                hw_data = None
-                
-                # Check in the response->data
-                if "response" in result and isinstance(result["response"], dict) and "data" in result["response"]:
-                    hw_data = result["response"]["data"]
-                # Check directly in data field
-                elif "data" in result and isinstance(result["data"], dict):
+            if should_print_debug:
+                print(f"\n[Mind.get_hardware_info] Getting hardware info...")
+                print(f"[Mind.get_hardware_info] Command: {json.dumps(hw_command, indent=2)}")
+            
+            # Send directly through transport
+            result = await NeurocorticalBridge._send_to_hardware(hw_command)
+            
+            if should_print_debug:
+                print(f"\n[Mind.get_hardware_info] 📊 Result: {json.dumps(result, indent=2)}")
+            
+            # Check if we got data from the API
+            if isinstance(result, dict) and "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
+                # Extract the hardware data field
+                if "data" in result:
                     hw_data = result["data"]
-                # Check in response field
-                elif "response" in result and isinstance(result["response"], dict):
-                    hw_data = result["response"]
-                
-                # If we found hardware data, update the cached info
-                if hw_data:
+                    
+                    # Temperature might be in millicelsius (as per API, temperature: 46350 means 46.35°C)
+                    if "temperature" in hw_data and isinstance(hw_data["temperature"], (int, float)):
+                        if hw_data["temperature"] > 1000:  # Likely in millicelsius
+                            hw_data["temperature"] = hw_data["temperature"] / 1000.0
+                    
                     # Update the hardware info in SynapticPathways
                     from .CorpusCallosum.synaptic_pathways import SynapticPathways
                     SynapticPathways.update_hardware_info(hw_data)
                     
                     # Format the hardware info for display
                     formatted = SynapticPathways.format_hw_info()
-                    return {"status": "ok", "hardware_info": formatted}
-                
-                # Could not find hardware data in the response
-                return {"status": "error", "message": "No hardware data in response"}
+                    return {"status": "ok", "hardware_info": formatted, "data": hw_data}
             
-            return {"status": "error", "message": result.get("message", "Failed to get hardware info")}
+            return {"status": "error", "message": "Failed to get hardware info", "raw_response": result}
         except Exception as e:
+            journaling_manager.recordError(f"[Mind] Hardware info error: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"Hardware info error trace: {traceback.format_exc()}")
             return {"status": "error", "message": str(e)}
     
     async def ping_system(self):
-        """Ping the system to check connectivity"""
-        return await self.execute_operation("ping")
+        """Ping the system to check connectivity using direct transport"""
+        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
+        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
+        
+        if should_print_debug:
+            print(f"\n[Mind.ping_system] 🔍 Pinging system...")
+            print(f"[Mind.ping_system] 🔄 Connection type: {self._connection_type}")
+            print(f"[Mind.ping_system] 🔄 Initialized: {self._initialized}")
+        
+        try:
+            # Import NeurocorticalBridge here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            # Use the direct ping method which doesn't depend on BasalGanglia
+            result = await NeurocorticalBridge._direct_ping()
+            
+            if should_print_debug:
+                print(f"[Mind.ping_system] 📊 Raw result: {json.dumps(result, indent=2) if result else 'None'}")
+            
+            # Check if NeurocorticalBridge already standardized the response
+            if isinstance(result, dict) and result.get("status") == "ok":
+                if should_print_debug:
+                    print(f"[Mind.ping_system] ✅ Connection successful (standardized response)")
+                return result
+            
+            # Check if result contains an error section with code 0 (success)
+            if isinstance(result, dict):
+                # Try to get direct response from API
+                response = result.get("response", {})
+                if isinstance(response, dict) and "error" in response:
+                    error = response.get("error", {})
+                    if isinstance(error, dict) and error.get("code") == 0:
+                        if should_print_debug:
+                            print(f"[Mind.ping_system] ✅ Connection successful (API response)")
+                        # Success - API returned error code 0
+                        return {
+                            "status": "ok",
+                            "raw_response": response
+                        }
+                
+                # Try original format as well (sometimes _direct_ping returns the unwrapped API response)
+                if "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
+                    if should_print_debug:
+                        print(f"[Mind.ping_system] ✅ Connection successful (unwrapped API response)")
+                    return {
+                        "status": "ok",
+                        "raw_response": result
+                    }
+            
+            # Format as standardized error response
+            if should_print_debug:
+                print(f"[Mind.ping_system] ❌ Connection failed")
+            return {
+                "status": "error", 
+                "message": result.get("message", "Ping failed"),
+                "raw_response": result
+            }
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Ping error: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"[Mind] Ping error trace: {traceback.format_exc()}")
+            return {"status": "error", "message": str(e)}
     
     async def list_models(self):
-        """List available models"""
-        print(f"\n[Mind.list_models] 🔍 Listing models...")
-        print(f"[Mind.list_models] 🔄 Connection type: {self._connection_type}")
-        print(f"[Mind.list_models] 🔄 Initialized: {self._initialized}")
+        """List available models using lsmode API command with direct transport"""
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
         
-        # Execute the list_models operation (which maps to lsmode command)
-        result = await self.execute_operation("list_models")
+        if should_print_debug:
+            print(f"\n[Mind.list_models] 🔍 Listing models...")
         
-        # Log the result for debugging
-        print(f"[Mind.list_models] 📊 Result status: {result.get('status', 'unknown')}")
-        if result.get('status') == "ok":
-            models_count = len(result.get("response", [])) if isinstance(result.get("response", []), list) else 0
-            print(f"[Mind.list_models] ✅ Found {models_count} models")
-        else:
-            print(f"[Mind.list_models] ❌ Error: {result.get('message', 'Unknown error')}")
+        try:
+            # Import NeurocorticalBridge here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-        # Record in regular logging too
-        journaling_manager.recordInfo(f"[Mind] List models result: {result}")
-        
-        return result
+            # Create lsmode command
+            lsmode_command = NeurocorticalBridge.create_sys_command("lsmode")
+            
+            if should_print_debug:
+                print(f"[Mind.list_models] Command: {json.dumps(lsmode_command, indent=2)}")
+            
+            # Send directly through transport
+            result = await NeurocorticalBridge._send_to_hardware(lsmode_command)
+            
+            if should_print_debug:
+                print(f"[Mind.list_models] 📊 Raw result: {json.dumps(result, indent=2)}")
+            
+            # Check if we got data from the API
+            if isinstance(result, dict) and "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
+                # If we got data in the format we expect
+                if "data" in result and isinstance(result["data"], list):
+                    # Format the response for consistency
+                    models_data = result["data"]
+                    
+                    # Cache the models in SynapticPathways for later use
+                    try:
+                        from .CorpusCallosum.synaptic_pathways import SynapticPathways
+                        SynapticPathways.available_models = models_data
+                    except ImportError:
+                        pass  # It's ok if we can't cache it
+                    
+                    # Debug info about models
+                    if should_print_debug:
+                        models_count = len(models_data)
+                        print(f"[Mind.list_models] ✅ Found {models_count} models")
+                    
+                    # Return standardized response
+                    return {
+                        "status": "ok",
+                        "response": models_data
+                    }
+            
+            # If we didn't get expected data from API or it failed
+            return {
+                "status": "error",
+                "message": "Failed to get models list or invalid format",
+                "raw_response": result
+            }
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] List models error: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"List models error trace: {traceback.format_exc()}")
+            return {"status": "error", "message": str(e)}
         
     async def set_model(self, model_name: str):
-        """Set the active model"""
-        print(f"\n[Mind.set_model] 🔄 Setting model: {model_name}")
-        print(f"[Mind.set_model] 🔄 Connection type: {self._connection_type}")
-        print(f"[Mind.set_model] 🔄 Initialized: {self._initialized}")
+        """Set the active model using LLM module's setup API"""
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
         
-        # Create a detailed command for setting the model with persona 
+        if should_print_debug:
+            print(f"\n[Mind.set_model] 🔄 Setting model: {model_name}")
+            print(f"[Mind.set_model] 🔄 Connection type: {self._connection_type}")
+            print(f"[Mind.set_model] 🔄 Initialized: {self._initialized}")
+        
+        # Create command using llm setup format as per API spec
         command_data = {
             "model": model_name,
-            "persona": self._persona
+            "response_format": "llm.utf-8",  # Standard output
+            "input": "llm.utf-8",            # UART input
+            "enoutput": True,                # Enable UART output
+            "enkws": False,                  # No KWS interruption
+            "max_token_len": 127,            # Recommended token length
+            "prompt": self._persona          # System message/persona
         }
         
-        print(f"[Mind.set_model] 📋 Command data prepared with persona")
+        if should_print_debug:
+            print(f"[Mind.set_model] 📋 Command data prepared with LLM setup format")
         
-        # Execute the operation with detailed debug
-        result = await self.execute_operation("set_model", command_data)
-        
-        # Log the result in detail
-        print(f"[Mind.set_model] 📊 Result status: {result.get('status', 'unknown')}")
-        if result.get('status') != "ok":
-            print(f"[Mind.set_model] ❌ Error: {result.get('message', 'Unknown error')}")
-        else:
-            print(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
+        try:
+            # Try direct transport method first
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            from Mind.Subcortex.api_commands import CommandFactory
             
-        # Record in regular logging too
-        journaling_manager.recordInfo(f"[Mind] Set model result: {result}")
-        
-        return result
+            # Create proper LLM setup command per API spec
+            setup_command = CommandFactory.create_llm_setup_command(
+                model_name=model_name,
+                persona=self._persona
+            )
+            
+            if should_print_debug:
+                print(f"[Mind.set_model] 🔌 Using direct transport method")
+                print(f"[Mind.set_model] 📦 Command: {json.dumps(setup_command, indent=2)}")
+            
+            # Send directly through hardware transport
+            direct_result = await NeurocorticalBridge._send_to_hardware(setup_command)
+            
+            if should_print_debug:
+                print(f"[Mind.set_model] 📊 Direct result: {json.dumps(direct_result, indent=2)}")
+            
+            # Process result
+            if isinstance(direct_result, dict) and "error" in direct_result:
+                error = direct_result.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    # Success according to API
+                    if should_print_debug:
+                        print(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
+                    
+                    # Update the default model
+                    self.set_default_model(model_name)
+                    
+                    return {
+                        "status": "ok",
+                        "message": "Model set successfully",
+                        "response": direct_result
+                    }
+                else:
+                    # API returned an error
+                    error_message = error.get("message", "Unknown error")
+                    if should_print_debug:
+                        print(f"[Mind.set_model] ❌ API Error: {error_message}")
+                    
+                    return {
+                        "status": "error",
+                        "message": f"API Error: {error_message}",
+                        "response": direct_result
+                    }
+            
+            # Fall back to execute_operation if direct method fails
+            if should_print_debug:
+                print(f"[Mind.set_model] 🔄 Direct method inconclusive, trying operation method")
+            
+            # Execute operation as set_model (which maps to LLM setup)
+            result = await self.execute_operation("set_model", command_data)
+            
+            # Update the default model if successful
+            if result.get("status") == "ok":
+                self.set_default_model(model_name)
+            
+            # Log the result in detail
+            if should_print_debug:
+                print(f"[Mind.set_model] 📊 Result status: {result.get('status', 'unknown')}")
+                if result.get('status') != "ok":
+                    print(f"[Mind.set_model] ❌ Error: {result.get('message', 'Unknown error')}")
+                else:
+                    print(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
+            
+            # Record in regular logging too
+            journaling_manager.recordInfo(f"[Mind] Set model result: {result}")
+            
+            return result
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Set model error: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"[Mind] Set model error trace: {traceback.format_exc()}")
+            return {
+                "status": "error",
+                "message": f"Set model error: {str(e)}"
+            }
         
     async def reboot_device(self):
         """Reboot the connected device"""
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+        
+        if should_print_debug:
+            print(f"\n[Mind.reboot_device] 🔄 Rebooting device...")
         journaling_manager.recordInfo("[Mind] Rebooting device")
-        return await self.execute_operation("reboot_device")
+        
+        # According to API, reboot requires no data
+        result = await self.execute_operation("reboot")
+        
+        if should_print_debug:
+            print(f"[Mind.reboot_device] 📊 Result: {json.dumps(result, indent=2)}")
+        
+        # Handle API response format, which contains error.code = 0 for success
+        if isinstance(result, dict) and "error" in result:
+            error = result.get("error", {})
+            if isinstance(error, dict) and error.get("code") == 0:
+                return {"status": "ok", "message": error.get("message", "Rebooting...")}
+        
+        # If we get here, format as an error
+        return {"status": "error", "message": "Reboot command failed"}
     
     async def connect(self, connection_type=None):
         """Connect to hardware using the specified connection type"""
@@ -669,13 +876,33 @@ class Mind:
 
     async def check_connection(self) -> Dict[str, Any]:
         """Check system connectivity"""
+        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+        
+        if should_print_debug:
+            print(f"\n[Mind.check_connection] 🔍 Checking connection...")
+            print(f"[Mind.check_connection] 🔄 Connection type: {self._connection_type}")
+            print(f"[Mind.check_connection] 🔄 Initialized: {self._initialized}")
+        
         try:
-            # Use NeurocorticalBridge for all operations
-            result = await self.execute_operation("ping")
+            # Use ping operation to check connection
+            result = await self.ping_system()
+            
+            # Log the result
+            if should_print_debug:
+                print(f"[Mind.check_connection] 📊 Ping result: {json.dumps(result, indent=2)}")
+            
+            # Use the standardized result from ping_system
             if result.get("status") == "ok":
+                if should_print_debug:
+                    print(f"[Mind.check_connection] ✅ Connection successful")
                 return {"status": "ok"}
-            return {"status": "error", "message": result.get("message", "Connection check failed")}
+            else:
+                if should_print_debug:
+                    print(f"[Mind.check_connection] ❌ Connection failed: {result.get('message', 'Unknown error')}")
+                return {"status": "error", "message": result.get("message", "Connection check failed")}
         except Exception as e:
+            if should_print_debug:
+                print(f"[Mind.check_connection] ❌ Connection error: {e}")
             return {"status": "error", "message": str(e)}
 
     @property

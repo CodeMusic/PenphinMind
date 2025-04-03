@@ -93,10 +93,30 @@ class SystemCommand(BaseCommand):
         return cmd
 
     @classmethod
-    def create_ping_command(cls) -> 'SystemCommand':
-        cmd = cls()
-        cmd.action = "ping"
-        return cmd
+    def create_ping_command(cls, request_id=None):
+        """
+        Create a ping command to check system connectivity
+        
+        Args:
+            request_id: Optional request ID (auto-generated if not provided)
+            
+        Returns:
+            Dict: Command dictionary
+        """
+        if not request_id:
+            request_id = f"ping_{int(time.time())}"
+            
+        # Format exactly per API spec:
+        # {
+        #   "request_id": "001",
+        #   "work_id": "sys",
+        #   "action": "ping"
+        # }
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": "ping"
+        }
 
 class AudioCommand(BaseCommand):
     """Base class for all audio-related commands"""
@@ -230,6 +250,191 @@ class CommandFactory:
             raise ValueError(f"Unknown command type: {command_type}")
             
         return command_class(**kwargs)
+
+    @staticmethod
+    def create_ping_command(request_id=None):
+        """
+        Create a ping command exactly according to API:
+        {
+            "request_id": "001",
+            "work_id": "sys",
+            "action": "ping"
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": "ping"
+        }
+    
+    @staticmethod
+    def create_list_models_command(request_id=None):
+        """
+        Create a list models (lsmode) command exactly according to API:
+        {
+            "request_id": "001",
+            "work_id": "sys",
+            "action": "lsmode"
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": "lsmode"
+        }
+    
+    @staticmethod
+    def create_hardware_info_command(request_id=None):
+        """
+        Create a hardware info command exactly according to API:
+        {
+            "request_id": "001",
+            "work_id": "sys",
+            "action": "hwinfo"
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": "hwinfo"
+        }
+    
+    @staticmethod
+    def create_reset_command(request_id=None):
+        """
+        Create a reset command exactly according to API:
+        {
+            "request_id": "001",
+            "work_id": "sys",
+            "action": "reset"
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": "reset"
+        }
+    
+    @staticmethod
+    def create_reboot_command(request_id=None):
+        """
+        Create a reboot command exactly according to API:
+        {
+            "request_id": "001",
+            "work_id": "sys",
+            "action": "reboot"
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "sys",
+            "action": "reboot"
+        }
+    
+    @staticmethod
+    def create_llm_setup_command(model_name, persona=None, request_id=None):
+        """
+        Create an LLM setup command exactly according to API:
+        {
+            "request_id": "4",
+            "work_id": "llm",
+            "action": "setup",
+            "object": "llm.setup",
+            "data": {
+                "model": "qwen2.5-0.5b",
+                "response_format": "llm.utf-8",
+                "input": "llm.utf-8",
+                "enoutput": true,
+                "enkws": false,
+                "max_token_len": 127,
+                "prompt": "..."
+            }
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        return {
+            "request_id": request_id,
+            "work_id": "llm",
+            "action": "setup",
+            "object": "llm.setup",
+            "data": {
+                "model": model_name,
+                "response_format": "llm.utf-8",
+                "input": "llm.utf-8",
+                "enoutput": True,
+                "enkws": False,
+                "max_token_len": 127,
+                "prompt": persona or ""
+            }
+        }
+    
+    @staticmethod
+    def create_llm_inference_command(prompt, request_id=None, stream=False):
+        """
+        Create an LLM inference command exactly according to API:
+        
+        For non-streaming:
+        {
+            "request_id": "4",
+            "work_id": "llm.1003",
+            "action": "inference",
+            "object": "llm.utf-8",
+            "data": "What's ur name?"
+        }
+        
+        For streaming:
+        {
+            "request_id": "4",
+            "work_id": "llm.1003",
+            "action": "inference",
+            "object": "llm.utf-8.stream",
+            "data": {
+                "delta": "What's ur name?",
+                "index": 0,
+                "finish": true
+            }
+        }
+        """
+        if not request_id:
+            request_id = f"{int(time.time())}"
+            
+        if stream:
+            return {
+                "request_id": request_id,
+                "work_id": "llm.1003",
+                "action": "inference",
+                "object": "llm.utf-8.stream",
+                "data": {
+                    "delta": prompt,
+                    "index": 0,
+                    "finish": True
+                }
+            }
+        else:
+            return {
+                "request_id": request_id,
+                "work_id": "llm.1003",
+                "action": "inference",
+                "object": "llm.utf-8",
+                "data": prompt
+            }
 
 def generate_request_id(prefix: str = "") -> str:
     """Generate unique request ID"""
@@ -582,52 +787,74 @@ def command_type_to_unit_type(command_type: CommandType, operation: str = None) 
     # Otherwise use the standard mapping
     return COMMAND_TYPE_MAP.get(command_type, "sys")
 
-def create_command(unit_type: str, command_name: str, **kwargs) -> Dict[str, Any]:
+def create_command(unit_type, command_name, data=None):
     """
-    Create a command from a template based on unit type and command name
+    Create a command dict with the specified unit type and command name.
+    
+    This function centralizes command creation to ensure proper API formatting.
     
     Args:
-        unit_type: The unit type (sys, llm, audio, asr, etc.)
-        command_name: The command name (setup, inference, etc.)
-        **kwargs: Additional command parameters
+        unit_type: The unit type (can be CommandType enum or string)
+        command_name: The command name
+        data: Optional data for the command
         
     Returns:
-        Dict[str, Any]: The complete command dictionary
+        dict: Command dictionary
     """
-    # Handle CommandType enum input
+    # Convert CommandType enum to string if needed
     if isinstance(unit_type, CommandType):
-        unit_type = command_type_to_unit_type(unit_type, command_name)
+        unit_type = unit_type.value
     
-    command_map = {
-        "sys": SYSTEM_COMMANDS,
-        "audio": AUDIO_COMMANDS,
-        "kws": KWS_COMMANDS,
-        "asr": ASR_COMMANDS,
-        "llm": LLM_COMMANDS,
-        "tts": TTS_COMMANDS
+    # Handle special system commands with exact API formats
+    if unit_type == "sys":
+        # Use CommandFactory for standard system commands
+        if command_name == "ping":
+            return CommandFactory.create_ping_command()
+        elif command_name == "lsmode":
+            return CommandFactory.create_list_models_command()
+        elif command_name == "hwinfo":
+            return CommandFactory.create_hardware_info_command()
+        elif command_name == "reset":
+            return CommandFactory.create_reset_command()
+        elif command_name == "reboot":
+            return CommandFactory.create_reboot_command()
+    
+    # Handle special LLM commands
+    elif unit_type == "llm" and command_name == "setup" and isinstance(data, dict):
+        # Use CommandFactory for LLM setup with model and persona
+        model_name = data.get("model", "qwen2.5-0.5b")
+        persona = data.get("prompt", "")
+        return CommandFactory.create_llm_setup_command(model_name, persona)
+    
+    elif unit_type == "llm" and command_name == "inference" and data:
+        # Handle LLM inference
+        stream = data.get("stream", False)
+        prompt = data.get("prompt", data.get("delta", ""))
+        if isinstance(data, str):
+            prompt = data
+        return CommandFactory.create_llm_inference_command(prompt, stream=stream)
+    
+    # Generate request ID
+    request_id = generate_request_id()
+    
+    # Create standard command structure
+    command = {
+        "request_id": request_id,
+        "work_id": unit_type,
+        "action": command_name
     }
     
-    if unit_type not in command_map:
-        raise ValueError(f"Unknown unit type: {unit_type}")
-        
-    command_template = command_map[unit_type].get(command_name)
-    if not command_template:
-        raise ValueError(f"Unknown command: {command_name} for unit: {unit_type}")
-        
-    command = command_template.copy()
-    command["request_id"] = generate_request_id(f"{unit_type}_{command_name}")
-    
-    # Update command data if provided
-    if "data" in kwargs and isinstance(kwargs["data"], dict):
-        # If data is a string (like "None"), replace it with the kwargs data
-        if isinstance(command["data"], str):
-            command["data"] = kwargs["data"]
-        # Otherwise if it's a dict, update it
-        elif isinstance(command["data"], dict):
-            command["data"].update(kwargs["data"])
+    # Add data if provided
+    if data:
+        # For LLM inference in standard format
+        if unit_type == "llm" and command_name == "inference":
+            if isinstance(data, str):
+                command["data"] = data
+            elif isinstance(data, dict):
+                command["data"] = data
         else:
-            command["data"] = kwargs["data"]
-            
+            command["data"] = data
+    
     return command
 
 def parse_response(response: Dict[str, Any]) -> Dict[str, Any]:

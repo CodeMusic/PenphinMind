@@ -10,13 +10,15 @@ import json
 
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.mind import Mind
-from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager, SystemJournelingLevel
 from pathlib import Path
 # from Interaction.chat_interface import interactive_chat  # This causes circular import
 from Mind.mind_config import load_minds_config, get_available_minds, get_default_mind_id
 
-# Initialize journaling manager
-journaling_manager = SystemJournelingManager()
+# Initialize journaling manager with DEBUG level explicitly
+journaling_manager = SystemJournelingManager(level=SystemJournelingLevel.DEBUG)
+print(f"\n[MENU] 🔍 Initializing menu with Debug logging - Level: {journaling_manager.currentLevel.name}")
+print(f"[MENU] 🔍 Log levels enabled: {' '.join([level.name for level in SystemJournelingLevel if level.value <= journaling_manager.currentLevel.value])}")
 
 # Create global Mind instance
 mind = None  # Will be initialized after mind selection
@@ -694,8 +696,28 @@ async def system_menu() -> None:
                 # Ping System
                 print("\nPinging system...")
                 result = await mind.ping_system()
-                ping_success = result and result.get("success", False)
-                print(f"Ping {'successful' if ping_success else 'failed'}")
+                
+                # Display detailed ping results
+                print(f"\n📡 Ping Result:")
+                print(f"Status: {result.get('status', 'unknown')}")
+                
+                if result.get('status') == 'ok':
+                    print("✅ System is connected and responsive!")
+                    
+                    # Show raw response data if available
+                    raw_response = result.get('raw_response', {})
+                    print("\nAPI Details:")
+                    print(f"- Error Code: {raw_response.get('error', {}).get('code', 'N/A')}")
+                    print(f"- Message: {raw_response.get('error', {}).get('message', 'N/A')}")
+                    print(f"- Created: {raw_response.get('created', 'N/A')}")
+                else:
+                    print(f"❌ Ping failed: {result.get('message', 'Unknown error')}")
+                    
+                    # Show debugging information
+                    print("\nDebug Information:")
+                    print(f"- Connection type: {mind._connection_type}")
+                    print(f"- Initialized: {mind._initialized}")
+                    
                 input("\nPress Enter to continue...")
                 
             elif choice == "4":
