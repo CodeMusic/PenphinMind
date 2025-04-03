@@ -2,7 +2,7 @@
 """
 API Conformance Test Script
 Tests that the LLM inference commands match the documented API structure
-without any undocumented parameters like "push".
+with the required push:true parameter.
 """
 
 import sys
@@ -36,7 +36,7 @@ def test_api_conformance():
         print()
         
         # Check API conformance by comparing with documented structure
-        # Based on the API docs, the correct structure is:
+        # Based on the device behavior, the correct structure is:
         documented_structure = {
             "request_id": "string value",
             "work_id": "llm.xxxx",
@@ -44,7 +44,8 @@ def test_api_conformance():
             "object": "optional",
             "data": {
                 "prompt": "string value",
-                "stream": True or False
+                "stream": True or False,
+                "push": True  # push parameter seems to be required and must be true
             }
         }
         
@@ -73,14 +74,14 @@ def test_api_conformance():
             else:
                 print("❌ Missing stream in data")
             
-            # Check for undocumented fields
-            undocumented_fields = [f for f in command["data"].keys() 
-                                 if f not in ["prompt", "stream"]]
-            
-            if undocumented_fields:
-                print(f"❌ Found undocumented fields in data: {undocumented_fields}")
+            # Check for push parameter
+            if "push" in command["data"]:
+                if command["data"]["push"] is True:
+                    print("✅ Found push=true in data")
+                else:
+                    print("❌ push parameter is present but not set to true")
             else:
-                print("✅ No undocumented fields in data")
+                print("❌ Missing push parameter in data")
         else:
             print("❌ Missing or invalid data field")
         
@@ -95,6 +96,16 @@ def test_api_conformance():
             print("✅ Streaming parameter correctly set to True")
         else:
             print("❌ Streaming parameter not set correctly")
+        
+        # Verify push parameter in streaming command
+        if "push" in streaming_command["data"] and streaming_command["data"]["push"] is True:
+            print("✅ Push parameter correctly set to True in streaming command")
+        else:
+            print("❌ Push parameter not set correctly in streaming command")
+        
+        print("\nNOTE: Based on the error messages, it appears the device requires")
+        print("      the push parameter to be present and set to TRUE, even though")
+        print("      it may not be mentioned in the official documentation.")
         
         print("\n===== TEST COMPLETE =====")
         

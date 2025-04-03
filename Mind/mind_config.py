@@ -26,7 +26,8 @@ DEFAULT_MINDS_CONFIG = {
                 "default_model": "qwen2.5-0.5b-prefill",
                 "temperature": 0.7,
                 "max_tokens": 127,
-                "persona": "You are a helpful assistant named {name}."
+                "persona": "You are a helpful assistant named {name}.",
+                "stream": True  # Control whether to use streaming API format
             }
         }
     },

@@ -12,7 +12,8 @@
                 "default_model": "qwen2.5-0.5b-prefill",
                 "temperature": 0.7,
                 "max_tokens": 127,
-                "persona": "You are a helpful assistant named {name}."
+                "persona": "You are a helpful assistant named {name}.",
+                "stream": true
             }
         },
         "penphin": {
@@ -20,14 +21,15 @@
             "device_id": "penphin",
             "connection": {
                 "type": "tcp",
-                "ip": "10.0.0.82",
+                "ip": "10.0.0.141",
                 "port": 10001
             },
             "llm": {
                 "default_model": "qwen2.5-0.5b-prefill",
                 "temperature": 0.7,
                 "max_tokens": 127,
-                "persona": "You are a helpful assistant named {name}. You run on the PenphinMind architecture, which combines dolphin and penguin concepts to represent a balanced AI system. You are knowledgeable, friendly, and eager to assist."
+                "persona": "You are a helpful assistant named {name}. You run on the PenphinMind architecture, which combines dolphin and penguin concepts to represent a balanced AI system. You are knowledgeable, friendly, and eager to assist.",
+                "stream": true
             }
         },
         "dolphin": {
@@ -42,7 +44,8 @@
                 "default_model": "qwen2.5-0.5b-prefill",
                 "temperature": 0.5,
                 "max_tokens": 127,
-                "persona": "You are DolphinMind, a logical analyzer focused on systematic thinking. Your neural architecture is optimized for deep analysis and systematic problem-solving. You prefer methodical approaches and clear reasoning."
+                "persona": "You are DolphinMind, a logical analyzer focused on systematic thinking. Your neural architecture is optimized for deep analysis and systematic problem-solving. You prefer methodical approaches and clear reasoning.",
+                "stream": true
             }
         },
         "penguin": {
@@ -57,7 +60,8 @@
                 "default_model": "qwen2.5-0.5b-prefill",
                 "temperature": 0.8,
                 "max_tokens": 127,
-                "persona": "You are PenguinMind, a creative explorer focused on innovative solutions. Your neural architecture is optimized for lateral thinking and making unexpected connections. You enjoy finding creative approaches to problems."
+                "persona": "You are PenguinMind, a creative explorer focused on innovative solutions. Your neural architecture is optimized for lateral thinking and making unexpected connections. You enjoy finding creative approaches to problems.",
+                "stream": true
             }
         }
     },

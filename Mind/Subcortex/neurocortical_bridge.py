@@ -173,7 +173,7 @@ class NeurocorticalBridge:
             if operation not in cls.OPERATION_MAP:
                 journaling_manager.recordError(f"Unknown operation: {operation}")
                 return {"status": "error", "message": f"Unknown operation: {operation}"}
-                
+
             command_type, command_name = cls.OPERATION_MAP[operation]
             
             # For set_model, we need to create a proper llm setup command
@@ -211,9 +211,9 @@ class NeurocorticalBridge:
                             "message": f"API Error: {error_message}",
                             "response": setup_result
                         }
-                
-                # Fallback response
-                return {
+            
+            # Fallback response
+            return {
                     "status": "error",
                     "message": "Failed to set model, unexpected response format"
                 }
@@ -255,7 +255,7 @@ class NeurocorticalBridge:
                 # Task system for other operations (like audio)
                 journaling_manager.recordInfo(f"Using task system for operation: {operation}")
                 return await cls._execute_task(command)
-                
+
         except Exception as e:
             journaling_manager.recordError(f"Execute operation error: {e}")
             import traceback
@@ -275,14 +275,35 @@ class NeurocorticalBridge:
             return {"status": "error", "message": str(e)}
 
     @classmethod
-    async def _handle_llm_stream(cls, command: Union[Dict[str, Any], BaseCommand]) -> Dict[str, Any]:
-        """Handle streaming LLM inference"""
+    async def _handle_llm_stream(cls, command: Union[Dict[str, Any], BaseCommand], callback=None) -> Dict[str, Any]:
+        """
+        Handle streaming LLM inference
+        
+        Args:
+            command: The command to execute
+            callback: Optional external callback to receive streaming chunks directly
+            
+        Returns:
+            Dict with status and collected response
+        """
         try:
             # Get the prompt from the command
+            prompt = ""
             if isinstance(command, dict):
-                prompt = command.get("data", {}).get("prompt", "")
+                # If data is a string, it's the prompt (non-streaming format)
+                if isinstance(command.get("data"), str):
+                    prompt = command.get("data", "")
+                # If data is a dict, look for prompt or delta
+                elif isinstance(command.get("data"), dict):
+                    prompt = command.get("data", {}).get("prompt", 
+                            command.get("data", {}).get("delta", ""))
             else:
-                prompt = getattr(command, "data", {}).get("prompt", "")
+                # Command object
+                data = getattr(command, "data", None)
+                if isinstance(data, str):
+                    prompt = data
+                elif isinstance(data, dict):
+                    prompt = data.get("prompt", data.get("delta", ""))
                 
             journaling_manager.recordDebug("=== LLM STREAM REQUEST ===")
             journaling_manager.recordDebug(f"Prompt (first 100 chars): {prompt[:100]}...")
@@ -303,34 +324,54 @@ class NeurocorticalBridge:
             
             # Create a callback to handle streaming responses
             async def handle_stream_chunk(chunk):
-                # Log the chunk with truncation for large responses
-                chunk_log = json.dumps(chunk)
-                if len(chunk_log) > 500:
-                    journaling_manager.recordDebug(f"Stream chunk received (truncated): {chunk_log[:500]}...")
-                else:
-                    journaling_manager.recordDebug(f"Stream chunk received: {chunk_log}")
-                
-                # For API that returns proper objects with data field
-                if isinstance(chunk, dict) and "data" in chunk:
-                    data = chunk["data"]
+                try:
+                    # Log the chunk with truncation for large responses
+                    chunk_log = json.dumps(chunk)
+                    if len(chunk_log) > 500:
+                        journaling_manager.recordDebug(f"Stream chunk received (truncated): {chunk_log[:500]}...")
+                    else:
+                        journaling_manager.recordDebug(f"Stream chunk received: {chunk_log}")
                     
-                    # Handle both string and object data formats
-                    if isinstance(data, str):
-                        await stream_queue.put(data)
-                    elif isinstance(data, dict) and "delta" in data:
-                        # Newer API with delta field
-                        delta = data.get("delta", "")
-                        if delta:
-                            await stream_queue.put(delta)
-                            
-                        # Check for finish flag
-                        if data.get("finish", False):
-                            # Signal completion
-                            await stream_queue.put(None)
-                else:
-                    # For simple API that just returns text
-                    if isinstance(chunk, str):
-                        await stream_queue.put(chunk)
+                    # Extract text from the chunk
+                    chunk_text = ""
+                    
+                    # For API that returns proper objects with data field
+                    if isinstance(chunk, dict) and "data" in chunk:
+                        data = chunk["data"]
+                        
+                        # Handle both string and object data formats
+                        if isinstance(data, str):
+                            chunk_text = data
+                            await stream_queue.put(data)
+                        elif isinstance(data, dict) and "delta" in data:
+                            # Newer API with delta field
+                            delta = data.get("delta", "")
+                            if delta:
+                                chunk_text = delta
+                                await stream_queue.put(delta)
+                                
+                            # Check for finish flag
+                            if data.get("finish", False):
+                                # Signal completion
+                                await stream_queue.put(None)
+                    else:
+                        # For simple API that just returns text
+                        if isinstance(chunk, str):
+                            chunk_text = chunk
+                            await stream_queue.put(chunk)
+                    
+                    # If an external callback was provided, call it with the chunk text
+                    if callback and chunk_text:
+                        try:
+                            # Call the external callback with the text
+                            if asyncio.iscoroutinefunction(callback):
+                                await callback(chunk_text)
+                            else:
+                                callback(chunk_text)
+                        except Exception as e:
+                            journaling_manager.recordError(f"Error in external callback: {e}")
+                except Exception as e:
+                    journaling_manager.recordError(f"Error processing stream chunk: {e}")
             
             # Setup transport streaming - the callback will add chunks to the queue
             stream_result = await cls._send_to_hardware(stream_command, stream_callback=handle_stream_chunk)
@@ -370,7 +411,6 @@ class NeurocorticalBridge:
                 "response": response_text,
                 "chunks": responses
             }
-                
         except Exception as e:
             journaling_manager.recordError(f"Streaming error: {e}")
             import traceback
@@ -422,13 +462,39 @@ class NeurocorticalBridge:
             
             # Special case for LLM inference (thinking)
             if work_id == "llm" and action == "inference":
-                # Get the prompt from the command
+                # Get the prompt based on the command format
                 if isinstance(command, dict):
-                    prompt = command.get("data", {}).get("prompt", "")
-                    stream = command.get("data", {}).get("stream", False)
+                    # Check if data is string (non-streaming) or dict (streaming)
+                    data = command.get("data", {})
+                    
+                    if isinstance(data, str):
+                        # Non-streaming format where data is the prompt string directly
+                        prompt = data
+                        stream = False
+                        journaling_manager.recordDebug("Using non-streaming format (data is string)")
+                    elif isinstance(data, dict):
+                        # Streaming format where prompt is in data.delta
+                        prompt = data.get("delta", "")
+                        stream = True  # It's streaming if data is a dict with delta
+                        journaling_manager.recordDebug("Using streaming format (data is dict with delta)")
+                    else:
+                        # Unknown format
+                        prompt = ""
+                        stream = False
+                        journaling_manager.recordError(f"Unknown data format: {type(data)}")
                 else:
-                    prompt = getattr(command, "data", {}).get("prompt", "")
-                    stream = getattr(command, "data", {}).get("stream", False)
+                    # For BaseCommand objects
+                    data = getattr(command, "data", {})
+                    
+                    if isinstance(data, str):
+                        prompt = data
+                        stream = False
+                    elif isinstance(data, dict):
+                        prompt = data.get("delta", "")
+                        stream = True
+                    else:
+                        prompt = ""
+                        stream = False
                 
                 # Debug logging for inference request
                 journaling_manager.recordDebug("=== LLM INFERENCE REQUEST ===")
@@ -819,48 +885,44 @@ class NeurocorticalBridge:
     
     @classmethod
     async def _direct_set_model(cls, model_name: str) -> Dict[str, Any]:
-        """Direct model selection without using the task system"""
+        """Set model directly without using the task system"""
         try:
-            from .CorpusCallosum.synaptic_pathways import SynapticPathways
+            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] Setting model to {model_name}")
             
-            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] Setting model: {model_name}")
+            # Get local reference to BasalGanglia
+            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
             
-            # Create command using our format method
-            setup_command = cls.create_llm_setup_command(model_name)
+            # Create setup command using our system command format method
+            setup_command = cls.create_setup_command(model_name)
             
-            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] Command created: {json.dumps(setup_command, indent=2)}")
+            # Log the setup command for debugging
+            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] Setup command: {json.dumps(setup_command)}")
             
-            # Try direct transport first if available
-            if cls._transport and cls._initialized:
-                journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] Using direct transport")
-                response = await cls._send_to_hardware(setup_command)
-            else:
-                # Try communication task if direct transport not available
-                journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] Transport not initialized, trying BasalGanglia")
+            # Get communication task directly from BasalGanglia
+            bg = cls.get_basal_ganglia()
+            if not bg:
+                journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] ❌ BasalGanglia not available")
+                return {"status": "error", "message": "BasalGanglia not available"}
                 
-                # Get communication task directly from BasalGanglia
-                bg = cls.get_basal_ganglia()
-                if not bg:
-                    journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] ❌ BasalGanglia not available")
-                    return {"status": "error", "message": "BasalGanglia not available"}
-                
-                comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
-                
-                if not comm_task:
-                    journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] ❌ Communication task not available")
-                    return {"status": "error", "message": "Communication task not available"}
-                
-                # Send command directly through communication task
-                journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] Sending command through communication task")
-                response = await comm_task.send_command(setup_command)
+            comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
+            
+            if not comm_task:
+                journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] ❌ Communication task not available")
+                return {"status": "error", "message": "Communication task not available"}
+            
+            # Send command directly through communication task
+            journaling_manager.recordDebug("[NeurocorticalBridge._direct_set_model] Sending command through communication task")
+            response = await comm_task.send_command(setup_command)
             
             # Process response
-            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] Response: {json.dumps(response, indent=2)}")
+            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] Response: {json.dumps(response)}")
             
-            # Check for API success in error object with code 0
-            if response and isinstance(response, dict) and "error" in response:
-                error = response.get("error", {})
+            # Handle API response format
+            if isinstance(response, dict) and "error" in response:
+                error = response["error"]
                 if isinstance(error, dict) and error.get("code") == 0:
+                    journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] ✅ Model set successfully to {model_name}")
+                    
                     # Update default model if we have access to SynapticPathways
                     if 'SynapticPathways' in locals():
                         SynapticPathways.default_llm_model = model_name
@@ -871,13 +933,14 @@ class NeurocorticalBridge:
                     error_msg = error.get("message", "Unknown error")
                     journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] ❌ Error: {error_msg}")
                     return {"status": "error", "message": error_msg}
-            
-            # Fallback
-            return {"status": "error", "message": "Invalid response from device"}
+            else:
+                journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] ❌ Unexpected response format")
+                return {"status": "error", "message": "Unexpected response format"}
                 
         except Exception as e:
-            journaling_manager.recordError(f"[NeurocorticalBridge] Error setting model: {e}")
-            journaling_manager.recordDebug(f"[NeurocorticalBridge._direct_set_model] ❌ Exception: {e}")
+            journaling_manager.recordError(f"[NeurocorticalBridge._direct_set_model] Error: {e}")
+            import traceback
+            journaling_manager.recordError(f"[NeurocorticalBridge._direct_set_model] Error trace: {traceback.format_exc()}")
             return {"status": "error", "message": str(e)}
     
     @classmethod
@@ -1018,7 +1081,7 @@ class NeurocorticalBridge:
                     "message": "Unexpected ping response format",
                     "response": response
                 }
-                
+            
         except Exception as e:
             journaling_manager.recordError(f"Direct ping error: {e}")
             import traceback
@@ -1032,7 +1095,7 @@ class NeurocorticalBridge:
     def get_basal_ganglia(cls):
         """
         Get BasalGanglia instance or create a minimal one if unable to import
-        
+
         This is used to maintain compatibility when BasalGanglia is not available
         """
         try:
@@ -1135,7 +1198,7 @@ class NeurocorticalBridge:
                 print(f"Failed to establish {connection_type} connection")
                 cls._initialized = False
                 return False
-                
+            
         except Exception as e:
             journaling_manager.recordError(f"[NeurocorticalBridge] Initialization error: {e}")
             import traceback
@@ -1149,7 +1212,7 @@ class NeurocorticalBridge:
         
         Args:
             transport_type: Type of transport to use (serial, tcp, adb)
-            
+        
         Returns:
             bool: True if initialization was successful
         """
@@ -1212,7 +1275,7 @@ class NeurocorticalBridge:
             if connect_result:
                 journaling_manager.recordInfo(f"✅ {transport_type.upper()} transport connected successfully")
                 print(f"✅ {transport_type.upper()} transport connected successfully")
-                cls._initialized = True
+                cls._initialized = True    
                 
                 # Get firmware/hardware info
                 print("📊 Getting device information...")
@@ -1227,7 +1290,7 @@ class NeurocorticalBridge:
                 print(f"❌ Failed to connect {transport_type} transport")
                 cls._initialized = False
                 return False
-                
+            
         except Exception as e:
             journaling_manager.recordError(f"Transport initialization error: {e}")
             import traceback
@@ -1291,99 +1354,105 @@ class NeurocorticalBridge:
             return {"status": "error", "message": str(e)}
 
     @classmethod
-    async def _send_to_hardware(cls, command: Union[Dict[str, Any], str], stream_callback=None) -> Dict[str, Any]:
-        """
-        Send command to hardware using configured transport
-        Handles transport initialization if necessary
+    def _get_transport(cls):
+        """Get the current transport instance, initializing if needed"""
+        if not cls._transport or not cls._initialized:
+            journaling_manager = SystemJournelingManager()
+            journaling_manager.recordDebug("Transport not initialized or missing, initializing now...")
+            # Import here to avoid circular imports
+            from .transport_layer import get_transport
+            
+            # Create a new transport with the current connection type (or default to tcp)
+            connection_type = cls._connection_type or "tcp"
+            cls._transport = get_transport(connection_type)
+            
+        return cls._transport
         
-        Args:
-            command: API command to send (dict or string)
-            stream_callback: Optional callback for streaming responses
-            
-        Returns:
-            Dict: Response from the hardware
-        """
+    @classmethod
+    async def _send_to_hardware(cls, command: Union[Dict[str, Any], str], stream_callback=None) -> Dict[str, Any]:
+        """Send a command directly to hardware transport layer"""
         try:
-            # Special verbose logging for LLM inference commands 
-            if isinstance(command, dict) and command.get("work_id") == "llm" and command.get("action") == "inference":
-                print("\n=== LLM INFERENCE DEBUG ===")
-                print("Sending inference command to hardware:")
-                # Pretty print the full command for debugging
-                print(json.dumps(command, indent=2))
-                # Explicitly check and warn about the push parameter
-                if "data" in command and isinstance(command["data"], dict):
-                    push_value = command["data"].get("push")
-                    if push_value is False:
-                        print("✅ push parameter correctly set to False")
-                    elif push_value is None:
-                        print("⚠️ WARNING: push parameter missing in command!")
-                    else:
-                        print(f"⚠️ WARNING: push parameter has unexpected value: {push_value}")
-                print("==========================\n")
-            
-            # Initialize transport if not already done
-            if not cls._initialized or not cls._transport:
-                journaling_manager.recordInfo("Transport not initialized, initializing now...")
+            # Basic validation
+            if command is None:
+                journaling_manager.recordError("Cannot send None command to hardware")
+                return {"error": {"code": -1, "message": "Invalid command (None)"}}
                 
-                # Make sure we have a connection type
-                if cls._connection_type is None:
-                    cls._connection_type = "tcp"  # Default
+            # Make sure we have a transport
+            transport = cls._get_transport()
+            if not transport:
+                journaling_manager.recordError("Hardware transport not available")
+                return {"error": {"code": -1, "message": "Hardware transport not available"}}
+                
+            # Check for proper connection
+            if not transport.connected:
+                # Try to initialize and connect if needed
+                journaling_manager.recordInfo("Transport not connected, trying to connect...")
+                
+                # Initialize transport if not already done
+                if not cls._initialized or not cls._transport:
+                    journaling_manager.recordInfo("Transport not initialized, initializing now...")
                     
-                journaling_manager.recordInfo(f"Using connection type: {cls._connection_type}")
+                    # Make sure we have a connection type
+                    if cls._connection_type is None:
+                        journaling_manager.recordError("No connection type specified")
+                        return {"error": {"code": -1, "message": "No connection type specified"}}
+                        
+                    # Try to initialize
+                    init_result = await cls.initialize(cls._connection_type)
+                    if not init_result:
+                        journaling_manager.recordError("Failed to initialize transport")
+                        return {"error": {"code": -1, "message": "Failed to initialize transport"}}
+                        
+                    # Refresh transport reference
+                    transport = cls._get_transport()
                     
-                success = await cls._initialize_transport(cls._connection_type)
-                if not success:
-                    journaling_manager.recordError("Failed to initialize transport")
-                    return {
-                        "error": {
-                            "code": -1,
-                            "message": "Failed to initialize transport"
-                        }
-                    }
-                    
-            # Log command being sent (truncate if too large)
-            cmd_str = json.dumps(command) if isinstance(command, dict) else command
-            log_cmd = cmd_str[:200] + "..." if len(cmd_str) > 200 else cmd_str
+                # Connect if we have a transport but it's not connected
+                if transport and not transport.connected:
+                    connect_result = await transport.connect()
+                    if not connect_result:
+                        journaling_manager.recordError("Failed to connect transport")
+                        return {"error": {"code": -1, "message": "Failed to connect transport"}}
             
-            # Enhanced logging for streaming mode
-            if stream_callback:
-                journaling_manager.recordDebug("=== SENDING STREAM COMMAND ===")
-                journaling_manager.recordDebug(f"Command (truncated): {log_cmd}")
-                journaling_manager.recordInfo(f"Sending stream command with callback")
+            # Convert BaseCommand to dict if needed
+            safe_command = cls._to_dict_safely(command)
+            
+            # Log the command (truncated for large commands)
+            log_cmd = json.dumps(safe_command)
+            if len(log_cmd) > 500:
+                journaling_manager.recordDebug(f"Sending command (truncated): {log_cmd[:500]}...")
             else:
-                journaling_manager.recordInfo(f"Sending to hardware: {log_cmd}")
-                
+                journaling_manager.recordDebug(f"Sending command: {log_cmd}")
+            
             # Transmit command through transport
-            if cls._transport:
-                try:
-                    # Check if we're in streaming mode
-                    if stream_callback:
-                        # Use the transport's stream method if available
-                        if hasattr(cls._transport, 'stream') and callable(getattr(cls._transport, 'stream')):
-                            journaling_manager.recordDebug("Using transport.stream method for streaming")
-                            response = await cls._transport.stream(command, stream_callback)
-                        else:
-                            # Fallback to regular transmit if stream not available
-                            journaling_manager.recordWarning("Transport doesn't support streaming, falling back to regular transmit")
-                            response = await cls._transport.transmit(command)
+            try:
+                # Check if we're in streaming mode
+                if stream_callback:
+                    # Use the transport's stream method if available
+                    if hasattr(transport, 'stream') and callable(getattr(transport, 'stream')):
+                        journaling_manager.recordInfo("Using transport's streaming capability")
+                        response = await transport.stream(safe_command, stream_callback)
                     else:
-                        # Standard non-streaming command
-                        response = await cls._transport.transmit(command)
-                    
-                    # Special verbose logging for LLM inference responses
-                    if isinstance(command, dict) and command.get("work_id") == "llm" and command.get("action") == "inference":
-                        print("\n=== LLM INFERENCE RESPONSE ===")
-                        print(json.dumps(response, indent=2))
-                        print("===============================\n")
-                    
-                    # Log response (truncate if too large)
-                    if not stream_callback:  # Don't log the response for streaming commands as it's handled by the callback
-                        resp_str = json.dumps(response) if response else "None"
-                        log_resp = resp_str[:200] + "..." if len(resp_str) > 200 else resp_str
-                        journaling_manager.recordInfo(f"Received from hardware: {log_resp}")
-                    
-                    return response or {"error": {"code": -1, "message": "Empty response from hardware"}}
-                except Exception as e:
+                        # Fallback to regular transmit if streaming not available
+                        journaling_manager.recordWarning("Transport doesn't support streaming, falling back to regular transmit")
+                        response = await transport.transmit(safe_command)
+                else:
+                    # Standard non-streaming command
+                    response = await transport.transmit(safe_command)
+                
+                # Special verbose logging for LLM inference responses
+                if isinstance(command, dict) and command.get("work_id") == "llm" and command.get("action") == "inference":
+                    print("\n=== LLM INFERENCE RESPONSE ===")
+                    print(json.dumps(response, indent=2))
+                    print("===============================\n")
+                
+                # Log response (truncate if too large)
+                if not stream_callback:  # Don't log the response for streaming commands as it's handled by the callback
+                    resp_str = json.dumps(response) if response else "None"
+                    log_resp = resp_str[:200] + "..." if len(resp_str) > 200 else resp_str
+                    journaling_manager.recordInfo(f"Received from hardware: {log_resp}")
+                
+                return response or {"error": {"code": -1, "message": "Empty response from hardware"}}
+            except Exception as e:
                     journaling_manager.recordError(f"Transport transmission error: {e}")
                     return {
                         "error": {
@@ -1391,15 +1460,6 @@ class NeurocorticalBridge:
                             "message": f"Transport error: {str(e)}"
                         }
                     }
-            else:
-                journaling_manager.recordError("No transport available")
-                return {
-                    "error": {
-                        "code": -1,
-                        "message": "No transport available"
-                    }
-                }
-                
         except Exception as e:
             journaling_manager.recordError(f"Error sending to hardware: {e}")
             import traceback
@@ -1503,7 +1563,7 @@ class NeurocorticalBridge:
             journaling_manager.recordError(f"Transport debug error: {e}")
             import traceback
             journaling_manager.recordError(f"Debug error trace: {traceback.format_exc()}")
-            return {"status": "error", "message": f"Transport debug failed: {e}"}
+            return {"status": "error", "message": f"Transport debug failed: {e}"} 
 
     @classmethod
     def create_sys_command(cls, action, request_id=None):
@@ -1529,71 +1589,107 @@ class NeurocorticalBridge:
     @classmethod
     def create_llm_setup_command(cls, model_name, persona=None, request_id=None):
         """
-        Create an LLM setup command in exact API format
+        Create a command for LLM setup following the exact API format
         
         Args:
-            model_name: Name of the model to set up
+            model_name: The model to set up
             persona: Optional system prompt/persona
-            request_id: Optional request ID
+            request_id: Optional request ID (generated if None)
             
         Returns:
-            dict: Command dictionary formatted per API spec
+            dict: Properly formatted command
         """
-        if not request_id:
-            request_id = f"{int(time.time())}"
+        if request_id is None:
+            request_id = str(int(time.time()))
+        
+        # Get a journaling manager for logging
+        journaling_manager = SystemJournelingManager()
+        journaling_manager.recordInfo(f"Creating LLM setup command for model: {model_name}")
+        
+        # Set default persona if not provided
+        if persona is None:
+            persona = "You are a helpful assistant."
             
-        return {
+        # Create setup command as per API
+        setup_command = {
             "request_id": request_id,
             "work_id": "llm",
             "action": "setup",
-            "object": "llm.setup",
-            "data": {
-                "model": model_name,
-                "response_format": "llm.utf-8",
-                "input": "llm.utf-8",
-                "enoutput": True,
-                "enkws": False,
-                "max_token_len": 127,
-                "prompt": persona or ""
-            }
+            "model": model_name,
+            "response_format": "llm.utf-8",  # Standard output
+            "input": "llm.utf-8",           # UART input
+            "enoutput": True,               # Enable UART output
+            "enkws": False,                 # No KWS interruption
+            "max_token_len": 127,           # Default max token
+            "prompt": persona               # System message/persona
         }
+        
+        # Log the command for debugging
+        journaling_manager.recordDebug(f"LLM setup command created: {json.dumps(setup_command)}")
+        
+        return setup_command
     
     @classmethod
     def create_llm_inference_command(cls, prompt, request_id=None, stream=False, work_id=None):
         """
-        Create an LLM inference command in exact API format
+        Create a command for LLM inference following the exact API format.
+        
+        For non-streaming, data is a string.
+        For streaming, data is an object with delta, index, and finish.
         
         Args:
-            prompt: The prompt to send to the LLM
-            request_id: Optional request ID
-            stream: Whether to stream the response
-            work_id: Optional work_id override
+            prompt: The prompt text
+            request_id: Optional request ID (generated if None)
+            stream: Whether to use streaming mode
+            work_id: Optional specific work_id from setup (e.g., "llm.1003") - if None, uses generic "llm"
             
         Returns:
-            dict: Command dictionary formatted per API spec
+            dict: Properly formatted command
         """
-        if not request_id:
-            request_id = f"{int(time.time())}"
-            
-        # Log that we're creating an inference command
-        journaling_manager.recordDebug(f"[create_llm_inference_command] Creating inference command with stream={stream}")
-        journaling_manager.recordDebug(f"[create_llm_inference_command] Prompt (first 100 chars): {prompt[:100]}...")
+        # Log the streaming mode being used
+        journaling_manager = SystemJournelingManager()
+        mode_str = "STREAMING" if stream else "NON-STREAMING"
+        journaling_manager.recordInfo(f"🔍 Creating LLM inference command in {mode_str} mode")
         
-        command = {
+        if request_id is None:
+            request_id = str(int(time.time()))
+        
+        # Use the provided work_id if available, otherwise default to "llm"
+        if work_id is None:
+            work_id = "llm"
+        
+        # Log the work_id being used
+        journaling_manager.recordInfo(f"Using work_id: {work_id}")
+        
+        # Create base command structure
+        base_command = {
             "request_id": request_id,
-            "work_id": work_id or "llm",
-            "action": "inference",
-            "data": {
-                "prompt": prompt,
-                "stream": stream
-            }
+            "work_id": work_id,
+            "action": "inference"
         }
         
-        # Log the created command
-        journaling_manager.recordDebug(f"[create_llm_inference_command] Command JSON: {json.dumps(command, indent=2)}")
+        if stream:
+            # Streaming format
+            journaling_manager.recordDebug(f"Using streaming format with data as object (delta, index, finish)")
+            # Add streaming-specific fields
+            base_command["object"] = "llm.utf-8.stream"
+            base_command["data"] = {
+                "delta": prompt,
+                "index": 0,
+                "finish": True
+            }
+        else:
+            # Non-streaming format
+            journaling_manager.recordDebug(f"Using non-streaming format with data as string")
+            # Add non-streaming specific fields
+            base_command["object"] = "llm.utf-8"
+            base_command["data"] = prompt
         
-        return command
-
+        # Log the final command structure for debugging
+        journaling_manager.recordDebug(f"Created command: {json.dumps(base_command)}")
+        
+        return base_command
+    
     @classmethod
     async def _direct_reboot(cls) -> Dict[str, Any]:
         """
@@ -1685,4 +1781,306 @@ class NeurocorticalBridge:
             return {
                 "status": "error",
                 "message": f"Reboot error: {str(e)}"
+            }
+
+    @classmethod
+    def _to_json_string(cls, command):
+        """
+        Convert a command object to a JSON string
+        
+        Args:
+            command: Command to convert (dict, BaseCommand, or string)
+            
+        Returns:
+            str: JSON string representation of the command
+        """
+        if isinstance(command, str):
+            # Already a string, just return it
+            return command
+            
+        # Convert dict or BaseCommand to a JSON string
+        try:
+            if hasattr(command, 'to_dict'):
+                # BaseCommand objects have to_dict method
+                command_dict = command.to_dict()
+            elif isinstance(command, dict):
+                # Already a dict
+                command_dict = command
+            else:
+                # Try to convert to a dict (may fail)
+                command_dict = dict(command)
+                
+            # Convert to JSON string
+            return json.dumps(command_dict)
+        except Exception as e:
+            journaling_manager = SystemJournelingManager()
+            journaling_manager.recordError(f"Error converting command to JSON: {e}")
+            # Return an empty JSON object as fallback
+            return "{}"
+
+    @classmethod
+    async def get_active_llm_tasks(cls) -> Dict[str, Any]:
+        """
+        Get information about active LLM tasks on the device
+        This helps debug when LLM commands aren't working properly
+        
+        Returns:
+            Dict with status and task information
+        """
+        try:
+            # Create a properly formatted command to query LLM tasks
+            task_command = {
+                "request_id": str(int(time.time())),
+                "work_id": "sys",
+                "action": "lstasks"
+            }
+            
+            # Log the command being sent
+            journaling_manager.recordInfo("🔍 Sending lstasks command to query active LLM tasks")
+            print("\n=== ACTIVE LLM TASKS CHECK ===")
+            print("Sending task query command:")
+            print(json.dumps(task_command, indent=2))
+            
+            # Send command directly through transport
+            task_result = await cls._send_to_hardware(task_command)
+            
+            # Log the raw response for debugging
+            print("\n=== TASK RESPONSE ===")
+            print(json.dumps(task_result, indent=2))
+            print("=======================\n")
+            
+            # Process the result
+            llm_tasks = []
+            active_tasks = []
+            
+            if isinstance(task_result, dict):
+                if "data" in task_result and isinstance(task_result["data"], list):
+                    # Filter for LLM related tasks
+                    for task in task_result["data"]:
+                        if isinstance(task, dict):
+                            # Extract task info
+                            task_info = {
+                                "id": task.get("id", "unknown"),
+                                "name": task.get("name", "unknown"),
+                                "type": task.get("type", "unknown"),
+                                "status": task.get("status", "unknown"),
+                                "created": task.get("created", 0)
+                            }
+                            
+                            # Add to the appropriate list
+                            active_tasks.append(task_info)
+                            
+                            # Check if it's LLM related
+                            task_name = task.get("name", "").lower()
+                            task_type = task.get("type", "").lower()
+                            if "llm" in task_name or "llm" in task_type:
+                                llm_tasks.append(task_info)
+                
+                return {
+                    "status": "ok",
+                    "llm_tasks": llm_tasks,
+                    "active_tasks": active_tasks,
+                    "raw_response": task_result
+                }
+            
+            return {
+                "status": "error",
+                "message": "Failed to get task information",
+                "raw_response": task_result
+            }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error getting active LLM tasks: {e}")
+            import traceback
+            journaling_manager.recordError(f"Task query error trace: {traceback.format_exc()}")
+            return {
+                "status": "error",
+                "message": f"Task query error: {str(e)}"
+            }
+
+    @classmethod
+    async def test_llm_setup(cls, model_name="qwen2.5-0.5b") -> Dict[str, Any]:
+        """
+        Test LLM setup with extensive debug logging
+        This helps diagnose setup issues by showing all requests and responses
+        
+        Args:
+            model_name: Name of the model to test setup with
+            
+        Returns:
+            Dict with setup test results
+        """
+        try:
+            print("\n====== LLM SETUP DEBUG TEST ======")
+            print(f"Testing LLM setup with model: {model_name}")
+            
+            # 1. Create proper setup command
+            setup_command = cls.create_llm_setup_command(
+                model_name=model_name,
+                persona="You are a helpful assistant."
+            )
+            
+            # Log the setup command
+            print("\n--- SETUP COMMAND ---")
+            print(json.dumps(setup_command, indent=2))
+            
+            # 2. Send setup command
+            print("\nSending setup command...")
+            setup_result = await cls._send_to_hardware(setup_command)
+            
+            # Log the setup response
+            print("\n--- SETUP RESPONSE ---")
+            print(json.dumps(setup_result, indent=2))
+            
+            # 3. Check for active LLM tasks
+            print("\nChecking for active LLM tasks...")
+            task_result = await cls.get_active_llm_tasks()
+            
+            # Log task information
+            if task_result.get("status") == "ok":
+                llm_tasks = task_result.get("llm_tasks", [])
+                print(f"\nFound {len(llm_tasks)} LLM-related tasks:")
+                for task in llm_tasks:
+                    print(f"  - Task {task['id']}: {task['name']} ({task['status']})")
+            
+            # 4. Try a simple inference test
+            print("\nTesting simple inference command...")
+            test_prompt = "Hello, this is a test."
+            
+            # Create inference command
+            inference_command = cls.create_llm_inference_command(
+                prompt=test_prompt,
+                stream=False
+            )
+            
+            # Log the inference command
+            print("\n--- TEST INFERENCE COMMAND ---")
+            print(json.dumps(inference_command, indent=2))
+            
+            # Send inference command
+            print("\nSending inference command...")
+            inference_result = await cls._send_to_hardware(inference_command)
+            
+            # Log the inference response
+            print("\n--- TEST INFERENCE RESPONSE ---")
+            print(json.dumps(inference_result, indent=2))
+            
+            # 5. Summarize test results
+            print("\n====== LLM SETUP TEST SUMMARY ======")
+            
+            # Check setup result
+            setup_success = False
+            if isinstance(setup_result, dict) and "error" in setup_result:
+                error = setup_result.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    setup_success = True
+                    print("✅ LLM Setup: SUCCESS")
+                else:
+                    error_msg = error.get("message", "Unknown error")
+                    print(f"❌ LLM Setup: FAILED - {error_msg}")
+            else:
+                print("❌ LLM Setup: FAILED - Unexpected response format")
+            
+            # Check inference result
+            inference_success = False
+            if isinstance(inference_result, dict) and "error" in inference_result:
+                error = inference_result.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    inference_success = True
+                    print("✅ LLM Inference: SUCCESS")
+                    if "data" in inference_result:
+                        data = inference_result.get("data", "")
+                        print(f"   Response: {data[:100]}..." if len(data) > 100 else f"   Response: {data}")
+                else:
+                    error_msg = error.get("message", "Unknown error")
+                    print(f"❌ LLM Inference: FAILED - {error_msg}")
+            else:
+                print("❌ LLM Inference: FAILED - Unexpected response format")
+            
+            print("\n====================================")
+            
+            return {
+                "status": "ok" if setup_success and inference_success else "error",
+                "setup_success": setup_success,
+                "inference_success": inference_success,
+                "setup_result": setup_result,
+                "inference_result": inference_result,
+                "active_tasks": task_result
+            }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"LLM setup test error: {e}")
+            import traceback
+            journaling_manager.recordError(f"Setup test error trace: {traceback.format_exc()}")
+            print(f"\n❌ ERROR: {e}")
+            print("\n====================================")
+            return {
+                "status": "error",
+                "message": str(e)
             } 
+
+    @classmethod
+    async def initialize(cls, connection_type: str) -> bool:
+        """Initialize the transport layer"""
+        try:
+            journaling_manager.recordInfo(f"Initializing {connection_type} transport")
+            print(f"🔄 Initializing {connection_type} transport...")
+            
+            # Store the connection type
+            cls._connection_type = connection_type
+            
+            # Create the transport based on connection type
+            if connection_type == "tcp":
+                from Mind.Subcortex.transport_layer import WiFiTransport
+                cls._transport = WiFiTransport()
+                cls._initialized = False  # Will be set based on connect result
+            elif connection_type == "embedded":
+                from Mind.Subcortex.transport_layer import EmbeddedTransport
+                cls._transport = EmbeddedTransport()
+                cls._initialized = True  # Embedded is always connected
+            elif connection_type == "ble":
+                # Future BLE transport
+                journaling_manager.recordError("BLE transport not yet implemented")
+                return False
+            else:
+                journaling_manager.recordError(f"Unknown connection type: {connection_type}")
+                return False
+                
+            # For transports that require connection, establish it
+            if hasattr(cls._transport, 'connect'):
+                # Attempt to connect
+                connect_result = await cls._transport.connect()
+                
+                # Set initialized based on connection result
+                cls._initialized = connect_result
+                
+                # Get firmware/hardware info
+                print("📊 Getting device information...")
+                hw_info = await cls.get_hardware_info()
+                if hw_info and hw_info.get("status") == "ok":
+                    print(f"📱 Device connected: {hw_info.get('data', {}).get('model', 'Unknown')}")
+                
+                # Return success based on connection result
+                if connect_result:
+                    journaling_manager.recordInfo(f"✅ Successfully connected {connection_type} transport")
+                    print(f"✅ Successfully connected {connection_type} transport")
+                    return True
+                else:
+                    journaling_manager.recordError(f"❌ Failed to connect {connection_type} transport")
+                    print(f"❌ Failed to connect {connection_type} transport")
+                    cls._initialized = False
+                    return False
+            else:
+                # For transports that don't require connection
+                journaling_manager.recordInfo(f"✅ Transport initialized: {connection_type}")
+                print(f"✅ Transport initialized: {connection_type}")
+                cls._initialized = True
+                return True
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Error initializing transport: {e}")
+            import traceback
+            journaling_manager.recordError(f"Initialization error trace: {traceback.format_exc()}")
+            print(f"❌ Error initializing transport: {e}")
+            cls._initialized = False
+            return False

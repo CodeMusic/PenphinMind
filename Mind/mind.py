@@ -6,6 +6,7 @@ import logging
 import platform
 import json
 import time
+import asyncio
 from typing import Dict, Any, Optional
 from .CorpusCallosum.synaptic_pathways import SynapticPathways
 from .TemporalLobe.SuperiorTemporalGyrus.HeschlGyrus.primary_acoustic_area import PrimaryAcousticArea
@@ -25,38 +26,67 @@ from .Subcortex.neurocortical_bridge import NeurocorticalBridge
 from .Subcortex.api_commands import LLMCommand, SystemCommand
 # Add other lobe imports as needed
 
-# Initialize journaling manager
-journaling_manager = SystemJournelingManager()
+# Initialize journaling manager with config log level
+journaling_manager = SystemJournelingManager(CONFIG.log_level)
 
 logger = logging.getLogger(__name__)
 
 class Mind:
     """Main interface for interacting with PenphinMind"""
     
+    # Class variables
+    _current_llm_work_id = None  # Store the current LLM work_id
+    
     def __init__(self, mind_id: str = None):
-        # Load config for this mind
-        self._config = get_mind_by_id(mind_id)  # Use get_mind_by_id directly
+        """Initialize Mind with optional configuration ID from minds_config.json"""
+        journaling_manager.recordScope("Mind.__init__")
+        
+        # Initialize basic attributes
+        self._mind_id = None
+        self._config = {}
+        self._name = "PenphinMind"
+        self._connection_type = None
         self._initialized = False
-        self._name = self._config["name"]
-        # Use the mind-specific persona from llm config
-        self._persona = self._config["llm"]["persona"].format(name=self._name)
-        self._device_id = self._config["device_id"]
-        self._connection = self._config["connection"]
-        self._mind_id = self._config.get("mind_id", "auto")  # Get the mind_id from config
+        self._ip = None
+        self._port = None
+        self._persona = "You are a helpful assistant."
+        self._device_id = ""
         
-        # Initialize connection settings
-        self._connection_type = self._connection["type"]
-        self._ip = self._connection["ip"]
-        self._port = self._connection["port"]
+        # Set mind_id and load configuration if provided
+        self.mind_id = mind_id
+        if mind_id:
+            self._load_config(mind_id)
+            
+            # Now initialize connection settings from loaded config
+            if "connection" in self._config:
+                self._connection_type = self._config["connection"].get("type", "tcp")
+                self._ip = self._config["connection"].get("ip", "auto")
+                self._port = self._config["connection"].get("port", "auto")
+            else:
+                journaling_manager.recordWarning(f"No connection configuration found for mind: {mind_id}")
+                self._connection_type = "tcp"  # Default
+                self._ip = "auto"
+                self._port = "auto"
         
-        # LLM settings
-        self._llm_config = self._config["llm"]
-        self._default_model = self._llm_config["default_model"]
+        # Default system prompts
+        self._llm_config = {
+            "persona": "You are a helpful assistant.",
+            "stream": True,  # Default to streaming mode for better UX
+            "model": None
+        }
+        
+        # Initialize the default model from config if available
+        if "llm" in self._config and "default_model" in self._config["llm"]:
+            self._default_model = self._config["llm"]["default_model"]
+        else:
+            self._default_model = "qwen2.5-0.5b"  # Default fallback
         
         # Initialize chat_manager as None - will be created when needed
         # We don't import ChatManager here to avoid circular imports
         self.chat_manager = None
-        journaling_manager.recordInfo(f"[Mind] Initialized with persona: {self._persona[:50]}...")
+        
+        if hasattr(self, '_persona'):
+            journaling_manager.recordInfo(f"[Mind] Initialized with persona: {self._persona[:50]}...")
         
         # Initialize instance variables
         self._occipital_lobe = {}
@@ -66,7 +96,7 @@ class Mind:
         self.primary_acoustic = None
         self._processing = False
         self._language_processor = None  # Language processor instance
-        self._system_journeling_manager = SystemJournelingManager()
+        self._system_journeling_manager = SystemJournelingManager(CONFIG.log_level)
         
         # Initialize all lobes
         self._temporal_lobe = {
@@ -93,6 +123,61 @@ class Mind:
     def mind_id(self) -> str:
         """Get the mind's ID"""
         return self._mind_id
+        
+    @mind_id.setter
+    def mind_id(self, value: str):
+        """Set the mind's ID"""
+        self._mind_id = value
+        
+    def _load_config(self, mind_id: str) -> None:
+        """
+        Load mind-specific configuration from mind_config.py
+        
+        Args:
+            mind_id: ID of the mind to load configuration for
+        """
+        journaling_manager.recordScope("Mind._load_config", mind_id=mind_id)
+        journaling_manager.recordInfo(f"[Mind] Loading configuration for mind: {mind_id}")
+        
+        # Get mind configuration using the mind_config module
+        mind_config = get_mind_by_id(mind_id)
+        
+        # Store the configuration
+        self._config = mind_config
+        
+        # Store key properties from the configuration
+        self._name = mind_config.get("name", "PenphinMind")
+        self._device_id = mind_config.get("device_id", "")
+        self._persona = mind_config.get("persona", "You are a helpful assistant.")
+        
+        # Ensure connection settings are properly initialized
+        connection_settings = mind_config.get("connection", {})
+        if connection_settings:
+            self._connection = connection_settings
+            # Also set individual connection properties for direct access
+            self._connection_type = connection_settings.get("type", "tcp")
+            self._ip = connection_settings.get("ip", "auto")
+            self._port = connection_settings.get("port", "auto")
+        else:
+            # Default connection settings if not in config
+            self._connection = {
+                "type": "tcp", 
+                "ip": "auto", 
+                "port": "auto"
+            }
+            self._connection_type = "tcp"
+            self._ip = "auto"
+            self._port = "auto"
+            journaling_manager.recordWarning(f"[Mind] No connection settings in mind config, using defaults")
+        
+        # Store LLM configuration
+        self._llm_config = mind_config.get("llm", {
+            "default_model": "qwen2.5-0.5b",
+            "persona": "You are a helpful assistant.",
+            "stream": True
+        })
+        
+        journaling_manager.recordInfo(f"[Mind] Configuration loaded for {self._name} (ID: {mind_id})")
         
     @property
     def identity(self) -> Dict[str, Any]:
@@ -208,8 +293,13 @@ class Mind:
             journaling_manager.recordInfo(f"[Mind] Initializing with connection type: {connection_type}")
             journaling_manager.recordInfo(f"[Mind] Using connection settings from mind ID: {self._mind_id}")
             
-            # Get connection settings from the mind configuration
-            connection_details = self._connection.copy()
+            # Get connection settings from the mind configuration if available
+            connection_details = {}
+            if hasattr(self, '_connection'):
+                connection_details = self._connection.copy()
+            else:
+                journaling_manager.recordWarning("[Mind] No connection details available in mind configuration")
+            
             journaling_manager.recordInfo(f"[Mind] Connection details: {connection_details}")
             
             # Initialize base connection through NeurocorticalBridge
@@ -412,11 +502,26 @@ class Mind:
             # Use NeurocorticalBridge.create_llm_inference_command instead of creating manually
             from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            # Create the think command using the proper factory method
+            # Get the work_id from instance or class storage
+            work_id = self._current_llm_work_id or Mind._current_llm_work_id
+            
+            # Verify we have a valid work_id in llm.XXXX format
+            if not work_id or not work_id.startswith("llm."):
+                journaling_manager.recordWarning(f"[Mind.think] ⚠️ Invalid work_id format: {work_id}")
+                journaling_manager.recordWarning("[Mind.think] ⚠️ Falling back to default 'llm'")
+                work_id = "llm"
+            else:
+                journaling_manager.recordInfo(f"[Mind.think] ✅ Using work_id: {work_id}")
+            
+            # Create the think command
             think_command = NeurocorticalBridge.create_llm_inference_command(
                 prompt=prompt,
-                stream=stream
+                stream=stream,
+                work_id=work_id
             )
+            
+            # Debug log the command
+            journaling_manager.recordDebug(f"[Mind.think] Command: {json.dumps(think_command)}")
             
             # Execute via bridge
             result = await NeurocorticalBridge.execute(think_command)
@@ -435,9 +540,9 @@ class Mind:
                     "raw_response": result
                 }
         except Exception as e:
-            journaling_manager.recordError(f"⚠️ Error: {e}")
+            journaling_manager.recordError(f"[Mind.think] Error: {e}")
             import traceback
-            journaling_manager.recordError(f"❌ Stack trace: {traceback.format_exc()}")
+            journaling_manager.recordError(f"[Mind.think] Stack trace: {traceback.format_exc()}")
             return {
                 "status": "error", 
                 "message": str(e)
@@ -633,81 +738,68 @@ class Mind:
             return {"status": "error", "message": str(e)}
         
     async def set_model(self, model_name: str):
-        """Set the active model using LLM module's setup API"""
-        journaling_manager.recordDebug(f"[Mind.set_model] 🔄 Setting model: {model_name}")
-        journaling_manager.recordDebug(f"[Mind.set_model] 🔄 Connection type: {self._connection_type}")
-        journaling_manager.recordDebug(f"[Mind.set_model] 🔄 Initialized: {self._initialized}")
+        """
+        Set the LLM model to use
         
-        # Create command using llm setup format as per API spec
-        command_data = {
-            "model": model_name,
-            "response_format": "llm.utf-8",  # Standard output
-            "input": "llm.utf-8",            # UART input
-            "enoutput": True,                # Enable UART output
-            "enkws": False,                  # No KWS interruption
-            "max_token_len": 127,            # Recommended token length
-            "prompt": self._persona          # System message/persona
-        }
-        
-        journaling_manager.recordDebug(f"[Mind.set_model] 📋 Command data prepared with LLM setup format")
-        
+        Args:
+            model_name: Name of the model to use
+            
+        Returns:
+            Dict with status and response
+        """
         try:
-            # Try direct transport method first
-            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
-            from Mind.Subcortex.api_commands import CommandFactory
+            journaling_manager.recordInfo(f"Setting LLM model to: {model_name}")
             
-            # Create proper LLM setup command per API spec
-            setup_command = CommandFactory.create_llm_setup_command(
-                model_name=model_name,
-                persona=self._persona
-            )
-            
-            journaling_manager.recordDebug(f"[Mind.set_model] 🔌 Using direct transport method")
-            journaling_manager.recordDebug(f"[Mind.set_model] 📦 Command: {json.dumps(setup_command, indent=2)}")
-            
-            # Send directly through hardware transport
-            direct_result = await NeurocorticalBridge._send_to_hardware(setup_command)
-            
-            journaling_manager.recordDebug(f"[Mind.set_model] 📊 Direct result: {json.dumps(direct_result, indent=2)}")
-            
-            # Process result
-            if isinstance(direct_result, dict) and "error" in direct_result:
-                error = direct_result.get("error", {})
-                if isinstance(error, dict) and error.get("code") == 0:
-                    # Success according to API
-                    journaling_manager.recordDebug(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
-                    
-                    # Update the default model
-                    self.set_default_model(model_name)
-                    
-                    return {
-                        "status": "ok",
-                        "model": model_name,
-                        "raw_response": direct_result
-                    }
-                else:
-                    # API error
-                    error_message = error.get("message", "Unknown error")
-                    journaling_manager.recordDebug(f"[Mind.set_model] ❌ Error setting model: {error_message}")
-                    
-                    return {
-                        "status": "error",
-                        "message": error_message,
-                        "raw_response": direct_result
-                    }
-            
-            # Unexpected format
-            journaling_manager.recordDebug(f"[Mind.set_model] ❌ Unexpected response format")
-            return {
-                "status": "error",
-                "message": "Invalid response format from hardware",
-                "raw_response": direct_result
+            # Create command data
+            data = {
+                "model": model_name,
+                "persona": self._llm_config.get("persona", "You are a helpful assistant.")
             }
             
+            # Debug log before executing
+            journaling_manager.recordDebug(f"[Mind.set_model] Set model request data: {json.dumps(data)}")
+            
+            # Execute command
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            result = await NeurocorticalBridge.execute_operation(
+                operation="set_model",
+                data=data
+            )
+            
+            # Debug log the complete response
+            journaling_manager.recordDebug(f"[Mind.set_model] Complete response: {json.dumps(result)}")
+            
+            # If successful, store the model name
+            if result.get("status") == "ok":
+                self._llm_config["model"] = model_name
+                journaling_manager.recordInfo(f"Model set to {model_name}")
+                
+                # Extract and store the work_id - we know it's in result.response.work_id 
+                response = result.get("response", {})
+                if isinstance(response, dict) and "work_id" in response:
+                    work_id = response["work_id"]
+                    self._current_llm_work_id = work_id
+                    Mind._current_llm_work_id = work_id
+                    journaling_manager.recordInfo(f"✅ Work ID set: {work_id}")
+                else:
+                    journaling_manager.recordWarning(f"⚠️ Expected work_id not found in response")
+                    
+                    # If not found, try fallback methods
+                    if not self._current_llm_work_id:
+                        # Regex fallback for llm.XXXX format
+                        import re
+                        response_str = str(result)
+                        work_id_match = re.search(r'llm\.\d+', response_str)
+                        if work_id_match:
+                            work_id = work_id_match.group(0)
+                            self._current_llm_work_id = work_id
+                            Mind._current_llm_work_id = work_id
+                            journaling_manager.recordInfo(f"✅ Found work_id via regex: {work_id}")
+            
+            return result
+            
         except Exception as e:
-            journaling_manager.recordError(f"[Mind] Error setting model: {e}")
-            import traceback
-            journaling_manager.recordDebug(f"Set model error trace: {traceback.format_exc()}")
+            journaling_manager.recordError(f"Set model error: {e}")
             return {"status": "error", "message": str(e)}
         
     async def reboot_device(self):
@@ -754,9 +846,12 @@ class Mind:
         if connection_type is None:
             connection_type = self._connection_type
         
-        # Get connection details from the mind configuration
-        connection_details = self._connection.copy()
-        journaling_manager.recordInfo(f"[Mind] Using connection settings: {connection_details}")
+        # Get connection details from the mind configuration if available
+        if hasattr(self, '_connection'):
+            connection_details = self._connection.copy()
+            journaling_manager.recordInfo(f"[Mind] Using connection settings: {connection_details}")
+        else:
+            journaling_manager.recordInfo("[Mind] No connection details available, using defaults")
         
         # Use initialize method which uses NeurocorticalBridge.initialize_system
         return await self.initialize(connection_type)
@@ -1005,6 +1100,99 @@ class Mind:
             
         return self.chat_manager
 
+    async def llm_inference(self, prompt, stream=None, callback=None, work_id=None):
+        """
+        Perform LLM inference with the given prompt
+        
+        Args:
+            prompt: Text prompt for the LLM
+            stream: Whether to use streaming mode
+            callback: For streaming mode, function to handle streaming chunks
+            work_id: Specific work_id to use (if None, uses the stored work_id from setup)
+            
+        Returns:
+            str: LLM response
+        """
+        try:
+            # Get streaming mode from config if not provided
+            if stream is None:
+                stream = self._llm_config.get("stream", True)
+            
+            # Use provided work_id or get from instance/class
+            effective_work_id = work_id
+            if not effective_work_id:
+                effective_work_id = self._current_llm_work_id or Mind._current_llm_work_id
+                
+                # Verify proper format
+                if not effective_work_id or not effective_work_id.startswith("llm."):
+                    journaling_manager.recordWarning(f"[Mind.llm_inference] ⚠️ Invalid work_id: {effective_work_id}")
+                    journaling_manager.recordWarning("[Mind.llm_inference] ⚠️ Falling back to default 'llm'")
+                    effective_work_id = "llm"
+                else:
+                    journaling_manager.recordInfo(f"[Mind.llm_inference] ✅ Using work_id: {effective_work_id}")
+            
+            # Log the inference request
+            journaling_manager.recordInfo(f"[Mind.llm_inference] Request: stream={stream}, work_id={effective_work_id}")
+            journaling_manager.recordDebug(f"[Mind.llm_inference] Prompt (first 100 chars): {prompt[:100]}...")
+            
+            # Create data object with explicit work_id
+            data = {
+                "prompt": prompt,
+                "stream": stream,
+                "work_id": effective_work_id
+            }
+            
+            # Debug log the inference request data
+            journaling_manager.recordDebug(f"[Mind.llm_inference] Data: {json.dumps(data)}")
+            
+            # Create and execute command
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            result = await NeurocorticalBridge.execute_operation(
+                operation="think",
+                data=data,
+                stream=stream
+            )
+            
+            # Log completion
+            journaling_manager.recordInfo(f"[Mind.llm_inference] Completed: {result.get('status', 'unknown')}")
+            
+            # Return the response for non-streaming mode
+            if not stream:
+                return result.get("response", "")
+            
+            # For streaming mode with callback
+            if stream and callback:
+                import asyncio
+                
+                # Log callback activation
+                journaling_manager.recordDebug(f"[Mind.llm_inference] Starting streaming task")
+                
+                # Start streaming task
+                streaming_task = asyncio.create_task(
+                    NeurocorticalBridge.execute_operation(
+                        operation="think",
+                        data={
+                            "prompt": prompt,
+                            "stream": True,
+                            "work_id": effective_work_id
+                        },
+                        stream=True,
+                        use_task=False
+                    )
+                )
+                
+                # Return empty string for streaming mode (callback will handle the response)
+                return ""
+            
+            # Fallback for streaming without callback
+            return result.get("response", "")
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind.llm_inference] Error: {e}")
+            import traceback
+            journaling_manager.recordError(f"[Mind.llm_inference] Stack trace: {traceback.format_exc()}")
+            return f"Error: {str(e)}"
+
 async def setup_connection(connection_type=None):
     """
     Set up the connection to the hardware
@@ -1014,7 +1202,8 @@ async def setup_connection(connection_type=None):
     """
     from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
     from .Subcortex.neurocortical_bridge import NeurocorticalBridge
-    journaling_manager = SystemJournelingManager()
+    from config import CONFIG
+    journaling_manager = SystemJournelingManager(CONFIG.log_level)
     
     journaling_manager.recordScope("setup_connection", connection_type=connection_type)
     

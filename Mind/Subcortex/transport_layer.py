@@ -572,7 +572,7 @@ class WiFiTransport(BaseTransport):
                                     
                                     # Try to update the mind config with this successful IP and port
                                     self._update_mind_config_with_connection()
-                                    
+                            
                                     return True
                                 else:
                                     journaling_manager.recordError(f"Ping error code {error_code}: {response_data['error'].get('message', 'Unknown error')}")
@@ -673,7 +673,7 @@ class WiFiTransport(BaseTransport):
                         if result == 0:
                             journaling_manager.recordInfo(f"Alternative connection successful to {self.ip}:{self.port}")
                             print(f"✅ Alternative connection successful to {self.ip}:{self.port}")
-                            
+                        
                             # Send ping to verify
                             ping_command = {"request_id": "001", "work_id": "sys", "action": "ping"}
                             json_data = json.dumps(ping_command) + "\n"
@@ -762,7 +762,7 @@ class WiFiTransport(BaseTransport):
                         if buffer:
                             self.endpoint = f"{self.ip}:{self.port}"
                             self.connected = True
-                            
+                        
                             # Try to update the mind config with this successful IP and port
                             self._update_mind_config_with_connection()
                             
@@ -799,12 +799,12 @@ class WiFiTransport(BaseTransport):
         except Exception as e:
             journaling_manager.recordWarning(f"ADB discovery error: {e}")
         
-        # All connection attempts failed
-        journaling_manager.recordError("All connection attempts failed")
-        print("❌ All connection attempts failed")
-        self.connected = False
-        return False
-
+            # All connection attempts failed
+            journaling_manager.recordError("All connection attempts failed")
+            print("❌ All connection attempts failed")
+            self.connected = False
+            return False
+    
     async def _discover_ip_via_adb(self) -> Optional[str]:
         """Discover device IP address using ADB"""
         try:
@@ -1089,7 +1089,7 @@ class WiFiTransport(BaseTransport):
                             if not chunk:
                                 journaling_manager.recordInfo("End of stream (no more data)")
                                 break
-                                
+            
                             # Add to buffer
                             chunk_buffer.extend(chunk)
                             last_chunk_time = time.time()
@@ -1153,7 +1153,7 @@ class WiFiTransport(BaseTransport):
                         "chunks_processed": total_chunks,
                         "stream_time": time.time() - last_chunk_time
                     }
-                    
+                        
                 except socket.error as e:
                     self.connected = False  # Mark as disconnected on socket error
                     journaling_manager.recordError(f"Socket error during streaming: {e}")
@@ -1552,7 +1552,7 @@ def get_transport(transport_type: str, connection_details: dict = None) -> BaseT
             return ADBTransport(connection_details)
         else:
             journaling_manager.recordInfo("Creating ADBTransport with default settings from mind config")
-            return ADBTransport()
+        return ADBTransport()
     else:
         raise ValueError(f"Unsupported transport type: {transport_type}")
 
