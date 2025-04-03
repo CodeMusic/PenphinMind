@@ -5,6 +5,7 @@ Main Mind class that coordinates all brain regions
 import logging
 import platform
 import json
+import time
 from typing import Dict, Any, Optional
 from .CorpusCallosum.synaptic_pathways import SynapticPathways
 from .TemporalLobe.SuperiorTemporalGyrus.HeschlGyrus.primary_acoustic_area import PrimaryAcousticArea
@@ -17,9 +18,10 @@ from .ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea a
 from .OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualProcessor
 from .FrontalLobe.MotorCortex.integration_area import IntegrationArea as MotorIntegration
 from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from .config import CONFIG, get_mind_config
+from config import CONFIG  # Use absolute import instead of relative
+from .mind_config import get_mind_by_id  # Use mind_config directly for mind-specific configs
 from .Subcortex.neurocortical_bridge import NeurocorticalBridge
-from Interaction.chat_manager import ChatManager
+# Don't import ChatManager here to avoid circular import
 from .Subcortex.api_commands import LLMCommand, SystemCommand
 # Add other lobe imports as needed
 
@@ -33,7 +35,7 @@ class Mind:
     
     def __init__(self, mind_id: str = None):
         # Load config for this mind
-        self._config = get_mind_config(mind_id)
+        self._config = get_mind_by_id(mind_id)  # Use get_mind_by_id directly
         self._initialized = False
         self._name = self._config["name"]
         # Use the mind-specific persona from llm config
@@ -51,6 +53,8 @@ class Mind:
         self._llm_config = self._config["llm"]
         self._default_model = self._llm_config["default_model"]
         
+        # Initialize chat_manager as None - will be created when needed
+        # We don't import ChatManager here to avoid circular imports
         self.chat_manager = None
         journaling_manager.recordInfo(f"[Mind] Initialized with persona: {self._persona[:50]}...")
         
@@ -197,9 +201,22 @@ class Mind:
     async def initialize(self, connection_type: str = None, model_name: str = None) -> bool:
         """Initialize the Mind system"""
         try:
+            # Use the connection type from the mind config if not specified
+            if connection_type is None:
+                connection_type = self._connection_type
+            
+            journaling_manager.recordInfo(f"[Mind] Initializing with connection type: {connection_type}")
+            journaling_manager.recordInfo(f"[Mind] Using connection settings from mind ID: {self._mind_id}")
+            
+            # Get connection settings from the mind configuration
+            connection_details = self._connection.copy()
+            journaling_manager.recordInfo(f"[Mind] Connection details: {connection_details}")
+            
             # Initialize base connection through NeurocorticalBridge
-            # This now directly handles transport initialization
+            # Pass the connection details from the mind configuration
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             success = await NeurocorticalBridge.initialize_system(connection_type)
+            
             if not success:
                 journaling_manager.recordError("[Mind] Failed to initialize bridge")
                 return False
@@ -212,6 +229,8 @@ class Mind:
             
         except Exception as e:
             journaling_manager.recordError(f"[Mind] Initialization error: {e}")
+            import traceback
+            journaling_manager.recordError(f"[Mind] Initialization error trace: {traceback.format_exc()}")
             return False
             
     async def cleanup(self) -> None:
@@ -378,27 +397,60 @@ class Mind:
         # Execute via NeurocorticalBridge using standardized operation format
         return await NeurocorticalBridge.execute_operation(operation, data, use_task, stream)
     
-    async def think(self, prompt: str, stream: bool = False):
-        """Perform thinking operation with the LLM"""
-        journaling_manager.recordInfo(f"[Mind] Thinking: {prompt[:50]}...")
+    async def think(self, prompt: str, stream: bool = False) -> Dict[str, Any]:
+        """
+        Send a thought prompt to the LLM
         
-        # Check the parameters that LLMCommand.create_think_command actually accepts
-        # and modify if necessary
-        think_command = LLMCommand.create_think_command(
-            prompt=prompt,
-            stream=stream
-        )
-        return await NeurocorticalBridge.execute(think_command)
+        Args:
+            prompt: The thought prompt
+            stream: Whether to stream results
+            
+        Returns:
+            Dict with response from LLM
+        """
+        try:
+            # Create the think command
+            think_command = {
+                "request_id": f"think_{int(time.time())}",
+                "work_id": "llm",
+                "action": "inference",
+                "data": {
+                    "prompt": prompt,
+                    "stream": stream
+                }
+            }
+            
+            # Execute via bridge
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            result = await NeurocorticalBridge.execute(think_command)
+            
+            # Return standardized result format
+            if isinstance(result, dict) and result.get("status") == "ok":
+                return {
+                    "status": "ok",
+                    "response": result.get("response", ""),
+                    "raw_response": result
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": result.get("message", "Thinking failed"),
+                    "raw_response": result
+                }
+        except Exception as e:
+            journaling_manager.recordError(f"⚠️ Error: {e}")
+            import traceback
+            journaling_manager.recordError(f"❌ Stack trace: {traceback.format_exc()}")
+            return {
+                "status": "error", 
+                "message": str(e)
+            }
 
     async def reset_system(self):
         """Reset the LLM system"""
-        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
-        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
-        
-        if should_print_debug:
-            print(f"\n[Mind.reset_system] 🔄 Resetting LLM system...")
-            print(f"[Mind.reset_system] 🔄 Connection type: {self._connection_type}")
-            print(f"[Mind.reset_system] 🔄 Initialized: {self._initialized}")
+        journaling_manager.recordDebug(f"[Mind.reset_system] 🔄 Resetting LLM system...")
+        journaling_manager.recordDebug(f"[Mind.reset_system] 🔄 Connection type: {self._connection_type}")
+        journaling_manager.recordDebug(f"[Mind.reset_system] 🔄 Initialized: {self._initialized}")
         
         journaling_manager.recordInfo("[Mind] Resetting system")
         
@@ -410,8 +462,7 @@ class Mind:
             result = await NeurocorticalBridge._direct_reset_system()
             
             # Log the result
-            if should_print_debug:
-                print(f"[Mind.reset_system] 📊 Reset result: {json.dumps(result, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.reset_system] 📊 Reset result: {json.dumps(result, indent=2)}")
             
             # Return standardized format
             if result.get("status") == "ok":
@@ -434,8 +485,6 @@ class Mind:
     
     async def get_hardware_info(self) -> Dict[str, Any]:
         """Get hardware information using hwinfo API command with direct transport"""
-        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
-        
         try:
             # Import NeurocorticalBridge here to avoid circular imports
             from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
@@ -443,15 +492,13 @@ class Mind:
             # Create hardware info command
             hw_command = NeurocorticalBridge.create_sys_command("hwinfo")
             
-            if should_print_debug:
-                print(f"\n[Mind.get_hardware_info] Getting hardware info...")
-                print(f"[Mind.get_hardware_info] Command: {json.dumps(hw_command, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.get_hardware_info] Getting hardware info...")
+            journaling_manager.recordDebug(f"[Mind.get_hardware_info] Command: {json.dumps(hw_command, indent=2)}")
             
             # Send directly through transport
             result = await NeurocorticalBridge._send_to_hardware(hw_command)
             
-            if should_print_debug:
-                print(f"\n[Mind.get_hardware_info] 📊 Result: {json.dumps(result, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.get_hardware_info] 📊 Result: {json.dumps(result, indent=2)}")
             
             # Check if we got data from the API
             if isinstance(result, dict) and "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
@@ -481,13 +528,9 @@ class Mind:
     
     async def ping_system(self):
         """Ping the system to check connectivity using direct transport"""
-        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
-        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
-        
-        if should_print_debug:
-            print(f"\n[Mind.ping_system] 🔍 Pinging system...")
-            print(f"[Mind.ping_system] 🔄 Connection type: {self._connection_type}")
-            print(f"[Mind.ping_system] 🔄 Initialized: {self._initialized}")
+        journaling_manager.recordDebug(f"[Mind.ping_system] 🔍 Pinging system...")
+        journaling_manager.recordDebug(f"[Mind.ping_system] 🔄 Connection type: {self._connection_type}")
+        journaling_manager.recordDebug(f"[Mind.ping_system] 🔄 Initialized: {self._initialized}")
         
         try:
             # Import NeurocorticalBridge here to avoid circular imports
@@ -496,13 +539,11 @@ class Mind:
             # Use the direct ping method which doesn't depend on BasalGanglia
             result = await NeurocorticalBridge._direct_ping()
             
-            if should_print_debug:
-                print(f"[Mind.ping_system] 📊 Raw result: {json.dumps(result, indent=2) if result else 'None'}")
+            journaling_manager.recordDebug(f"[Mind.ping_system] 📊 Raw result: {json.dumps(result, indent=2) if result else 'None'}")
             
             # Check if NeurocorticalBridge already standardized the response
             if isinstance(result, dict) and result.get("status") == "ok":
-                if should_print_debug:
-                    print(f"[Mind.ping_system] ✅ Connection successful (standardized response)")
+                journaling_manager.recordDebug(f"[Mind.ping_system] ✅ Connection successful (standardized response)")
                 return result
             
             # Check if result contains an error section with code 0 (success)
@@ -512,8 +553,7 @@ class Mind:
                 if isinstance(response, dict) and "error" in response:
                     error = response.get("error", {})
                     if isinstance(error, dict) and error.get("code") == 0:
-                        if should_print_debug:
-                            print(f"[Mind.ping_system] ✅ Connection successful (API response)")
+                        journaling_manager.recordDebug(f"[Mind.ping_system] ✅ Connection successful (API response)")
                         # Success - API returned error code 0
                         return {
                             "status": "ok",
@@ -522,16 +562,14 @@ class Mind:
                 
                 # Try original format as well (sometimes _direct_ping returns the unwrapped API response)
                 if "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
-                    if should_print_debug:
-                        print(f"[Mind.ping_system] ✅ Connection successful (unwrapped API response)")
+                    journaling_manager.recordDebug(f"[Mind.ping_system] ✅ Connection successful (unwrapped API response)")
                     return {
                         "status": "ok",
                         "raw_response": result
                     }
             
             # Format as standardized error response
-            if should_print_debug:
-                print(f"[Mind.ping_system] ❌ Connection failed")
+            journaling_manager.recordDebug(f"[Mind.ping_system] ❌ Connection failed")
             return {
                 "status": "error", 
                 "message": result.get("message", "Ping failed"),
@@ -545,10 +583,7 @@ class Mind:
     
     async def list_models(self):
         """List available models using lsmode API command with direct transport"""
-        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
-        
-        if should_print_debug:
-            print(f"\n[Mind.list_models] 🔍 Listing models...")
+        journaling_manager.recordDebug(f"[Mind.list_models] 🔍 Listing models...")
         
         try:
             # Import NeurocorticalBridge here to avoid circular imports
@@ -557,14 +592,12 @@ class Mind:
             # Create lsmode command
             lsmode_command = NeurocorticalBridge.create_sys_command("lsmode")
             
-            if should_print_debug:
-                print(f"[Mind.list_models] Command: {json.dumps(lsmode_command, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.list_models] Command: {json.dumps(lsmode_command, indent=2)}")
             
             # Send directly through transport
             result = await NeurocorticalBridge._send_to_hardware(lsmode_command)
             
-            if should_print_debug:
-                print(f"[Mind.list_models] 📊 Raw result: {json.dumps(result, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.list_models] 📊 Raw result: {json.dumps(result, indent=2)}")
             
             # Check if we got data from the API
             if isinstance(result, dict) and "error" in result and isinstance(result["error"], dict) and result["error"].get("code") == 0:
@@ -581,9 +614,8 @@ class Mind:
                         pass  # It's ok if we can't cache it
                     
                     # Debug info about models
-                    if should_print_debug:
-                        models_count = len(models_data)
-                        print(f"[Mind.list_models] ✅ Found {models_count} models")
+                    models_count = len(models_data)
+                    journaling_manager.recordDebug(f"[Mind.list_models] ✅ Found {models_count} models")
                     
                     # Return standardized response
                     return {
@@ -605,12 +637,9 @@ class Mind:
         
     async def set_model(self, model_name: str):
         """Set the active model using LLM module's setup API"""
-        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
-        
-        if should_print_debug:
-            print(f"\n[Mind.set_model] 🔄 Setting model: {model_name}")
-            print(f"[Mind.set_model] 🔄 Connection type: {self._connection_type}")
-            print(f"[Mind.set_model] 🔄 Initialized: {self._initialized}")
+        journaling_manager.recordDebug(f"[Mind.set_model] 🔄 Setting model: {model_name}")
+        journaling_manager.recordDebug(f"[Mind.set_model] 🔄 Connection type: {self._connection_type}")
+        journaling_manager.recordDebug(f"[Mind.set_model] 🔄 Initialized: {self._initialized}")
         
         # Create command using llm setup format as per API spec
         command_data = {
@@ -623,8 +652,7 @@ class Mind:
             "prompt": self._persona          # System message/persona
         }
         
-        if should_print_debug:
-            print(f"[Mind.set_model] 📋 Command data prepared with LLM setup format")
+        journaling_manager.recordDebug(f"[Mind.set_model] 📋 Command data prepared with LLM setup format")
         
         try:
             # Try direct transport method first
@@ -637,86 +665,59 @@ class Mind:
                 persona=self._persona
             )
             
-            if should_print_debug:
-                print(f"[Mind.set_model] 🔌 Using direct transport method")
-                print(f"[Mind.set_model] 📦 Command: {json.dumps(setup_command, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.set_model] 🔌 Using direct transport method")
+            journaling_manager.recordDebug(f"[Mind.set_model] 📦 Command: {json.dumps(setup_command, indent=2)}")
             
             # Send directly through hardware transport
             direct_result = await NeurocorticalBridge._send_to_hardware(setup_command)
             
-            if should_print_debug:
-                print(f"[Mind.set_model] 📊 Direct result: {json.dumps(direct_result, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.set_model] 📊 Direct result: {json.dumps(direct_result, indent=2)}")
             
             # Process result
             if isinstance(direct_result, dict) and "error" in direct_result:
                 error = direct_result.get("error", {})
                 if isinstance(error, dict) and error.get("code") == 0:
                     # Success according to API
-                    if should_print_debug:
-                        print(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
+                    journaling_manager.recordDebug(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
                     
                     # Update the default model
                     self.set_default_model(model_name)
                     
                     return {
                         "status": "ok",
-                        "message": "Model set successfully",
-                        "response": direct_result
+                        "model": model_name,
+                        "raw_response": direct_result
                     }
                 else:
-                    # API returned an error
+                    # API error
                     error_message = error.get("message", "Unknown error")
-                    if should_print_debug:
-                        print(f"[Mind.set_model] ❌ API Error: {error_message}")
+                    journaling_manager.recordDebug(f"[Mind.set_model] ❌ Error setting model: {error_message}")
                     
                     return {
                         "status": "error",
-                        "message": f"API Error: {error_message}",
-                        "response": direct_result
+                        "message": error_message,
+                        "raw_response": direct_result
                     }
             
-            # Fall back to execute_operation if direct method fails
-            if should_print_debug:
-                print(f"[Mind.set_model] 🔄 Direct method inconclusive, trying operation method")
-            
-            # Execute operation as set_model (which maps to LLM setup)
-            result = await self.execute_operation("set_model", command_data)
-            
-            # Update the default model if successful
-            if result.get("status") == "ok":
-                self.set_default_model(model_name)
-            
-            # Log the result in detail
-            if should_print_debug:
-                print(f"[Mind.set_model] 📊 Result status: {result.get('status', 'unknown')}")
-                if result.get('status') != "ok":
-                    print(f"[Mind.set_model] ❌ Error: {result.get('message', 'Unknown error')}")
-                else:
-                    print(f"[Mind.set_model] ✅ Successfully set model: {model_name}")
-            
-            # Record in regular logging too
-            journaling_manager.recordInfo(f"[Mind] Set model result: {result}")
-            
-            return result
-            
-        except Exception as e:
-            journaling_manager.recordError(f"[Mind] Set model error: {e}")
-            import traceback
-            journaling_manager.recordDebug(f"[Mind] Set model error trace: {traceback.format_exc()}")
+            # Unexpected format
+            journaling_manager.recordDebug(f"[Mind.set_model] ❌ Unexpected response format")
             return {
                 "status": "error",
-                "message": f"Set model error: {str(e)}"
+                "message": "Invalid response format from hardware",
+                "raw_response": direct_result
             }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Error setting model: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"Set model error trace: {traceback.format_exc()}")
+            return {"status": "error", "message": str(e)}
         
     async def reboot_device(self):
         """Reboot the connected device"""
-        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
-        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
-        
-        if should_print_debug:
-            print(f"\n[Mind.reboot_device] 🔄 Rebooting device...")
-            print(f"[Mind.reboot_device] 🔄 Connection type: {self._connection_type}")
-            print(f"[Mind.reboot_device] 🔄 Initialized: {self._initialized}")
+        journaling_manager.recordDebug(f"[Mind.reboot_device] 🔄 Rebooting device...")
+        journaling_manager.recordDebug(f"[Mind.reboot_device] 🔄 Connection type: {self._connection_type}")
+        journaling_manager.recordDebug(f"[Mind.reboot_device] 🔄 Initialized: {self._initialized}")
         
         journaling_manager.recordInfo("[Mind] Rebooting device")
         
@@ -727,8 +728,7 @@ class Mind:
             # Use direct reboot method
             result = await NeurocorticalBridge._direct_reboot()
             
-            if should_print_debug:
-                print(f"[Mind.reboot_device] 📊 Result: {json.dumps(result, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.reboot_device] 📊 Result: {json.dumps(result, indent=2)}")
             
             # Return standardized format
             if result.get("status") == "ok":
@@ -751,7 +751,15 @@ class Mind:
     
     async def connect(self, connection_type=None):
         """Connect to hardware using the specified connection type"""
-        journaling_manager.recordInfo(f"[Mind] Connecting with type: {connection_type}")
+        journaling_manager.recordInfo(f"[Mind] Connecting with type: {connection_type or self._connection_type}")
+        
+        # Use the connection type from the mind config if not specified
+        if connection_type is None:
+            connection_type = self._connection_type
+        
+        # Get connection details from the mind configuration
+        connection_details = self._connection.copy()
+        journaling_manager.recordInfo(f"[Mind] Using connection settings: {connection_details}")
         
         # Use initialize method which uses NeurocorticalBridge.initialize_system
         return await self.initialize(connection_type)
@@ -847,9 +855,34 @@ class Mind:
         journaling_manager.recordInfo(f"[Mind] Set default model to: {model_name}")
         
     async def get_model(self):
-        """Get the currently active model from the device"""
-        journaling_manager.recordInfo("[Mind] Getting active model")
-        return await self.execute_operation("get_model")
+        """Get the currently active model from memory (not directly from device)"""
+        journaling_manager.recordInfo("[Mind] Getting active model information")
+        journaling_manager.recordDebug("[Mind] Note: Device doesn't support direct model query, using cached model info")
+        
+        try:
+            # Get the model from SynapticPathways
+            from .CorpusCallosum.synaptic_pathways import SynapticPathways
+            model_name = SynapticPathways.default_llm_model
+            
+            if model_name:
+                journaling_manager.recordDebug(f"[Mind.get_model] Current model (from cache): {model_name}")
+                return {
+                    "status": "ok",
+                    "response": model_name
+                }
+            else:
+                # If no model is set in memory, we don't know the current model
+                journaling_manager.recordDebug("[Mind.get_model] No model is currently set in memory")
+                return {
+                    "status": "unknown",
+                    "message": "No model currently set in memory"
+                }
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Error getting model info: {e}")
+            return {
+                "status": "error",
+                "message": f"Error retrieving model info: {str(e)}"
+            }
         
     async def process_thought(self, input_text: str) -> Dict[str, Any]:
         """
@@ -918,33 +951,26 @@ class Mind:
 
     async def check_connection(self) -> Dict[str, Any]:
         """Check system connectivity"""
-        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
-        
-        if should_print_debug:
-            print(f"\n[Mind.check_connection] 🔍 Checking connection...")
-            print(f"[Mind.check_connection] 🔄 Connection type: {self._connection_type}")
-            print(f"[Mind.check_connection] 🔄 Initialized: {self._initialized}")
+        journaling_manager.recordDebug(f"[Mind.check_connection] 🔍 Checking connection...")
+        journaling_manager.recordDebug(f"[Mind.check_connection] 🔄 Connection type: {self._connection_type}")
+        journaling_manager.recordDebug(f"[Mind.check_connection] 🔄 Initialized: {self._initialized}")
         
         try:
             # Use ping operation to check connection
             result = await self.ping_system()
             
             # Log the result
-            if should_print_debug:
-                print(f"[Mind.check_connection] 📊 Ping result: {json.dumps(result, indent=2)}")
+            journaling_manager.recordDebug(f"[Mind.check_connection] 📊 Ping result: {json.dumps(result, indent=2)}")
             
             # Use the standardized result from ping_system
             if result.get("status") == "ok":
-                if should_print_debug:
-                    print(f"[Mind.check_connection] ✅ Connection successful")
+                journaling_manager.recordDebug(f"[Mind.check_connection] ✅ Connection successful")
                 return {"status": "ok"}
             else:
-                if should_print_debug:
-                    print(f"[Mind.check_connection] ❌ Connection failed: {result.get('message', 'Unknown error')}")
+                journaling_manager.recordDebug(f"[Mind.check_connection] ❌ Connection failed: {result.get('message', 'Unknown error')}")
                 return {"status": "error", "message": result.get("message", "Connection check failed")}
         except Exception as e:
-            if should_print_debug:
-                print(f"[Mind.check_connection] ❌ Connection error: {e}")
+            journaling_manager.recordDebug(f"[Mind.check_connection] ❌ Connection error: {e}")
             return {"status": "error", "message": str(e)}
 
     @property
@@ -967,6 +993,20 @@ class Mind:
         if self.chat_manager:
             await self.chat_manager.set_system_message(new_persona)
         journaling_manager.recordInfo(f"[Mind] Updated persona in config: {new_persona[:50]}...")
+
+    def get_chat_manager(self):
+        """
+        Get or lazily create the chat manager instance
+        
+        Returns:
+            ChatManager instance
+        """
+        if self.chat_manager is None:
+            # Import here to avoid circular import
+            from Interaction.chat_manager import ChatManager
+            self.chat_manager = ChatManager(self)
+            
+        return self.chat_manager
 
 async def setup_connection(connection_type=None):
     """

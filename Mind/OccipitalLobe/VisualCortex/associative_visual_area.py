@@ -28,7 +28,7 @@ Project Function:
 from typing import Dict, Any, Optional, Tuple, List, NamedTuple
 from enum import Enum
 import logging
-from ...config import CONFIG
+from config import CONFIG  # Use absolute import
 import math
 import asyncio
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways

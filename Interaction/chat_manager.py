@@ -10,8 +10,10 @@ import asyncio
 import time
 from typing import Dict, Any, Optional, List
 
+from Mind.mind import Mind
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from Mind.config import CONFIG
+from config import CONFIG  # Use absolute import
+from .chat_history import ConversationState
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager(CONFIG.log_level)
@@ -33,12 +35,16 @@ class ChatManager:
         """
         self.mind = mind
         self.active_model = None
-        self.conversation_history = []
+        self.conversation_state = ConversationState()
         self.last_response = ""
         self.chat_initialized = False
         self.model_setup_complete = False
         # Use the mind's persona if available
         self.system_message = mind._persona if mind else None
+        
+        # Set system message in conversation state
+        if self.system_message:
+            self.conversation_state.system_message = self.system_message
         
     async def initialize(self, model_name: Optional[str] = None):
         """
@@ -72,6 +78,9 @@ class ChatManager:
                 journaling_manager.recordInfo(f"[ChatManager] Using model: {model_name}")
                 self.mind.set_default_model(model_name)
                 
+                # Log the persona being used
+                journaling_manager.recordDebug(f"[ChatManager] Using persona: {self.mind._persona}")
+                
                 # Activate the model with mind's persona
                 setup_result = await self.mind.set_model(model_name)
                 if setup_result.get("status") == "ok":
@@ -86,7 +95,7 @@ class ChatManager:
                 return False
                 
             # Clear history for new session
-            self.conversation_history = []
+            self.conversation_state.clear_history()
             self.chat_initialized = True
             return True
             
@@ -176,8 +185,8 @@ class ChatManager:
             
         journaling_manager.recordInfo(f"[ChatManager] Processing message: {message[:50]}...")
         
-        # Add to conversation history
-        self.conversation_history.append({"role": "user", "content": message})
+        # Add to conversation history using ConversationState
+        self.conversation_state.add_user_message(message)
         
         try:
             # Process message through Mind's think function
@@ -185,7 +194,7 @@ class ChatManager:
             
             # If not streaming, store the response in history
             if not stream and isinstance(response, str):
-                self.conversation_history.append({"role": "assistant", "content": response})
+                self.conversation_state.add_assistant_message(response)
                 self.last_response = response
                 
             return response
@@ -208,7 +217,7 @@ class ChatManager:
             reset_result = await self.mind.reset_system()
             
             # Clear conversation history
-            self.conversation_history = []
+            self.conversation_state.clear_history()
             self.last_response = ""
             
             # Check result
@@ -282,6 +291,45 @@ class ChatManager:
         return {
             "initialized": self.chat_initialized,
             "model": self.active_model,
-            "message_count": len(self.conversation_history),
+            "message_count": len(self.conversation_state.messages),
             "model_setup_complete": self.model_setup_complete
-        } 
+        }
+        
+    async def set_system_message(self, new_system_message: str):
+        """
+        Update the system message (persona) for the chat session
+        
+        Args:
+            new_system_message: The new system message to use
+            
+        Returns:
+            bool: Success status
+        """
+        journaling_manager.recordInfo("[ChatManager] Updating system message")
+        journaling_manager.recordDebug(f"[ChatManager] New system message: {new_system_message}")
+        
+        try:
+            self.system_message = new_system_message
+            
+            # If already initialized, reset the model with new persona
+            if self.chat_initialized and self.active_model:
+                # Update mind's persona
+                if self.mind:
+                    self.mind._persona = new_system_message
+                
+                # Reinitialize with the new persona
+                setup_result = await self.mind.set_model(self.active_model)
+                if setup_result.get("status") == "ok":
+                    journaling_manager.recordInfo(f"[ChatManager] Model reinitialized with new persona")
+                    return True
+                else:
+                    journaling_manager.recordError(f"[ChatManager] Failed to reinitialize model with new persona")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[ChatManager] Error updating system message: {e}")
+            import traceback
+            journaling_manager.recordError(f"[ChatManager] {traceback.format_exc()}")
+            return False 

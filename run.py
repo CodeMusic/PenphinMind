@@ -19,7 +19,7 @@ project_root = str(Path(__file__).parent)
 sys.path.append(project_root)
 
 from Mind.mind import Mind, setup_connection
-from Mind.config import CONFIG
+from config import CONFIG  # Use absolute import
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager, SystemJournelingLevel
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from menu_system import clear_screen, run_menu_system

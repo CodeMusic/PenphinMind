@@ -18,7 +18,7 @@ import logging
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
-from ...config import CONFIG
+from config import CONFIG  # Use absolute import
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)

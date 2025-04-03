@@ -10,7 +10,7 @@ import os
 from Mind.mind import Mind
 from .chat_interface import interactive_chat
 from Mind.FrontalLobe.PrefrontalCortex.system_journaling_manager import journaling_manager
-from ..config import load_config
+from config import Config  # Import Config class instead of load_config
 
 def print_header():
     """Print PenphinMind header"""
@@ -40,27 +40,32 @@ async def display_main_menu(mind_instance: Mind) -> str:
 
 async def display_mind_selection() -> Mind:
     """Display available minds and get user selection"""
-    config = load_config()
-    minds = config["minds"]
+    # Use Mind.mind_config directly instead of config approach
+    from Mind.mind_config import load_minds_config, get_available_minds
+    
+    minds_config = load_minds_config()
+    minds = minds_config.get("minds", {})
     
     print("\nAvailable Minds:")
     print("1) Auto-detect Mind")
     
     # List configured minds
     mind_options = list(minds.keys())
-    for i, mind_id in enumerate(mind_options[1:], 2):  # Skip "auto"
+    for i, mind_id in enumerate(mind_options, 2):  # Start from 2
+        if mind_id == "auto":
+            continue  # Skip auto as it's already listed
         mind_cfg = minds[mind_id]
-        print(f"{i}) {mind_cfg['name']} [{mind_cfg['device_id']}] - {mind_cfg['connection']['ip']}")
+        print(f"{i-1}) {mind_cfg['name']} [{mind_cfg['device_id']}] - {mind_cfg['connection']['ip']}")
     
     while True:
         try:
-            choice = input("\nSelect mind (1-{len(mind_options)}): ").strip()
+            choice = input(f"\nSelect mind (1-{len(mind_options)}): ").strip()
             if choice == "1":
                 return Mind()  # Auto-detect
             
             choice_num = int(choice)
-            if 2 <= choice_num <= len(mind_options):
-                mind_id = mind_options[choice_num - 1]
+            if 2 <= choice_num <= len(mind_options)+1:
+                mind_id = mind_options[choice_num - 2]
                 return Mind(mind_id)
         except ValueError:
             pass

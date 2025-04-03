@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...Subcortex.api_commands import CommandType, SystemCommand
-from ...config import CONFIG
+from config import CONFIG  # Use absolute import
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 # Initialize journaling manager

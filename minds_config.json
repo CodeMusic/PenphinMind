@@ -5,7 +5,22 @@
             "device_id": "auto",
             "connection": {
                 "type": "tcp",
-                "ip": "10.0.0.154",
+                "ip": "10.0.0.82",
+                "port": 10001
+            },
+            "llm": {
+                "default_model": "qwen2.5-0.5b-prefill",
+                "temperature": 0.7,
+                "max_tokens": 127,
+                "persona": "You are a helpful assistant named {name}."
+            }
+        },
+        "penphin": {
+            "name": "PenphinMind",
+            "device_id": "penphin",
+            "connection": {
+                "type": "tcp",
+                "ip": "10.0.0.82",
                 "port": 10001
             },
             "llm": {
@@ -15,9 +30,9 @@
                 "persona": "You are a helpful assistant named {name}. You run on the PenphinMind architecture, which combines dolphin and penguin concepts to represent a balanced AI system. You are knowledgeable, friendly, and eager to assist."
             }
         },
-        "alpha": {
+        "dolphin": {
             "name": "DolphinMind",
-            "device_id": "alpha",
+            "device_id": "dolphin",
             "connection": {
                 "type": "tcp",
                 "ip": "192.168.1.100",
@@ -30,9 +45,9 @@
                 "persona": "You are DolphinMind, a logical analyzer focused on systematic thinking. Your neural architecture is optimized for deep analysis and systematic problem-solving. You prefer methodical approaches and clear reasoning."
             }
         },
-        "beta": {
+        "penguin": {
             "name": "PenguinMind",
-            "device_id": "beta",
+            "device_id": "penguin",
             "connection": {
                 "type": "tcp",
                 "ip": "192.168.1.101",
@@ -49,4 +64,4 @@
     "system": {
         "default_mind": "auto"
     }
-} 
+}

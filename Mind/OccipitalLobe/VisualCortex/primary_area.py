@@ -7,7 +7,7 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import CommandType
-from ...config import CONFIG
+from config import CONFIG  # Use absolute import
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from PIL import Image
 

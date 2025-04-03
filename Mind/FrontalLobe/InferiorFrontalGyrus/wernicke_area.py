@@ -21,7 +21,7 @@ Project Function:
 
 import logging
 from typing import Dict, Any, Optional, List
-from Mind.config import CONFIG
+from config import CONFIG  # Use absolute import
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.Subcortex.api_commands import CommandType, AudioCommand

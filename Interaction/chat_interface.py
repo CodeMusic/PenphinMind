@@ -7,14 +7,17 @@ interactions, using the ChatManager to handle the communication
 with the Mind system.
 """
 
+import os
 import asyncio
+import json
 import time
-from typing import Optional, Any
+from typing import Dict, Any, Optional
+from pathlib import Path
 
-from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from Mind.config import CONFIG
-from Interaction.chat_manager import ChatManager
 from Mind.mind import Mind
+from .chat_manager import ChatManager
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from config import CONFIG  # Use absolute import
 
 # Initialize journaling
 journaling = SystemJournelingManager(CONFIG.log_level)

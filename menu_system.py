@@ -14,11 +14,15 @@ from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJo
 from pathlib import Path
 # from Interaction.chat_interface import interactive_chat  # This causes circular import
 from Mind.mind_config import load_minds_config, get_available_minds, get_default_mind_id
+from config import Config
 
 # Initialize journaling manager with DEBUG level explicitly
 journaling_manager = SystemJournelingManager(level=SystemJournelingLevel.DEBUG)
 print(f"\n[MENU] 🔍 Initializing menu with Debug logging - Level: {journaling_manager.currentLevel.name}")
 print(f"[MENU] 🔍 Log levels enabled: {' '.join([level.name for level in SystemJournelingLevel if level.value <= journaling_manager.currentLevel.value])}")
+
+# Load system-wide configuration
+config = Config()
 
 # Create global Mind instance
 mind = None  # Will be initialized after mind selection
@@ -110,6 +114,11 @@ async def get_current_model_info():
             return model_info
         elif isinstance(model_info, str):
             return {"model": model_info, "type": model_info.split("-")[0] if "-" in model_info else ""}
+    
+    # Fallback to SynapticPathways if get_model doesn't have definitive info
+    if SynapticPathways.default_llm_model:
+        model_name = SynapticPathways.default_llm_model
+        return {"model": model_name, "type": model_name.split("-")[0] if "-" in model_name else ""}
     
     return {"model": "No model selected", "type": ""}
 

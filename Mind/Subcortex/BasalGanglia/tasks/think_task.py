@@ -13,7 +13,7 @@ from Mind.Subcortex.api_commands import (
     parse_response
 )
 from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
-from Mind.config import CONFIG
+from config import CONFIG  # Use absolute import
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()

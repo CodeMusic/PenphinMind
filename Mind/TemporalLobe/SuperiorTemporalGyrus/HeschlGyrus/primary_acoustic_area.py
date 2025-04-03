@@ -22,9 +22,9 @@ from ....Subcortex.api_commands import (
     AudioCommand,
     BaseCommand
 )
-from ....config import CONFIG, AudioOutputType
+from config import CONFIG, AudioOutputType
 import platform
-from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from ....FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 import os
 import wave
 from enum import Enum

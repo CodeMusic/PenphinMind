@@ -21,7 +21,7 @@ import logging
 from typing import Dict, Any, Optional
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...CorpusCallosum.neural_commands import CommandType, SystemCommand
-from ...config import CONFIG
+from config import CONFIG  # Use absolute import
 from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 # Initialize journaling manager

@@ -22,7 +22,7 @@ import paramiko
 import serial
 import serial.tools.list_ports
 
-from Mind.config import CONFIG
+from config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 # Initialize journaling manager
@@ -362,11 +362,135 @@ class SerialTransport(BaseTransport):
 class WiFiTransport(BaseTransport):
     """TCP communication transport layer"""
     
-    def __init__(self):
+    def __init__(self, ip=None, port=None, timeout=10):
         super().__init__()
-        self.ip = CONFIG.llm_service["ip"]
-        self.port = CONFIG.llm_service["port"]
-        self.timeout = CONFIG.llm_service["timeout"]
+        
+        # Use provided connection parameters or get from mind-specific configuration
+        if ip is not None and port is not None:
+            self.ip = ip
+            self.port = port
+            self.timeout = timeout
+        else:
+            # Get connection settings from mind configuration
+            from Mind.mind_config import get_mind_by_id, get_default_mind_id
+            
+            try:
+                # Try to get the default mind first
+                mind_id = get_default_mind_id()
+                mind_config = get_mind_by_id(mind_id)
+                
+                # Get connection settings
+                connection = mind_config.get("connection", {})
+                self.ip = connection.get("ip", "127.0.0.1")
+                self.port = connection.get("port", 8000)
+                self.timeout = connection.get("timeout", 10)
+                
+                journaling_manager.recordInfo(f"Using connection settings from mind: {mind_id}")
+                journaling_manager.recordInfo(f"IP: {self.ip}, Port: {self.port}, Timeout: {self.timeout}")
+            except Exception as e:
+                # Fallback to default values if mind config fails
+                journaling_manager.recordError(f"Failed to load mind connection settings: {e}")
+                self.ip = "127.0.0.1"
+                self.port = 8000
+                self.timeout = 10
+                
+                journaling_manager.recordWarning("Using default connection settings")
+                journaling_manager.recordWarning(f"IP: {self.ip}, Port: {self.port}, Timeout: {self.timeout}")
+        
+        # Handle 'auto' values
+        if self.ip == "auto" or str(self.ip).lower() == "auto":
+            journaling_manager.recordInfo("IP set to 'auto', trying to discover a valid IP address")
+            # Try common local IPs
+            discovered_ip = self._discover_local_ip()
+            if discovered_ip:
+                journaling_manager.recordInfo(f"Discovered IP: {discovered_ip}")
+                self.ip = discovered_ip
+            else:
+                # Fallback to localhost
+                journaling_manager.recordInfo("Failed to discover IP, falling back to localhost")
+                self.ip = "127.0.0.1"
+        
+        if self.port == "auto" or str(self.port).lower() == "auto":
+            journaling_manager.recordInfo("Port set to 'auto', using default port 10001")
+            self.port = 10001  # Common default port for the LLM service
+        else:
+            # Ensure port is an integer
+            try:
+                self.port = int(self.port)
+            except (ValueError, TypeError):
+                journaling_manager.recordWarning(f"Invalid port value: {self.port}, using default 10001")
+                self.port = 10001
+    
+    def _discover_local_ip(self):
+        """Attempt to discover a valid IP address for the LLM service"""
+        journaling_manager.recordInfo("Attempting to discover a valid IP address...")
+        
+        # First, collect all IPs from minds_config.json
+        try:
+            from Mind.mind_config import load_minds_config
+            minds_config = load_minds_config()
+            minds = minds_config.get("minds", {})
+            
+            config_ips = []
+            # Collect IPs from all minds in config
+            for mind_id, mind_data in minds.items():
+                connection = mind_data.get("connection", {})
+                ip = connection.get("ip")
+                if ip and ip != "auto":
+                    config_ips.append(ip)
+                    journaling_manager.recordInfo(f"Found IP in minds_config.json: {ip} (from mind: {mind_id})")
+            
+            # Try each IP from the config first
+            for ip in config_ips:
+                try:
+                    journaling_manager.recordInfo(f"Trying IP from minds_config.json: {ip}")
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1.0)  # Quick timeout for checking
+                        result = s.connect_ex((ip, self.port))
+                        if result == 0:
+                            journaling_manager.recordInfo(f"Successfully connected to {ip}:{self.port}")
+                            return ip
+                except Exception as e:
+                    journaling_manager.recordWarning(f"Error checking {ip}: {e}")
+        
+        except Exception as e:
+            journaling_manager.recordWarning(f"Error getting IPs from minds_config.json: {e}")
+        
+        # List of common local IPs to try as fallback
+        common_ips = [
+            "192.168.1.100",  # Common IP for M5Stack
+            "192.168.1.101",
+            "10.0.0.82",
+            "192.168.0.100", 
+            "192.168.0.101"
+        ]
+        
+        # Try to connect to each IP with the port
+        journaling_manager.recordInfo("Trying common IPs as fallback...")
+        for ip in common_ips:
+            try:
+                journaling_manager.recordInfo(f"Trying common IP: {ip}")
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(1.0)  # Quick timeout for checking
+                    result = s.connect_ex((ip, self.port))
+                    if result == 0:
+                        journaling_manager.recordInfo(f"Successfully connected to {ip}:{self.port}")
+                        return ip
+            except Exception as e:
+                journaling_manager.recordWarning(f"Error checking {ip}: {e}")
+        
+        # Try to get local IP addresses
+        try:
+            import socket
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            journaling_manager.recordInfo(f"Local hostname: {hostname}, IP: {local_ip}")
+            if local_ip != "127.0.0.1":
+                return local_ip
+        except Exception as e:
+            journaling_manager.recordWarning(f"Error getting local IP: {e}")
+        
+        return None
     
     def is_available(self) -> bool:
         """Check if TCP connection is available"""
@@ -445,6 +569,10 @@ class WiFiTransport(BaseTransport):
                                     self.connected = True
                                     journaling_manager.recordInfo(f"✅ TCP connection to {self.ip}:{self.port} successful!")
                                     print(f"✅ TCP connection to {self.ip}:{self.port} successful!")
+                                    
+                                    # Try to update the mind config with this successful IP and port
+                                    self._update_mind_config_with_connection()
+                                    
                                     return True
                                 else:
                                     journaling_manager.recordError(f"Ping error code {error_code}: {response_data['error'].get('message', 'Unknown error')}")
@@ -465,39 +593,95 @@ class WiFiTransport(BaseTransport):
                 journaling_manager.recordError(f"Error establishing TCP connection: {e}")
                 print(f"❌ Error establishing TCP connection: {e}")
                 
-            # If the default connection didn't work, attempt IP discovery with ADB
+            # If the initial connection failed, try alternatives from known_devices list
             if not initial_connection:
-                journaling_manager.recordInfo("Initial connection failed, trying ADB IP discovery...")
-                ip_from_adb = self._get_ip_from_adb()
+                return await self._try_alternative_connections()
+            
+            return False
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Connection error: {e}")
+            import traceback
+            journaling_manager.recordError(f"Connection error trace: {traceback.format_exc()}")
+            return False
+
+    def _update_mind_config_with_connection(self):
+        """Update the mind configuration with successful connection details"""
+        try:
+            from Mind.mind_config import get_mind_by_id, get_default_mind_id, save_mind_config
+            
+            mind_id = get_default_mind_id()
+            mind_config = get_mind_by_id(mind_id)
+            
+            # Only update if using auto values
+            if mind_config["connection"]["ip"] == "auto" or mind_config["connection"]["port"] == "auto":
+                journaling_manager.recordInfo(f"Updating mind config with successful connection: {self.ip}:{self.port}")
                 
-                if ip_from_adb and ip_from_adb != self.ip:
-                    # Try with the new IP from ADB
-                    journaling_manager.recordInfo(f"Found device IP from ADB: {ip_from_adb}")
-                    self.ip = ip_from_adb  # Update the IP
+                # Update connection details
+                mind_config["connection"]["ip"] = self.ip
+                mind_config["connection"]["port"] = self.port
+                
+                # Save the updated configuration
+                if save_mind_config(mind_id, mind_config):
+                    journaling_manager.recordInfo(f"Updated mind config for {mind_id} with IP: {self.ip}, Port: {self.port}")
+                else:
+                    journaling_manager.recordWarning(f"Failed to save updated mind config")
+        except Exception as e:
+            journaling_manager.recordWarning(f"Error updating mind config with connection: {e}")
+
+    async def _try_alternative_connections(self) -> bool:
+        """Try alternative connection methods if initial connection failed"""
+        journaling_manager.recordInfo("Initial connection failed, trying alternative methods...")
+        
+        # First, try IPs from minds_config.json
+        try:
+            from Mind.mind_config import load_minds_config
+            minds_config = load_minds_config()
+            minds = minds_config.get("minds", {})
+            
+            # Create device list from minds_config.json
+            config_devices = []
+            for mind_id, mind_data in minds.items():
+                connection = mind_data.get("connection", {})
+                ip = connection.get("ip")
+                port = connection.get("port")
+                
+                # Only add non-auto values
+                if ip and ip != "auto" and port and port != "auto":
+                    device = {"ip": ip, "port": int(port) if isinstance(port, str) else port}
+                    config_devices.append(device)
+                    journaling_manager.recordInfo(f"Found device in minds_config.json: {ip}:{port} (from mind: {mind_id})")
+            
+            # Try each device from config first
+            for device in config_devices:
+                # Skip if we already tried this IP/port
+                if device["ip"] == self.ip and device["port"] == self.port:
+                    continue
                     
-                    # Try connecting with the new IP
-                    try:
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            s.settimeout(5.0)  # Increased timeout
-                            journaling_manager.recordInfo(f"🔄 Trying TCP connection with new IP: {ip_from_adb}:{self.port}...")
-                            print(f"🔄 Trying TCP connection with new IP: {ip_from_adb}:{self.port}...")
-                            s.connect((self.ip, self.port))
+                try:
+                    journaling_manager.recordInfo(f"Trying alternative connection from config: {device['ip']}:{device['port']}...")
+                    print(f"🔄 Trying alternative connection from config: {device['ip']}:{device['port']}...")
+                    
+                    # Update IP and port
+                    self.ip = device["ip"]
+                    self.port = device["port"]
+                    
+                    # Try to connect
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(2.0)  # Quick timeout for alternatives
+                        result = s.connect_ex((self.ip, self.port))
+                        if result == 0:
+                            journaling_manager.recordInfo(f"Alternative connection successful to {self.ip}:{self.port}")
+                            print(f"✅ Alternative connection successful to {self.ip}:{self.port}")
                             
-                            # Send ping to verify in exact API format
-                            ping_command = {
-                                "request_id": "001", 
-                                "work_id": "sys",
-                                "action": "ping"
-                            }
-                            
-                            # Send the ping command with newline
+                            # Send ping to verify
+                            ping_command = {"request_id": "001", "work_id": "sys", "action": "ping"}
                             json_data = json.dumps(ping_command) + "\n"
                             s.sendall(json_data.encode())
                             
-                            # More robust response reading
+                            # Read response
                             buffer = bytearray()
-                            s.settimeout(5.0)
-                            
+                            s.settimeout(3.0)
                             try:
                                 while True:
                                     chunk = s.recv(4096)
@@ -508,42 +692,119 @@ class WiFiTransport(BaseTransport):
                                         break
                             except socket.timeout:
                                 pass
-                                
-                            # Process response if we got any data
+                            
+                            # Check if we got a valid response
                             if buffer:
-                                response_str = buffer.decode().strip()
-                                journaling_manager.recordInfo(f"Received raw response: {response_str}")
+                                self.endpoint = f"{self.ip}:{self.port}"
+                                self.connected = True
                                 
-                                try:
-                                    response_data = json.loads(response_str)
-                                    
-                                    # Check success via error code
-                                    if "error" in response_data and isinstance(response_data["error"], dict):
-                                        error_code = response_data["error"].get("code", -1)
-                                        
-                                        if error_code == 0:
-                                            # Connection succeeded!
-                                            self.endpoint = f"{self.ip}:{self.port}"
-                                            self.connected = True
-                                            journaling_manager.recordInfo(f"✅ TCP connection with new IP successful!")
-                                            print(f"✅ TCP connection with new IP successful!")
-                                            return True
-                                except json.JSONDecodeError:
-                                    journaling_manager.recordError(f"Failed to parse response as JSON: {response_str!r}")
-                    except Exception as e:
-                        journaling_manager.recordError(f"Error connecting with IP from ADB: {e}")
-            
-            # If we get here, all connection attempts failed
-            journaling_manager.recordError("All connection attempts failed")
-            print("❌ Failed to establish TCP connection to device")
-            return False
-                
+                                # Try to update the mind config with this successful IP and port
+                                self._update_mind_config_with_connection()
+                                
+                                return True
+                except Exception as e:
+                    journaling_manager.recordWarning(f"Alternative connection error: {e}")
         except Exception as e:
-            journaling_manager.recordError(f"Error in TCP connection process: {e}")
-            import traceback
-            journaling_manager.recordError(f"TCP connection error trace: {traceback.format_exc()}")
-            return False
-    
+            journaling_manager.recordWarning(f"Error getting devices from minds_config.json: {e}")
+        
+        # List of common LLM device IPs to try as fallback
+        known_devices = [
+            {"ip": "192.168.1.100", "port": 10001},  # Common IP for M5Stack
+            {"ip": "192.168.1.101", "port": 10001},
+            {"ip": "10.0.0.82", "port": 10001},
+            {"ip": "192.168.0.100", "port": 10001},
+            {"ip": "127.0.0.1", "port": 10001},      # Localhost - useful if port forwarding is used
+        ]
+        
+        # Try each known device
+        journaling_manager.recordInfo("Trying common devices as fallback...")
+        for device in known_devices:
+            # Skip if we already tried this IP/port
+            if device["ip"] == self.ip and device["port"] == self.port:
+                continue
+            
+            try:
+                journaling_manager.recordInfo(f"Trying common device: {device['ip']}:{device['port']}...")
+                print(f"🔄 Trying alternative connection: {device['ip']}:{device['port']}...")
+                
+                # Update IP and port
+                self.ip = device["ip"]
+                self.port = device["port"]
+                
+                # Try to connect
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(2.0)  # Quick timeout for alternatives
+                    result = s.connect_ex((self.ip, self.port))
+                    if result == 0:
+                        journaling_manager.recordInfo(f"Alternative connection successful to {self.ip}:{self.port}")
+                        print(f"✅ Alternative connection successful to {self.ip}:{self.port}")
+                        
+                        # Send ping to verify
+                        ping_command = {"request_id": "001", "work_id": "sys", "action": "ping"}
+                        json_data = json.dumps(ping_command) + "\n"
+                        s.sendall(json_data.encode())
+                        
+                        # Read response
+                        buffer = bytearray()
+                        s.settimeout(3.0)
+                        try:
+                            while True:
+                                chunk = s.recv(4096)
+                                if not chunk:
+                                    break
+                                buffer.extend(chunk)
+                                if b'\n' in chunk:
+                                    break
+                        except socket.timeout:
+                            pass
+                        
+                        # Check if we got a valid response
+                        if buffer:
+                            self.endpoint = f"{self.ip}:{self.port}"
+                            self.connected = True
+                            
+                            # Try to update the mind config with this successful IP and port
+                            self._update_mind_config_with_connection()
+                            
+                            return True
+            except Exception as e:
+                journaling_manager.recordWarning(f"Alternative connection error: {e}")
+        
+        # If all alternatives fail, try ADB IP discovery if appropriate
+        try:
+            # Check if adb is available
+            import shutil
+            if shutil.which('adb'):
+                journaling_manager.recordInfo("Trying ADB for IP discovery...")
+                print("🔄 Trying ADB for IP discovery...")
+                
+                ip_from_adb = self._get_ip_from_adb()
+                if ip_from_adb:
+                    self.ip = ip_from_adb
+                    journaling_manager.recordInfo(f"Using ADB-discovered IP: {self.ip}")
+                    print(f"🔍 Using ADB-discovered IP: {self.ip}")
+                    
+                    # Try connecting with the new IP
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(3.0)
+                        result = s.connect_ex((self.ip, self.port))
+                        if result == 0:
+                            self.endpoint = f"{self.ip}:{self.port}"
+                            self.connected = True
+                            
+                            # Try to update the mind config with this successful IP and port
+                            self._update_mind_config_with_connection()
+                            
+                            return True
+        except Exception as e:
+            journaling_manager.recordWarning(f"ADB discovery error: {e}")
+        
+        # All connection attempts failed
+        journaling_manager.recordError("All connection attempts failed")
+        print("❌ All connection attempts failed")
+        self.connected = False
+        return False
+
     async def _discover_ip_via_adb(self) -> Optional[str]:
         """Discover device IP address using ADB"""
         try:
@@ -785,9 +1046,20 @@ class WiFiTransport(BaseTransport):
             except Exception as e:
                 journaling_manager.recordError(f"Error checking port {port}: {e}")
         
-        # If no port found, use the default
-        journaling_manager.recordInfo(f"No LLM service port found, using default {CONFIG.llm_service['port']}")
-        return CONFIG.llm_service["port"]
+        # If no port found, use the default port from the mind configuration
+        try:
+            from Mind.mind_config import get_mind_by_id, get_default_mind_id
+            mind_id = get_default_mind_id()
+            mind_config = get_mind_by_id(mind_id)
+            connection = mind_config.get("connection", {})
+            default_port = connection.get("port", 10001)
+            journaling_manager.recordInfo(f"No LLM service port found, using default from mind config: {default_port}")
+            return default_port
+        except Exception as e:
+            # Fallback to hardcoded default if mind config fails
+            journaling_manager.recordWarning(f"Failed to get default port from mind config: {e}")
+            journaling_manager.recordWarning("Using hardcoded default port: 10001")
+            return 10001
 
     def _get_ip_from_adb(self) -> Optional[str]:
         """Get device IP address using ADB"""
@@ -813,12 +1085,26 @@ class WiFiTransport(BaseTransport):
                 ip_address = match.group(1)
                 journaling_manager.recordInfo(f"Found IP address via ADB: {ip_address}")
                 
-                # Update the config with this IP
+                # Update the current IP address
                 old_ip = self.ip
-                CONFIG.llm_service["ip"] = ip_address
+                self.ip = ip_address
+                journaling_manager.recordInfo(f"Updated IP address: {old_ip} -> {ip_address}")
                 
-                if CONFIG.save():
-                    journaling_manager.recordInfo(f"Updated config: IP changed from {old_ip} to {ip_address}")
+                # Try to update the mind configuration with this IP
+                try:
+                    from Mind.mind_config import get_mind_by_id, get_default_mind_id, save_mind_config
+                    
+                    mind_id = get_default_mind_id()
+                    mind_config = get_mind_by_id(mind_id)
+                    
+                    # Update the connection IP in the mind config
+                    if "connection" in mind_config:
+                        mind_config["connection"]["ip"] = ip_address
+                        # Save the updated configuration
+                        if save_mind_config(mind_id, mind_config):
+                            journaling_manager.recordInfo(f"Updated mind config: IP changed to {ip_address}")
+                except Exception as e:
+                    journaling_manager.recordWarning(f"Failed to update mind config with new IP: {e}")
                 
                 return ip_address
             else:
@@ -834,10 +1120,35 @@ class WiFiTransport(BaseTransport):
 class ADBTransport(BaseTransport):
     """ADB communication transport layer"""
     
-    def __init__(self):
+    def __init__(self, connection_details=None):
         super().__init__()
+        
+        # Get ADB path from CONFIG
         self.adb_path = CONFIG.adb_path
-        self.port = str(CONFIG.llm_service["port"])  # Should be "10001"
+        
+        # Use provided connection details or get from mind configuration
+        if connection_details and "port" in connection_details:
+            self.port = str(connection_details["port"])
+            journaling_manager.recordInfo(f"Using port from connection details: {self.port}")
+        else:
+            # Try to get from mind configuration
+            from Mind.mind_config import get_mind_by_id, get_default_mind_id
+            
+            try:
+                # Try to get the default mind first
+                mind_id = get_default_mind_id()
+                mind_config = get_mind_by_id(mind_id)
+                
+                # Get connection settings
+                connection = mind_config.get("connection", {})
+                self.port = str(connection.get("port", 10001))
+                
+                journaling_manager.recordInfo(f"Using port from mind configuration: {self.port}")
+            except Exception as e:
+                # Fallback to default port
+                self.port = "10001"  # Default port
+                journaling_manager.recordWarning(f"Failed to get port from mind config: {e}")
+                journaling_manager.recordWarning(f"Using default port: {self.port}")
         
     def _run_adb_command(self, command):
         """Run an ADB command using the module-level function with caching"""
@@ -1031,14 +1342,45 @@ class ADBTransport(BaseTransport):
             raise CommandError(f"Command transmission failed: {e}")
 
 # Transport factory
-def get_transport(transport_type: str) -> BaseTransport:
-    """Get the appropriate transport instance based on type"""
+def get_transport(transport_type: str, connection_details: dict = None) -> BaseTransport:
+    """
+    Get the appropriate transport instance based on type
+    
+    Args:
+        transport_type: The type of transport ("serial", "wifi"/"tcp", or "adb")
+        connection_details: Optional connection details with keys like 'ip', 'port', 'timeout'
+                           If provided, these will be used for WiFiTransport or ADBTransport initialization
+    
+    Returns:
+        BaseTransport: The appropriate transport instance
+    
+    Raises:
+        ValueError: If transport_type is unsupported
+    """
     if transport_type == "serial":
         return SerialTransport()
     elif transport_type == "wifi" or transport_type == "tcp":  # Support both for backward compatibility
-        return WiFiTransport()  # Will be renamed in a later step
+        if connection_details:
+            # Extract connection details
+            ip = connection_details.get("ip")
+            port = connection_details.get("port")
+            timeout = connection_details.get("timeout", 10)
+            
+            # Create WiFiTransport with explicit settings
+            journaling_manager.recordInfo(f"Creating WiFiTransport with provided connection details: {ip}:{port}")
+            return WiFiTransport(ip=ip, port=port, timeout=timeout)
+        else:
+            # Create WiFiTransport that will load settings from mind config
+            journaling_manager.recordInfo("Creating WiFiTransport with default settings from mind config")
+            return WiFiTransport()
     elif transport_type == "adb":
-        return ADBTransport()
+        # Pass connection details to ADBTransport
+        if connection_details:
+            journaling_manager.recordInfo(f"Creating ADBTransport with provided connection details")
+            return ADBTransport(connection_details)
+        else:
+            journaling_manager.recordInfo("Creating ADBTransport with default settings from mind config")
+            return ADBTransport()
     else:
         raise ValueError(f"Unsupported transport type: {transport_type}")
 

@@ -148,5 +148,51 @@ def set_default_mind(mind_id: str) -> bool:
         print(f"Error saving minds config: {e}")
         return False
 
+def save_mind_config(mind_id: str, updated_config: Dict[str, Any]) -> bool:
+    """
+    Update and save a specific mind's configuration
+    
+    Args:
+        mind_id: ID of the mind to update
+        updated_config: New configuration for the mind
+        
+    Returns:
+        bool: Success status
+    """
+    # First load the full configuration
+    minds_config = load_minds_config()
+    
+    # Make sure minds_config is not None
+    if minds_config is None:
+        print("Error: Could not load minds configuration")
+        return False
+    
+    # Verify the mind_id exists
+    if mind_id not in minds_config["minds"]:
+        print(f"Error: Mind ID '{mind_id}' not found in configuration")
+        return False
+    
+    # Update the mind's configuration 
+    # Remove mind_id if present since it's not part of the stored config
+    if "mind_id" in updated_config:
+        updated_config = updated_config.copy()
+        del updated_config["mind_id"]
+        
+    minds_config["minds"][mind_id] = updated_config
+    
+    # Update the cache
+    global _minds_config_cache
+    _minds_config_cache = minds_config
+    
+    # Save to file
+    try:
+        with open(MINDS_CONFIG_PATH, 'w') as f:
+            json.dump(minds_config, f, indent=4)
+        print(f"Updated configuration saved for mind: {mind_id}")
+        return True
+    except Exception as e:
+        print(f"Error saving minds config: {e}")
+        return False
+
 # For backward compatibility
 load_mind_config = load_minds_config 

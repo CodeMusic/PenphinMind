@@ -22,7 +22,7 @@ import traceback
 from typing import Dict, Any, Optional
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
 from ...Subcortex.api_commands import CommandType, SystemCommand
-from ...config import CONFIG
+from config import CONFIG  # Use absolute import
 from .planning_area import PlanningArea
 from .coordination_area import CoordinationArea
 from .pin_definitions import PinDefinitions

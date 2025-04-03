@@ -38,7 +38,7 @@ import paramiko
 # Third-party imports
 import serial
 import serial.tools.list_ports
-from Mind.config import CONFIG
+from config import CONFIG  # Absolute import from project root
 # Local imports
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.Subcortex.api_commands import (
@@ -486,6 +486,44 @@ class SynapticPathways:
             net_info = f" | IP: {ip}"
         
         return f"🐧🐬 Hardware: CPU: {cpu}% | Memory: {mem}% | Temp: {temp}°C{net_info} | Updated: {timestamp}"
+
+    @classmethod
+    async def get_hardware_info(cls) -> Dict[str, Any]:
+        """Get hardware information from the device
+        
+        Returns:
+            Dict containing hardware information
+        """
+        try:
+            # Import here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            # Create proper hardware info command
+            hw_command = NeurocorticalBridge.create_sys_command("hwinfo")
+            
+            # Send command using NeurocorticalBridge's send_to_hardware
+            result = await NeurocorticalBridge._send_to_hardware(hw_command)
+            
+            # Process the result
+            if isinstance(result, dict) and "error" in result:
+                error = result.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    # API success (code 0)
+                    hw_data = result.get("data", {})
+                    
+                    # Update our cache
+                    cls.current_hw_info = hw_data
+                    cls.hw_info_timestamp = time.time()
+                    
+                    return hw_data
+            
+            # If we get here, there was an error
+            journaling_manager.recordError(f"Error getting hardware info: {result}")
+            return {}
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Hardware info exception: {e}")
+            return {}
 
     @classmethod
     async def get_available_models(cls) -> List[Dict[str, Any]]:
