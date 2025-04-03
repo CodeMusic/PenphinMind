@@ -412,21 +412,25 @@ async def display_model_details(model: Dict[str, Any]):
     input()
 
 async def reboot_system(mind_instance=None):
-    """Reboot the M5Stack system"""
+    """Reboot the entire M5Stack system (full device restart)"""
     clear_screen()
     print_header()
     
     # Use the global mind instance if not provided
     mind_instance = mind_instance or mind
     
-    print("Rebooting system...")
+    print("⚠️ REBOOTING SYSTEM (FULL DEVICE RESTART) ⚠️")
+    print("This will restart the entire hardware device.")
+    print("The application will lose connection during reboot.")
+    print("\nSending reboot command...")
     
     result = await mind_instance.reboot_device()
     
     if result.get("status") == "ok":
-        print("Reboot command sent successfully.")
-        print("Device will restart. The application will lose connection.")
-        print("You may need to restart the application after device reboot.")
+        print("\n✅ Reboot command sent successfully!")
+        print(f"Message: {result.get('message', 'Rebooting...')}")
+        print("\nDevice is now restarting. The application will lose connection.")
+        print("You will need to wait for the device to fully restart.")
         
         # Wait a moment to allow device to reboot
         print("\nWaiting for device to reboot...")
@@ -444,14 +448,15 @@ async def reboot_system(mind_instance=None):
                 print("\nDevice reconnected successfully!")
                 print(SynapticPathways.format_hw_info())
             else:
-                print("\nFailed to reconnect")
+                print("\n❌ Failed to reconnect after reboot")
+                print("You may need to close and restart the application.")
         except Exception as e:
             journaling_manager.recordError(f"Error reconnecting after reboot: {e}")
-            print("\nCould not reconnect to device after reboot.")
+            print("\n❌ Could not reconnect to device after reboot.")
             print("You will need to restart the application manually.")
     else:
         error_msg = result.get("message", "Unknown error")
-        print(f"Reboot failed: {error_msg}")
+        print(f"\n❌ Reboot failed: {error_msg}")
     
     print("\nPress Enter to return to main menu...")
     input()
@@ -668,12 +673,13 @@ async def system_menu() -> None:
         print("1) Hardware Info")
         print("2) List Models")
         print("3) Ping System")
-        print("4) Reboot Device")
-        print("5) Manage Tasks")  # New option
+        print("4) Reset LLM System")
+        print("5) Reboot Device")
+        print("6) Manage Tasks") 
         print("0) Back to Main Menu")
         print()
         
-        choice = input("Enter your choice (0-5): ").strip()
+        choice = input("Enter your choice (0-6): ").strip()
         
         try:
             if choice == "0":
@@ -721,11 +727,34 @@ async def system_menu() -> None:
                 input("\nPress Enter to continue...")
                 
             elif choice == "4":
-                # Reboot (using existing reboot_system function)
-                await reboot_system()
+                # Reset LLM System (soft reset)
+                print("\nResetting LLM system...")
+                reset_result = await mind.reset_system()
+                
+                print("\n📡 Reset Result:")
+                print(f"Status: {reset_result.get('status', 'unknown')}")
+                
+                if reset_result.get("status") == "ok":
+                    print(f"✅ LLM system reset successful!")
+                    print(f"Message: {reset_result.get('message', 'Reset completed')}")
+                else:
+                    print(f"❌ Reset failed: {reset_result.get('message', 'Unknown error')}")
+                
+                input("\nPress Enter to continue...")
                 
             elif choice == "5":
-                # New option: Manage Tasks
+                # Reboot Device (full system reboot)
+                print("\n⚠️ This will reboot the entire device and disconnect the connection.")
+                confirm = input("Are you sure you want to reboot? (y/n): ").strip().lower()
+                
+                if confirm == "y":
+                    await reboot_system()
+                else:
+                    print("Reboot cancelled.")
+                    input("\nPress Enter to continue...")
+                
+            elif choice == "6":
+                # Manage Tasks
                 await manage_tasks()
                 
             else:
@@ -804,7 +833,8 @@ async def manage_tasks():
     # Options for task management
     print("\nTask Management Options:")
     print("1) Refresh task information")
-    print("2) Reset LLM system")
+    print("2) Reset LLM system (soft reset - restarts the LLM service only)")
+    print("3) Reboot device (hard reset - restarts the entire device)")
     print("0) Back to System Menu")
     
     option = input("\nEnter option: ").strip()
@@ -813,14 +843,30 @@ async def manage_tasks():
         # Just refresh by calling this function again
         await manage_tasks()
     elif option == "2":
-        # Reset LLM
-        print("\nResetting LLM system...")
+        # Reset LLM System
+        print("\nResetting LLM system (soft reset)...")
         result = await mind.reset_system()
-        reset_success = result.get("status") == "ok"
-        print(f"Reset {'successful' if reset_success else 'failed'}")
-        if not reset_success:
-            print(f"Error: {result.get('message', 'Unknown error')}")
+        
+        print("\n📡 Reset Result:")
+        print(f"Status: {result.get('status', 'unknown')}")
+        
+        if result.get("status") == "ok":
+            print(f"✅ LLM system reset successful!")
+            print(f"Message: {result.get('message', 'Reset completed')}")
+        else:
+            print(f"❌ Reset failed: {result.get('message', 'Unknown error')}")
+            
         input("\nPress Enter to continue...")
+    elif option == "3":
+        # Reboot Device
+        print("\n⚠️ This will reboot the entire device and disconnect the connection.")
+        confirm = input("Are you sure you want to reboot? (y/n): ").strip().lower()
+        
+        if confirm == "y":
+            await reboot_system()
+        else:
+            print("Reboot cancelled.")
+            input("\nPress Enter to continue...")
     else:
         # Any other input returns to system menu
         return

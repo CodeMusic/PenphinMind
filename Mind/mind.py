@@ -392,21 +392,45 @@ class Mind:
 
     async def reset_system(self):
         """Reset the LLM system"""
-        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
+        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
         
         if should_print_debug:
             print(f"\n[Mind.reset_system] 🔄 Resetting LLM system...")
+            print(f"[Mind.reset_system] 🔄 Connection type: {self._connection_type}")
+            print(f"[Mind.reset_system] 🔄 Initialized: {self._initialized}")
+        
         journaling_manager.recordInfo("[Mind] Resetting system")
         
-        # API doesn't require a target parameter for reset
-        # Just execute the reset operation without data
-        result = await self.execute_operation("reset_system")
-        
-        # Log the result
-        if should_print_debug:
-            print(f"[Mind.reset_system] 📊 Reset result: {json.dumps(result, indent=2)}")
-        
-        return result
+        try:
+            # Import NeurocorticalBridge here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            # Use direct reset method 
+            result = await NeurocorticalBridge._direct_reset_system()
+            
+            # Log the result
+            if should_print_debug:
+                print(f"[Mind.reset_system] 📊 Reset result: {json.dumps(result, indent=2)}")
+            
+            # Return standardized format
+            if result.get("status") == "ok":
+                return {
+                    "status": "ok",
+                    "message": result.get("message", "Reset successful"),
+                    "response": result.get("response", {})
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": result.get("message", "Reset failed"),
+                    "response": result.get("response", {})
+                }
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Reset error: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"[Mind] Reset error trace: {traceback.format_exc()}")
+            return {"status": "error", "message": str(e)}
     
     async def get_hardware_info(self) -> Dict[str, Any]:
         """Get hardware information using hwinfo API command with direct transport"""
@@ -686,26 +710,44 @@ class Mind:
         
     async def reboot_device(self):
         """Reboot the connected device"""
-        should_print_debug = journaling_manager.currentLevel.value >= journaling_manager.currentLevel.DEBUG.value
+        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
+        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
         
         if should_print_debug:
             print(f"\n[Mind.reboot_device] 🔄 Rebooting device...")
+            print(f"[Mind.reboot_device] 🔄 Connection type: {self._connection_type}")
+            print(f"[Mind.reboot_device] 🔄 Initialized: {self._initialized}")
+        
         journaling_manager.recordInfo("[Mind] Rebooting device")
         
-        # According to API, reboot requires no data
-        result = await self.execute_operation("reboot")
-        
-        if should_print_debug:
-            print(f"[Mind.reboot_device] 📊 Result: {json.dumps(result, indent=2)}")
-        
-        # Handle API response format, which contains error.code = 0 for success
-        if isinstance(result, dict) and "error" in result:
-            error = result.get("error", {})
-            if isinstance(error, dict) and error.get("code") == 0:
-                return {"status": "ok", "message": error.get("message", "Rebooting...")}
-        
-        # If we get here, format as an error
-        return {"status": "error", "message": "Reboot command failed"}
+        try:
+            # Import NeurocorticalBridge here to avoid circular imports
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            # Use direct reboot method
+            result = await NeurocorticalBridge._direct_reboot()
+            
+            if should_print_debug:
+                print(f"[Mind.reboot_device] 📊 Result: {json.dumps(result, indent=2)}")
+            
+            # Return standardized format
+            if result.get("status") == "ok":
+                return {
+                    "status": "ok",
+                    "message": result.get("message", "Rebooting..."),
+                    "response": result.get("response", {})
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": result.get("message", "Reboot command failed"),
+                    "response": result.get("response", {})
+                }
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Reboot error: {e}")
+            import traceback
+            journaling_manager.recordDebug(f"[Mind] Reboot error trace: {traceback.format_exc()}")
+            return {"status": "error", "message": str(e)}
     
     async def connect(self, connection_type=None):
         """Connect to hardware using the specified connection type"""

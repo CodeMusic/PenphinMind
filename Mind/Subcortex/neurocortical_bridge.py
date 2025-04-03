@@ -80,7 +80,7 @@ class NeurocorticalBridge:
             journaling_manager.recordInfo(f"Execute operation: {operation}")
             
             # If this is a special command, show debug info
-            if operation in ["set_model", "hardware_info", "reset_system", "list_models", "ping"]:
+            if operation in ["set_model", "hardware_info", "reset_system", "list_models", "ping", "reboot"]:
                 print(f"📦 {operation.upper()} COMMAND: {json.dumps(data, indent=2) if data else '{}'}")
             
             # Special handling for critical system operations - always use direct transport
@@ -130,23 +130,12 @@ class NeurocorticalBridge:
                 }
                 
             elif operation == "reset_system":
-                # Create direct reset command
-                reset_command = cls.create_sys_command("reset")
-                reset_result = await cls._send_to_hardware(reset_command)
+                # Use our new direct method
+                return await cls._direct_reset_system()
                 
-                # Special post-processing for reset operation
-                if isinstance(reset_result, dict) and "error" in reset_result:
-                    if isinstance(reset_result["error"], dict) and reset_result["error"].get("code") == 0:
-                        return {
-                            "status": "ok",
-                            "message": "Reset successful"
-                        }
-                
-                # If we got here, there was an error
-                return {
-                    "status": "error",
-                    "message": f"Reset failed: {reset_result.get('error', reset_result)}"
-                }
+            elif operation == "reboot":
+                # Use our new direct method
+                return await cls._direct_reboot()
             
             # For other operations, follow normal procedure
             
@@ -772,38 +761,97 @@ class NeurocorticalBridge:
             return {"status": "error", "message": str(e)}
     
     @classmethod
-    async def _direct_reset_llm(cls) -> Dict[str, Any]:
+    async def _direct_reset_system(cls) -> Dict[str, Any]:
+        """
+        Reset the system directly using API format
+        
+        API format:
+        Request: {"request_id": "001", "work_id": "sys", "action": "reset"}
+        Response: {"created": timestamp, "error": {"code": 0, "message": "llm server restarting ..."}, "request_id": "001", "work_id": "sys"}
+        
+        Returns:
+            Dict with status and response
+        """
+        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
+        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
+        
+        if should_print_debug:
+            print(f"\n[NeurocorticalBridge._direct_reset_system] ⚡ Creating reset command...")
+        
         try:
-            # Create reset command
+            # Create properly formatted reset command per API spec
             reset_command = {
-                "request_id": f"reset_{int(time.time())}",
+                "request_id": "001",
                 "work_id": "sys",
                 "action": "reset"
             }
             
-            # Use our own get_basal_ganglia method
-            bg = cls.get_basal_ganglia()
-            if not bg:
-                return {"status": "error", "message": "BasalGanglia not available"}
-                
-            comm_task = bg.get_communication_task() if hasattr(bg, 'get_communication_task') else None
+            # Log the command
+            journaling_manager.recordInfo(f"📡 Sending system reset command: {json.dumps(reset_command)}")
             
-            if not comm_task:
-                return {"status": "error", "message": "Communication task not available"}
-                
-            # Send command directly
-            response = await comm_task.send_command(reset_command)
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_reset_system] 📦 Command: {json.dumps(reset_command, indent=2)}")
             
-            # Check for success in API response
+            # Send command
+            response = await cls._send_to_hardware(reset_command)
+            
+            # Log the response
+            journaling_manager.recordInfo(f"📡 Received reset response: {json.dumps(response)}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_reset_system] 📊 Response: {json.dumps(response, indent=2)}")
+            
+            # Process API response
             if isinstance(response, dict) and "error" in response:
                 error = response.get("error", {})
                 if isinstance(error, dict) and error.get("code") == 0:
-                    return {"status": "ok", "message": error.get("message", "Reset successful")}
-            
-            return {"status": "error", "message": "Reset failed", "response": response}
+                    # API success format
+                    success_message = error.get("message", "System reset initiated")
+                    
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_reset_system] ✅ Reset successful: {success_message}")
+                    
+                    # For reset, we can get a second completion message, but we won't wait for it
+                    return {
+                        "status": "ok",
+                        "message": success_message,
+                        "response": response
+                    }
+                else:
+                    # API error format
+                    error_message = error.get("message", "Unknown error")
+                    
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_reset_system] ❌ Reset error: {error_message}")
+                    
+                    return {
+                        "status": "error",
+                        "message": f"Reset failed: {error_message}",
+                        "response": response
+                    }
+            else:
+                # Invalid response format
+                if should_print_debug:
+                    print(f"[NeurocorticalBridge._direct_reset_system] ❌ Invalid reset response format")
+                
+                return {
+                    "status": "error",
+                    "message": "Invalid reset response format",
+                    "response": response
+                }
+                
         except Exception as e:
-            journaling_manager.recordError(f"[NeurocorticalBridge] Error resetting LLM: {e}")
-            return {"status": "error", "message": str(e)}
+            journaling_manager.recordError(f"Reset system error: {e}")
+            import traceback
+            journaling_manager.recordError(f"Reset error trace: {traceback.format_exc()}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_reset_system] ❌ Error: {e}")
+                
+            return {
+                "status": "error",
+                "message": f"Reset error: {str(e)}"
+            }
     
     @classmethod
     async def _direct_ping(cls) -> Dict[str, Any]:
@@ -944,65 +992,6 @@ class NeurocorticalBridge:
             import traceback
             journaling_manager.recordDebug(f"BasalGanglia creation stack trace: {traceback.format_exc()}")
             return None
-
-    @classmethod
-    async def _direct_reset_system(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle reset system command directly"""
-        try:
-            journaling_manager.recordInfo("[NeurocorticalBridge] Handling reset system command")
-            
-            # Use our own get_basal_ganglia method
-            bg = cls.get_basal_ganglia()
-            if not bg:
-                return {"status": "error", "message": "BasalGanglia not available"}
-            
-            # Try to send command directly first
-            if hasattr(bg, 'get_communication_task'):
-                comm_task = bg.get_communication_task()
-                if comm_task:
-                    # Create reset command
-                    reset_command = cls.create_sys_command("reset")
-                    
-                    # Send command through comm task
-                    journaling_manager.recordInfo("[NeurocorticalBridge] Sending reset command directly")
-                    response = await comm_task.send_command(reset_command)
-                    
-                    # Check for success
-                    if isinstance(response, dict) and "error" in response:
-                        error = response.get("error", {})
-                        if isinstance(error, dict) and error.get("code") == 0:
-                            return {"status": "ok", "message": error.get("message", "Reset successful")}
-                    
-                    return {"status": "error", "message": "Reset command failed", "response": response}
-            
-            # Fall back to task-based approach if direct communication failed
-            if hasattr(bg, 'get_task'):
-                system_task = bg.get_task("SystemCommandTask")
-                if not system_task:
-                    journaling_manager.recordInfo("[NeurocorticalBridge] Creating new SystemCommandTask for reset")
-                    from Mind.Subcortex.BasalGanglia.tasks.system_command_task import SystemCommandTask
-                    system_task = SystemCommandTask(command_type="reset")
-                    if hasattr(bg, 'register_task'):
-                        bg.register_task(system_task)
-                    else:
-                        return {"status": "error", "message": "Cannot register task"}
-                else:
-                    # Configure existing task
-                    system_task.command = "reset"
-                    system_task.data = None
-                
-                # Execute the task
-                journaling_manager.recordInfo("[NeurocorticalBridge] Executing reset command via SystemCommandTask")
-                system_task.active = True
-                result = await system_task.execute()
-                return result
-            
-            return {"status": "error", "message": "Cannot execute reset command"}
-        except Exception as e:
-            journaling_manager.recordError(f"[NeurocorticalBridge] Error in reset_system: {e}")
-            import traceback
-            journaling_manager.recordError(f"[NeurocorticalBridge] Stack trace: {traceback.format_exc()}")
-            return {"status": "error", "message": str(e)}
 
     @classmethod
     async def get_hardware_info(cls) -> Dict[str, Any]:
@@ -1424,4 +1413,97 @@ class NeurocorticalBridge:
                 "action": "inference",
                 "object": "llm.utf-8",
                 "data": prompt
+            }
+
+    @classmethod
+    async def _direct_reboot(cls) -> Dict[str, Any]:
+        """
+        Reboot the entire system directly using API format
+        
+        API format:
+        Request: {"request_id": "001", "work_id": "sys", "action": "reboot"}
+        Response: {"created": timestamp, "error": {"code": 0, "message": "rebooting ..."}, "request_id": "001", "work_id": "sys"}
+        
+        Returns:
+            Dict with status and response
+        """
+        from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingLevel
+        should_print_debug = journaling_manager.currentLevel == SystemJournelingLevel.DEBUG or journaling_manager.currentLevel == SystemJournelingLevel.SCOPE
+        
+        if should_print_debug:
+            print(f"\n[NeurocorticalBridge._direct_reboot] ⚡ Creating reboot command...")
+        
+        try:
+            # Create properly formatted reboot command per API spec
+            reboot_command = {
+                "request_id": "001",
+                "work_id": "sys",
+                "action": "reboot"
+            }
+            
+            # Log the command
+            journaling_manager.recordInfo(f"📡 Sending system reboot command: {json.dumps(reboot_command)}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_reboot] 📦 Command: {json.dumps(reboot_command, indent=2)}")
+            
+            # Send command
+            response = await cls._send_to_hardware(reboot_command)
+            
+            # Log the response
+            journaling_manager.recordInfo(f"📡 Received reboot response: {json.dumps(response)}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_reboot] 📊 Response: {json.dumps(response, indent=2)}")
+            
+            # Process API response
+            if isinstance(response, dict) and "error" in response:
+                error = response.get("error", {})
+                if isinstance(error, dict) and error.get("code") == 0:
+                    # API success format
+                    success_message = error.get("message", "System reboot initiated")
+                    
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_reboot] ✅ Reboot successful: {success_message}")
+                    
+                    # Note: After reboot, system will disconnect
+                    return {
+                        "status": "ok",
+                        "message": success_message,
+                        "response": response
+                    }
+                else:
+                    # API error format
+                    error_message = error.get("message", "Unknown error")
+                    
+                    if should_print_debug:
+                        print(f"[NeurocorticalBridge._direct_reboot] ❌ Reboot error: {error_message}")
+                    
+                    return {
+                        "status": "error",
+                        "message": f"Reboot failed: {error_message}",
+                        "response": response
+                    }
+            else:
+                # Invalid response format
+                if should_print_debug:
+                    print(f"[NeurocorticalBridge._direct_reboot] ❌ Invalid reboot response format")
+                
+                return {
+                    "status": "error",
+                    "message": "Invalid reboot response format",
+                    "response": response
+                }
+                
+        except Exception as e:
+            journaling_manager.recordError(f"Reboot system error: {e}")
+            import traceback
+            journaling_manager.recordError(f"Reboot error trace: {traceback.format_exc()}")
+            
+            if should_print_debug:
+                print(f"[NeurocorticalBridge._direct_reboot] ❌ Error: {e}")
+                
+            return {
+                "status": "error",
+                "message": f"Reboot error: {str(e)}"
             } 
