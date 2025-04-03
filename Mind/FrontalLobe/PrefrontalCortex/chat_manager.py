@@ -7,6 +7,10 @@ from typing import Dict, Any, Optional, List
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.config import CONFIG
+from Mind.CorpusCallosum.api_commands import (
+    LLMCommand, SystemCommand, parse_response
+)
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -16,49 +20,42 @@ class ChatManager:
     
     def __init__(self):
         """Initialize the chat manager"""
-        self.active_model = None
         self.conversation_history = []
+        self.active_model = None
+        self.system_message = CONFIG.persona  # Initialize with config persona
         self.active_task = None
         
-    async def initialize(self, model_name: Optional[str] = None):
-        """
-        Initialize the chat manager with selected model
+    async def initialize(self, model_name: Optional[str] = None, system_message: Optional[str] = None):
+        """Initialize chat with model and system message (persona)"""
+        system_message = system_message or CONFIG.persona
         
-        Args:
-            model_name: The model to use (or None to use default)
-        """
-        journaling_manager.recordInfo(f"[ChatManager] Initializing with model: {model_name}")
-        
-        # Get available models
-        models = await NeurocorticalBridge.execute("list_models")
-        
-        # If no model specified, use first English model or first available model
-        if not model_name:
-            if models:
-                for model in models:
-                    if isinstance(model, dict) and model.get("name"):
-                        # Check for language attribute if present
-                        if "language" in model and model["language"] == "en":
-                            model_name = model["name"]
-                            break
-                        
-                # If no English model found, use first available
-                if not model_name and models and isinstance(models[0], dict):
-                    model_name = models[0].get("name")
-        
-        # Set the selected model
         if model_name:
-            result = await NeurocorticalBridge.execute("set_model", {"model": model_name})
-            self.active_model = model_name if result and result.get("success") else None
+            setup_command = LLMCommand.create_setup_command(
+                model=model_name,
+                prompt=system_message,
+                response_format="llm.utf-8",
+                input="llm.utf-8",
+                enoutput=True,
+                enkws=False,
+                max_token_len=127
+            )
             
-            if self.active_model:
-                journaling_manager.recordInfo(f"[ChatManager] Using model: {self.active_model}")
+            result = await NeurocorticalBridge.execute(setup_command)
+            
+            if result["status"] == "ok":
+                self.active_model = model_name
+                self.system_message = system_message
+                journaling_manager.recordInfo(f"[ChatManager] Using model: {self.active_model} with persona")
             else:
                 journaling_manager.recordError(f"[ChatManager] Failed to set model: {model_name}")
-        else:
-            journaling_manager.recordWarning("[ChatManager] No model available")
-            
+                
         return self.active_model is not None
+        
+    async def set_system_message(self, system_message: str):
+        """Update system message/persona"""
+        self.system_message = system_message
+        if self.active_model:
+            await self.initialize(self.active_model, system_message)
         
     async def send_message(self, message: str, stream: bool = True):
         """

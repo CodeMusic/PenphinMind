@@ -65,7 +65,6 @@ async def display_main_menu() -> str:
 
 async def display_model_list() -> str:
     """Display list of available models and get user choice"""
-    clear_screen()
     print_header()
     
     # Refresh hardware info before displaying
@@ -82,7 +81,6 @@ async def display_model_list() -> str:
 
 async def reboot_system(mind_instance=None):
     """Reboot the M5Stack system"""
-    clear_screen()
     print_header()
     
     # Use the global mind instance if not provided
@@ -159,7 +157,6 @@ async def start_chat(mind_instance=None):
 
 async def manage_tasks():
     """Display and manage active tasks"""
-    clear_screen()
     print_header()
     
     # Display hardware info
@@ -242,3 +239,35 @@ async def manage_tasks():
     else:
         # Any other input returns to system menu
         return 
+
+async def run_menu_system(mind_instance=None):
+    """Run the interactive menu system"""
+    try:
+        # Use global mind instance if not provided
+        mind_instance = mind_instance or mind
+        
+        # Display the main menu and handle user choices
+        while True:
+            # Remove clear_screen() call here to preserve logs
+            
+            # Get main menu choice
+            choice = await display_main_menu()
+            
+            if choice == "1":  # Chat
+                await start_chat(mind_instance)
+            elif choice == "2":  # Information
+                await display_model_list()
+            elif choice == "3":  # System
+                await system_menu()
+            elif choice == "4":  # Exit
+                print("\nExiting PenphinMind menu system...")
+                break
+            else:
+                print("\nInvalid choice. Please try again.")
+                await asyncio.sleep(1)
+    except Exception as e:
+        journaling_manager.recordError(f"Error running menu system: {e}")
+        import traceback
+        journaling_manager.recordError(f"Stack trace: {traceback.format_exc()}")
+        print(f"\nError running menu system: {e}")
+        input("\nPress Enter to return to main menu...") 

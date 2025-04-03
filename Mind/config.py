@@ -23,10 +23,8 @@ class AudioOutputType(str, Enum):
     WAVESHARE = "waveshare"
     LOCAL_LLM = "local_llm"
 
-class MentalConfiguration:
-    """
-    Configuration settings for the PenphinMind system
-    """
+class Config:
+    """Configuration settings for PenphinMind"""
     def __init__(self):
         journaling_manager.recordScope("MentalConfiguration.__init__")
         
@@ -53,6 +51,9 @@ class MentalConfiguration:
         self._load_env_vars()
         
         journaling_manager.recordInfo("Mental configuration initialized")
+        
+        # Default persona/system message
+        self.persona = "You are a helpful assistant named Penphin."
 
     def _init_defaults(self):
         """Initialize default configuration values"""
@@ -260,5 +261,5 @@ class MentalConfiguration:
             
         journaling_manager.recordInfo("Environment variables loaded successfully")
 
-# Create global configuration instance
-CONFIG = MentalConfiguration() 
+# Global config instance
+CONFIG = Config() 

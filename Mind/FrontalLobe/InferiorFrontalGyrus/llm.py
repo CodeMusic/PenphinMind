@@ -21,12 +21,16 @@ import logging
 from typing import Dict, Any, Optional
 from ...config import CONFIG
 from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from ...CorpusCallosum.neural_commands import (
-    LLMCommand, TTSCommand, ASRCommand, VADCommand, WhisperCommand,
-    CommandType, BaseCommand, SystemCommand
-)
+from ...CorpusCallosum.api_commands import create_command, parse_response
 import time
 import traceback
+from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+from ...CorpusCallosum.api_commands import (
+    CommandType,
+    LLMCommand,
+    AudioCommand,
+    parse_response
+)
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -60,9 +64,10 @@ class LLM:
         try:
             # Initialize model with configuration
             self.current_state["model"] = {
-                "name": CONFIG.llm_model,
-                "temperature": CONFIG.llm_temperature,
-                "max_tokens": CONFIG.llm_max_tokens
+                "name": self._config["llm"]["default_model"],
+                "temperature": self._config["llm"]["temperature"],
+                "max_tokens": self._config["llm"]["max_tokens"],
+                "persona": self._config["llm"]["persona"]
             }
             journaling_manager.recordDebug(f"LLM model configured: {self.current_state['model']}")
             
@@ -125,153 +130,66 @@ class LLM:
             journaling_manager.recordError(f"Error processing input: {e}")
             raise
             
-    async def _generate_response(self, prompt, system_prompt=None, max_tokens=None, temperature=None) -> Dict[str, Any]:
-        """Generate a response from the LLM using the current configuration"""
+    async def _generate_response(self, prompt: str, system_prompt: str = None) -> Dict[str, Any]:
+        """Generate a response from the LLM"""
         try:
-            # Use provided parameters or fall back to current state
-            max_tokens = max_tokens if max_tokens is not None else self.current_state["model"]["max_tokens"]
-            temperature = temperature if temperature is not None else self.current_state["model"]["temperature"]
-            
-            # Create unique request ID for this generation
-            request_id = f"generate_{int(time.time())}"
-            
-            # Structure the command in M5Stack API format
-            command = {
-                "type": "LLM",
-                "command": "generate",
-                "data": {
-                    "prompt": prompt,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                    "request_id": request_id
-                }
-            }
-            
-            journaling_manager.recordInfo(f"Sending LLM inference command: {command}")
-            
-            # Send command through synaptic pathways
-            SynapticPathways = get_synaptic_pathways()
-            response = await SynapticPathways.send_command(command)
-            
-            journaling_manager.recordDebug(f"LLM response: {response}")
-            
-            # Check for errors
-            if not response or isinstance(response, dict) and response.get("error"):
-                error_code = response.get("error", {}).get("code", "unknown")
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                journaling_manager.recordError(f"LLM generation error: {error_code} - {error_message}")
-                return {
-                    "text": f"Error: {error_message}",
-                    "error": True,
-                    "request_id": request_id,
-                    "finished": True
-                }
-            
-            # Parse the response based on M5Stack API format
-            if isinstance(response, dict):
-                # Check if it's an error response
-                if "error" in response:
-                    error_code = response.get("error", {}).get("code", "unknown")
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    journaling_manager.recordError(f"LLM generation error: {error_code} - {error_message}")
-                    return {
-                        "text": f"Error: {error_message}",
-                        "error": True,
-                        "request_id": request_id,
-                        "finished": True
-                    }
-                
-                # Check if the response has data field
-                if "data" in response:
-                    data = response["data"]
-                    # Data could be a string or a dictionary
-                    if isinstance(data, str):
-                        return {
-                            "text": data,
-                            "request_id": request_id,
-                            "finished": True
-                        }
-                    elif isinstance(data, dict):
-                        return {
-                            "text": data.get("generated_text", ""),
-                            "request_id": request_id,
-                            "finished": data.get("finished", True)
-                        }
-            
-            # Fallback for other response formats
-            journaling_manager.recordWarning(f"Unknown response format: {response}")
-            return {
-                "text": str(response) if response else "",
-                "request_id": request_id,
-                "finished": True
-            }
-            
+            think_command = LLMCommand.create_think_command(
+                prompt=prompt,
+                system_message=system_prompt
+            )
+            return await NeurocorticalBridge.execute(think_command)
         except Exception as e:
-            journaling_manager.recordError(f"Error in LLM response generation: {e}")
-            journaling_manager.recordError(traceback.format_exc())
-            return {
-                "text": f"Error: {str(e)}",
-                "error": True,
-                "finished": True
-            }
+            journaling_manager.recordError(f"Error generating response: {e}")
+            return {"status": "error", "message": str(e)}
             
-    async def send_tts(self, text: str, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0) -> Dict[str, Any]:
+    async def send_tts(self, text: str, voice_id: str = "default", speed: float = 1.0, pitch: float = 1.0):
         """Send a TTS command"""
         try:
-            command = TTSCommand(
-                command_type=CommandType.TTS,
+            command = AudioCommand.create_tts_command(
                 text=text,
-                voice_id=voice_id,
+                voice=voice_id,
                 speed=speed,
                 pitch=pitch
             )
-            SynapticPathways = get_synaptic_pathways()
-            return await SynapticPathways.send_command(command.to_dict())
+            return await NeurocorticalBridge.execute(command)
         except Exception as e:
             journaling_manager.recordError(f"Error sending TTS command: {e}")
             raise
             
-    async def send_asr(self, audio_data: bytes, language: str = "en", model_type: str = "base") -> Dict[str, Any]:
+    async def send_asr(self, audio_data: bytes, language: str = "en"):
         """Send an ASR command"""
         try:
-            command = ASRCommand(
-                command_type=CommandType.ASR,
-                input_audio=audio_data,
-                language=language,
-                model_type=model_type
+            command = AudioCommand.create_asr_command(
+                audio_data=audio_data,
+                language=language
             )
-            SynapticPathways = get_synaptic_pathways()
-            return await SynapticPathways.send_command(command.to_dict())
+            return await NeurocorticalBridge.execute(command)
         except Exception as e:
             journaling_manager.recordError(f"Error sending ASR command: {e}")
             raise
             
-    async def send_vad(self, audio_chunk: bytes, threshold: float = 0.5, frame_duration: int = 30) -> Dict[str, Any]:
+    async def send_vad(self, audio_chunk: bytes, threshold: float = 0.5, frame_duration: int = 30):
         """Send a VAD command"""
         try:
-            command = VADCommand(
-                command_type=CommandType.VAD,
+            command = AudioCommand.create_vad_command(
                 audio_chunk=audio_chunk,
                 threshold=threshold,
                 frame_duration=frame_duration
             )
-            SynapticPathways = get_synaptic_pathways()
-            return await SynapticPathways.send_command(command.to_dict())
+            return await NeurocorticalBridge.execute(command)
         except Exception as e:
             journaling_manager.recordError(f"Error sending VAD command: {e}")
             raise
             
-    async def send_whisper(self, audio_data: bytes, language: str = "en", model_type: str = "base") -> Dict[str, Any]:
+    async def send_whisper(self, audio_data: bytes, language: str = "en", model_type: str = "base"):
         """Send a Whisper command"""
         try:
-            command = WhisperCommand(
-                command_type=CommandType.WHISPER,
+            command = AudioCommand.create_whisper_command(
                 audio_data=audio_data,
                 language=language,
                 model_type=model_type
             )
-            SynapticPathways = get_synaptic_pathways()
-            return await SynapticPathways.send_command(command.to_dict())
+            return await NeurocorticalBridge.execute(command)
         except Exception as e:
             journaling_manager.recordError(f"Error sending Whisper command: {e}")
             raise
@@ -395,3 +313,26 @@ class LLM:
                 "object": "llm",
                 "created": int(time.time())
             } 
+
+    async def generate_response(self, prompt: str, stream: bool = False):
+        try:
+            return await NeurocorticalBridge.execute("think", {
+                "prompt": prompt,
+                "stream": stream
+            }) 
+        except Exception as e:
+            journaling_manager.recordError(f"Error generating response: {e}")
+            return {"status": "error", "message": str(e)}
+
+    #TO DO: Add sentiment analysis
+    async def analyze_sentiment(self, text: str) -> Dict[str, Any]:
+        """Analyze sentiment of a text"""
+        try:
+            return await NeurocorticalBridge.execute("analyze_sentiment", {
+                "text": text
+            })
+        except Exception as e:
+            journaling_manager.recordError(f"Error analyzing sentiment: {e}")
+            return {"status": "error", "message": str(e)}
+
+

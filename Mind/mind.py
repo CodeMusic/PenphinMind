@@ -18,6 +18,9 @@ from .FrontalLobe.MotorCortex.integration_area import IntegrationArea as MotorIn
 from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from .config import CONFIG
 from .Subcortex.neurocortical_bridge import NeurocorticalBridge
+from ..config import get_mind_config
+from .ChatManager import ChatManager
+from .Subcortex.BasalGanglia.commands import LLMCommand, SystemCommand
 # Add other lobe imports as needed
 
 # Initialize journaling manager
@@ -26,12 +29,51 @@ journaling_manager = SystemJournelingManager()
 logger = logging.getLogger(__name__)
 
 class Mind:
-    """
-    The central cognitive system integrating all neural functions
+    """Main interface for interacting with PenphinMind"""
     
-    Acts as the public interface to the system's cognitive operations.
-    Lower-level components must be accessed only through this interface.
-    """
+    def __init__(self, mind_id: str = None):
+        # Load config for this mind
+        self._config = get_mind_config(mind_id)
+        self._initialized = False
+        self._name = self._config["name"]
+        # Use the mind-specific persona from llm config
+        self._persona = self._config["llm"]["persona"].format(name=self._name)
+        self._device_id = self._config["device_id"]
+        self._connection = self._config["connection"]
+        
+        # Initialize connection settings
+        self._connection_type = self._connection["type"]
+        self._ip = self._connection["ip"]
+        self._port = self._connection["port"]
+        
+        # LLM settings
+        self._llm_config = self._config["llm"]
+        self._default_model = self._llm_config["default_model"]
+        
+        self.chat_manager = None
+        journaling_manager.recordInfo(f"[Mind] Initialized with persona: {self._persona[:50]}...")
+        
+    @property
+    def name(self) -> str:
+        """Get the mind's name"""
+        return self._name
+        
+    @property
+    def identity(self) -> Dict[str, Any]:
+        """Get mind's identity information"""
+        return {
+            "name": self._name,
+            "persona": self._persona,
+            "device_id": self._device_id,
+            "connection": self._connection_type,
+            "initialized": self._initialized
+        }
+    
+    def format_identity(self) -> str:
+        """Format mind's identity for display"""
+        status = "🟢 Connected" if self._initialized else "🔴 Disconnected"
+        return f"🐧🐬 {self._name} [{self._device_id}] - {status}"
+
     def __init__(self):
         # Initialize instance variables
         self._occipital_lobe = {}
@@ -42,7 +84,6 @@ class Mind:
         self._initialized = False
         self._processing = False
         self._language_processor = None  # Language processor instance
-        self._connection_type = None
         self._system_journeling_manager = SystemJournelingManager()
         
         # Initialize all lobes
@@ -148,47 +189,29 @@ class Mind:
         except:
             return False
             
-    async def initialize(self) -> None:
-        """Initialize all brain regions"""
-        journaling_manager.recordScope("Mind.initialize")
-        if self._initialized:
-            journaling_manager.recordDebug("Mind already initialized")
-            return
-            
+    async def initialize(self, connection_type: str = None, model_name: str = None) -> bool:
+        """Initialize the Mind system"""
         try:
-            # Check if running on Raspberry Pi for logging
-            is_raspberry_pi = self._is_raspberry_pi()
-            journaling_manager.recordInfo(f"Running on {'Raspberry Pi' if is_raspberry_pi else 'non-Raspberry Pi'}")
-            
-            # Initialize synaptic pathways
-            await SynapticPathways.initialize()
-            
-            # Initialize all integration areas
-            for area in self.temporal_lobe.values():
-                await area.initialize()
-            for area in self.parietal_lobe.values():
-                await area.initialize()
-            for area in self.occipital_lobe.values():
-                await area.initialize()
-            for area in self.motor_cortex.values():
-                await area.initialize()
-            
-            # Initialize primary acoustic area if needed
-            if not self.primary_acoustic:
-                self.primary_acoustic = PrimaryAcousticArea()
-                await self.primary_acoustic.initialize()
-                
-            # Initialize language processor
-            self._language_processor = LanguageProcessor()
-            await self._language_processor.initialize()
-                
-            self._initialized = True
-            journaling_manager.recordInfo("Mind initialized successfully")
-            
+            # Initialize base connection
+            success = await NeurocorticalBridge.initialize_system(connection_type)
+            if not success:
+                return False
+
+            # Initialize chat manager with persona from config
+            self.chat_manager = ChatManager()
+            success = await self.chat_manager.initialize(
+                model_name=model_name,
+                system_message=self._persona
+            )
+
+            self._initialized = success
+            self._connection_type = connection_type if success else None
+            return success
+
         except Exception as e:
-            journaling_manager.recordError(f"Failed to initialize mind: {e}")
-            raise
-            
+            journaling_manager.recordError(f"[Mind] Initialization error: {e}")
+            return False
+
     async def cleanup(self) -> None:
         """Clean up all brain regions"""
         journaling_manager.recordScope("Mind.cleanup")
@@ -354,27 +377,56 @@ class Mind:
         return await NeurocorticalBridge.execute_operation(operation, data, use_task, stream)
     
     async def think(self, prompt: str, stream: bool = False):
-        """
-        Perform thinking operation with the LLM
-        
-        Args:
-            prompt: The input prompt
-            stream: Whether to stream the results
-            
-        Returns:
-            Thinking result from the LLM
-        """
+        """Perform thinking operation with the LLM"""
         journaling_manager.recordInfo(f"[Mind] Thinking: {prompt[:50]}...")
-        return await self.execute_operation("think", {"prompt": prompt}, stream=stream)
-    
+        
+        think_command = LLMCommand.create_think_command(
+            prompt=prompt,
+            stream=stream,
+            system_message=self._persona
+        )
+        return await NeurocorticalBridge.execute(think_command)
+
     async def reset_system(self):
         """Reset the LLM system"""
         journaling_manager.recordInfo("[Mind] Resetting system")
-        return await self.execute_operation("reset_llm")
+        
+        reset_command = SystemCommand.create_reset_command(
+            target="llm",
+            request_id=f"reset_{int(time.time())}"
+        )
+        return await NeurocorticalBridge.execute(reset_command)
     
-    async def get_hardware_info(self):
-        """Get hardware information"""
-        return await self.execute_operation("hardware_info")
+    async def get_hardware_info(self) -> Dict[str, Any]:
+        """Get formatted hardware information"""
+        try:
+            # Use NeurocorticalBridge for hardware info
+            result = await self.execute_operation("hardware_info")
+            if result.get("status") == "ok":
+                # Format the hardware info for display
+                hw = result.get("data", {})
+                formatted = self._format_hardware_info(hw)
+                return {"status": "ok", "hardware_info": formatted}
+            return {"status": "error", "message": result.get("message", "Failed to get hardware info")}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    
+    def _format_hardware_info(self, hw: Dict[str, Any]) -> str:
+        """Internal method to format hardware info"""
+        cpu = hw.get("cpu_loadavg", "N/A")
+        mem = hw.get("mem", "N/A")
+        temp_raw = hw.get("temperature", "N/A")
+        
+        # Format temperature
+        temp = f"{temp_raw/1000:.1f}" if isinstance(temp_raw, (int, float)) and temp_raw > 1000 else str(temp_raw)
+        
+        # Format network info
+        net_info = ""
+        if "eth_info" in hw and isinstance(hw["eth_info"], list) and len(hw["eth_info"]) > 0:
+            ip = hw["eth_info"][0].get("ip", "N/A")
+            net_info = f" | IP: {ip}"
+        
+        return f"🐧🐬 Hardware: CPU: {cpu}% | Memory: {mem}% | Temp: {temp}°C{net_info}"
     
     async def ping_system(self):
         """Ping the system to check connectivity"""
@@ -520,6 +572,38 @@ class Mind:
             import traceback
             journaling_manager.recordError(f"[Mind] Cleanup error trace: {traceback.format_exc()}")
             return False
+
+    async def check_connection(self) -> Dict[str, Any]:
+        """Check system connectivity"""
+        try:
+            # Use NeurocorticalBridge for all operations
+            result = await self.execute_operation("ping")
+            if result.get("status") == "ok":
+                return {"status": "ok"}
+            return {"status": "error", "message": result.get("message", "Connection check failed")}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @property
+    def connection_info(self) -> Dict[str, Any]:
+        """Get connection information"""
+        return {
+            "type": self._connection_type,
+            "ip": self._ip if self._ip != "auto" else "auto-discovery",
+            "port": self._port,
+            "initialized": self._initialized
+        }
+
+    async def set_persona(self, new_persona: str):
+        """Update the Mind's persona in config
+        
+        Args:
+            new_persona: New system message defining the AI's personality/role
+        """
+        self._persona = new_persona
+        if self.chat_manager:
+            await self.chat_manager.set_system_message(new_persona)
+        journaling_manager.recordInfo(f"[Mind] Updated persona in config: {new_persona[:50]}...")
 
 async def setup_connection(connection_type=None):
     """

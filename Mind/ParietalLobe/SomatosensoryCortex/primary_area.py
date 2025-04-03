@@ -19,7 +19,7 @@ import platform
 from pathlib import Path
 
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
-from ...CorpusCallosum.neural_commands import CommandType, SystemCommand
+from ...CorpusCallosum.api_commands import CommandType, SystemCommand
 from ...config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 

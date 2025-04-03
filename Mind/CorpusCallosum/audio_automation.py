@@ -7,8 +7,10 @@ from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass
 from pathlib import Path
 
-from .neural_commands import CommandType, BaseCommand, LLMCommand
+from .api_commands import CommandType, BaseCommand, LLMCommand
 from .synaptic_pathways import SynapticPathways
+from Mind.CorpusCallosum.api_commands import create_command, parse_response
+from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
 
 logger = logging.getLogger(__name__)
 
@@ -111,30 +113,22 @@ class AudioAutomation:
             audio_data = np.concatenate(self.audio_buffer)
             self.audio_buffer.clear()
             
-            # Convert to text using Whisper
-            command = BaseCommand(
-                command_type=CommandType.WHISPER,
-                data={"audio": audio_data.tolist()}
-            )
-            response = await SynapticPathways.transmit_json(command)
+            # Convert to text using ASR
+            asr_response = await NeurocorticalBridge.execute("asr_inference", {
+                "audio_data": audio_data.tolist()
+            })
             
-            if response.get("status") == "ok" and response.get("text"):
+            if asr_response.get("status") == "ok" and asr_response.get("data", {}).get("text"):
                 # Process with LLM
-                llm_command = LLMCommand(
-                    command_type=CommandType.LLM,
-                    prompt=response["text"],
-                    max_tokens=150,
-                    temperature=0.7
-                )
-                llm_response = await SynapticPathways.transmit_json(llm_command)
+                llm_response = await NeurocorticalBridge.execute("think", {
+                    "prompt": asr_response["data"]["text"]
+                }, stream=True)
                 
                 if llm_response.get("status") == "ok":
                     # Convert response to speech
-                    tts_command = BaseCommand(
-                        command_type=CommandType.TTS,
-                        data={"text": llm_response["response"]}
-                    )
-                    await SynapticPathways.transmit_json(tts_command)
+                    await NeurocorticalBridge.execute("tts_inference", {
+                        "text": llm_response["data"]["delta"]
+                    })
                     
         except Exception as e:
             logger.error(f"Error processing audio: {e}")
@@ -145,4 +139,29 @@ class AudioAutomation:
         """Stop audio detection"""
         self.state = AudioState.IDLE
         self.audio_buffer.clear()
-        self.silence_counter = 0 
+        self.silence_counter = 0
+
+    async def setup_audio(self) -> Dict[str, Any]:
+        """Initialize audio system"""
+        return await NeurocorticalBridge.execute("setup_audio", {
+            "capcard": 0,
+            "capdevice": 0,
+            "capVolume": 0.5,
+            "playcard": 0,
+            "playdevice": 1,
+            "playVolume": 0.5
+        })
+    
+    async def setup_asr(self) -> Dict[str, Any]:
+        """Initialize ASR system"""
+        command = create_command("asr", "setup", data={
+            "model": "sherpa-ncnn-streaming-zipformer-20M-2023-02-17",
+            "response_format": "asr.utf-8",
+            "input": "sys.pcm",
+            "enoutput": True,
+            "enkws": True,
+            "rule1": 2.4,
+            "rule2": 1.2,
+            "rule3": 30
+        })
+        return await SynapticPathways.send_command(command) 

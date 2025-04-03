@@ -5,6 +5,8 @@ import logging
 import asyncio
 import time
 from Mind.Subcortex.BasalGanglia.tasks.communication_task import CommunicationTask
+from Mind.Subcortex.BasalGanglia.commands.system_command import SystemCommand
+from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -31,31 +33,16 @@ class SystemCommandTask(NeuralTask):
         
     async def _execute_command(self):
         """Execute the system command asynchronously"""
-        journaling_manager.recordScope("[BasalGanglia] Executing system command", 
-                                    command_type=self.command, 
-                                    data=self.data)
         try:
-            # Import SynapticPathways at runtime when needed, not at module level
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-            
-            # Create appropriate command format
-            command = {
-                "request_id": f"{self.command}_{int(time.time())}",
-                "work_id": "sys",
-                "action": self.command,
-                "object": "system", 
-                "data": self.data
-            }
-            
-            # Use SynapticPathways to send the command
-            response = await SynapticPathways.transmit_json(command)
-            
-            journaling_manager.recordInfo(f"[BasalGanglia] System command completed: {self.command}")
-            return response
-            
+            command = SystemCommand.create_command(
+                action=self.command,
+                data=self.data,
+                request_id=f"sys_{int(time.time())}"
+            )
+            return await NeurocorticalBridge.execute(command)
         except Exception as e:
             journaling_manager.recordError(f"[BasalGanglia] System command failed: {e}")
-            return {"error": str(e)}
+            return {"status": "error", "message": str(e)}
         
     def run(self):
         """Run the system command task"""
@@ -147,30 +134,22 @@ class SystemCommandTask(NeuralTask):
     async def _reset_system(self):
         """Send reset command to reset the LLM system."""
         try:
-            # Use NeurocorticalBridge instead of direct access
-            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            reset_command = SystemCommand.create_reset_command(
+                target="llm",
+                request_id=f"reset_{int(time.time())}"
+            )
             
-            # Log command
-            journaling_manager.recordInfo("[SystemCommandTask] 🔄 Sending reset command via NeurocorticalBridge")
+            reset_result = await NeurocorticalBridge.execute(reset_command)
             
-            # Use the bridge for proper architectural layering
-            reset_result = await NeurocorticalBridge.execute_operation("reset_llm", use_task=False)
-            journaling_manager.recordInfo(f"[SystemCommandTask] 🔄 Reset response received through bridge")
-            
-            # Process result from bridge's standardized response format
-            if reset_result and reset_result.get("status") == "ok":
+            if reset_result["status"] == "ok":
                 return {
                     "success": True,
                     "message": "Reset completed successfully",
                     "timestamp": time.time()
                 }
             else:
-                error_msg = reset_result.get("message", "Unknown error") if reset_result else "No response from bridge"
-                journaling_manager.recordError(f"[SystemCommandTask] 🐧 Reset failed: {error_msg}")
-                return {"success": False, "error": error_msg}
-            
+                return {"success": False, "error": reset_result.get("message", "Unknown error")}
+                
         except Exception as e:
-            journaling_manager.recordError(f"[SystemCommandTask] ❌ Error in reset: {e}")
-            import traceback
-            journaling_manager.recordError(f"[SystemCommandTask] Stack trace: {traceback.format_exc()}")
+            journaling_manager.recordError(f"[SystemCommandTask] Reset error: {e}")
             return {"success": False, "error": str(e)}

@@ -21,7 +21,7 @@ import logging
 import traceback
 from typing import Dict, Any, Optional
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
-from ...CorpusCallosum.neural_commands import CommandType, SystemCommand
+from ...CorpusCallosum.api_commands import CommandType, SystemCommand
 from ...config import CONFIG
 from .planning_area import PlanningArea
 from .coordination_area import CoordinationArea

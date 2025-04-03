@@ -96,7 +96,7 @@ class CommunicationTask(NeuralTask):
     async def send_command(self, command):
         """Send command using the method that works for models."""
         if not self._transport or not hasattr(self._transport, 'transmit'):
-            journaling_manager.recordError("[CommunicationTask] ❌ Transport not initialized")
+            journaling_manager.recordError("[CommunicationTask] 🐧 Transport not initialized")
             return {"error": {"code": -1, "message": "Transport not initialized"}}
         
         try:

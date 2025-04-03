@@ -17,7 +17,11 @@ import numpy as np
 import subprocess
 from pathlib import Path
 from ....CorpusCallosum.synaptic_pathways import SynapticPathways
-from ....CorpusCallosum.neural_commands import CommandType, AudioCommand, VADCommand
+from ....CorpusCallosum.api_commands import (
+    CommandType,
+    AudioCommand,
+    BaseCommand
+)
 from ....config import CONFIG, AudioOutputType
 import platform
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
@@ -102,14 +106,12 @@ class PrimaryAcousticArea:
             
         try:
             self.vad_active = True
-            await SynapticPathways.transmit_json(
-                VADCommand(
-                    command_type=CommandType.VAD,
-                    audio_chunk=b'',  # Initial empty chunk
-                    threshold=0.5,
-                    frame_duration=30
-                )
+            command = AudioCommand.create_vad_command(
+                audio_chunk=b'',  # Initial empty chunk
+                threshold=0.5,
+                frame_duration=30
             )
+            await SynapticPathways.transmit_json(command)
             journaling_manager.recordInfo("VAD started")
         except Exception as e:
             journaling_manager.recordError(f"VAD start error: {e}")
@@ -191,34 +193,15 @@ class PrimaryAcousticArea:
             raise AcousticProcessingError(f"Failed to play audio: {e}")
             
     async def text_to_speech(self, text: str) -> bytes:
-        """
-        Convert text to speech using configured TTS implementation
-        
-        Args:
-            text: Text to convert to speech
-            
-        Returns:
-            bytes: Audio data
-        """
+        """Convert text to speech using configured TTS implementation"""
         try:
-            command_data = {
-                "command_type": CommandType.AUDIO,
-                "operation": "tts",
-                "text": text,
-                "sample_rate": CONFIG.audio_sample_rate,
-                "channels": CONFIG.audio_channels
-            }
-            
-            # Add ElevenLabs specific parameters if using fallback
-            if CONFIG.tts_implementation == "elevenlabs":
-                command_data.update({
-                    "model": CONFIG.elevenlabs_model,
-                    "voice_id": CONFIG.elevenlabs_voice_id
-                })
-                
-            response = await SynapticPathways.transmit_command(
-                AudioCommand(**command_data)
+            command = AudioCommand.create_tts_command(
+                text=text,
+                voice=CONFIG.elevenlabs_voice_id if CONFIG.tts_implementation == "elevenlabs" else "default",
+                speed=1.0,
+                pitch=1.0
             )
+            response = await SynapticPathways.transmit_command(command)
             return response.get("audio_data", b'')
         except Exception as e:
             journaling_manager.recordError(f"TTS error: {e}")

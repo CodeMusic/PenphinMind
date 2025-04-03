@@ -1,0 +1,608 @@
+"""
+M5Stack LLM Module API v1.0.0 Command Definitions
+Single source of truth for hardware API commands
+"""
+
+from typing import Dict, Any, Optional
+import time
+import json
+from enum import Enum, auto
+
+class CommandType(Enum):
+    """Command types for neural operations"""
+    SYSTEM = "system"
+    LLM = "llm"
+    AUDIO = "audio"  # Single audio type
+
+class BaseCommand:
+    """Base class for all commands"""
+    def __init__(self, request_id: str = None):
+        self.request_id = request_id or f"cmd_{int(time.time())}"
+        self.work_id = None
+        self.action = None
+        self.data = {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert command to dictionary format"""
+        return {
+            "request_id": self.request_id,
+            "work_id": self.work_id,
+            "action": self.action,
+            "data": self.data
+        }
+
+class LLMCommand(BaseCommand):
+    """LLM-specific commands"""
+    def __init__(self, request_id: str = None):
+        super().__init__(request_id)
+        self.work_id = "llm"
+
+    @classmethod
+    def create_setup_command(cls, 
+                           model: str,
+                           response_format: str = "llm.utf-8",
+                           input: str = "llm.utf-8",
+                           enoutput: bool = True,
+                           enkws: bool = False,
+                           max_token_len: int = 127,
+                           prompt: Optional[str] = None,
+                           **kwargs) -> 'LLMCommand':
+        cmd = cls()
+        cmd.action = "setup"
+        cmd.data = {
+            "model": model,
+            "response_format": response_format,
+            "input": input,
+            "enoutput": enoutput,
+            "enkws": enkws,
+            "max_token_len": max_token_len,
+            **({"prompt": prompt} if prompt else {}),
+            **kwargs
+        }
+        return cmd
+
+    @classmethod
+    def create_think_command(cls,
+                           prompt: str,
+                           stream: bool = False,
+                           **kwargs) -> 'LLMCommand':
+        cmd = cls()
+        cmd.action = "inference"
+        cmd.data = {
+            "delta": prompt,
+            "stream": stream,
+            **kwargs
+        }
+        return cmd
+
+class SystemCommand(BaseCommand):
+    """System-level commands"""
+    def __init__(self, request_id: str = None):
+        super().__init__(request_id)
+        self.work_id = "sys"
+
+    @classmethod
+    def create_reset_command(cls,
+                           target: str,
+                           request_id: Optional[str] = None) -> 'SystemCommand':
+        cmd = cls(request_id)
+        cmd.action = "reset"
+        cmd.data = {
+            "target": target
+        }
+        return cmd
+
+    @classmethod
+    def create_ping_command(cls) -> 'SystemCommand':
+        cmd = cls()
+        cmd.action = "ping"
+        return cmd
+
+class AudioCommand(BaseCommand):
+    """Base class for all audio-related commands"""
+    
+    def __init__(self, action: str, data: Dict[str, Any] = None, request_id: str = None):
+        super().__init__(
+            command_type=CommandType.AUDIO,
+            action=action,
+            data=data or {},
+            request_id=request_id or f"audio_{int(time.time())}"
+        )
+
+    @classmethod
+    def create_tts_command(cls, text: str, voice: str = "default", 
+                          speed: float = 1.0, pitch: float = 1.0) -> 'AudioCommand':
+        return cls(
+            action="tts",
+            data={
+                "text": text,
+                "voice": voice,
+                "speed": speed,
+                "pitch": pitch
+            }
+        )
+    
+    @classmethod
+    def create_asr_command(cls, audio_data: bytes, 
+                          language: str = "en") -> 'AudioCommand':
+        return cls(
+            action="asr",
+            data={
+                "audio_data": audio_data,
+                "language": language
+            }
+        )
+    
+    @classmethod
+    def create_vad_command(cls, audio_chunk: bytes = b'',
+                          threshold: float = 0.5,
+                          frame_duration: int = 30) -> 'AudioCommand':
+        return cls(
+            action="vad",
+            data={
+                "audio_chunk": audio_chunk,
+                "threshold": threshold,
+                "frame_duration": frame_duration
+            }
+        )
+    
+    @classmethod
+    def create_whisper_command(cls, audio_data: bytes,
+                             language: str = "en",
+                             model_type: str = "base") -> 'AudioCommand':
+        return cls(
+            action="whisper",
+            data={
+                "audio_data": audio_data,
+                "language": language,
+                "model_type": model_type
+            }
+        )
+
+class WhisperCommand(BaseCommand):
+    """Command for Whisper ASR operations"""
+    
+    def __init__(self, action: str, data: Dict[str, Any] = None, request_id: str = None):
+        super().__init__(
+            command_type=CommandType.ASR,  # Whisper is part of ASR system
+            action=action,
+            data=data or {},
+            request_id=request_id
+        )
+    
+    @classmethod
+    def create_transcribe_command(cls, 
+                                audio_data: bytes,
+                                language: str = "en",
+                                request_id: str = None) -> 'WhisperCommand':
+        """Create a transcription command
+        
+        Args:
+            audio_data: Raw audio bytes to transcribe
+            language: Language code (default: "en")
+            request_id: Optional request ID
+        """
+        return cls(
+            action="transcribe",
+            data={
+                "audio": audio_data,
+                "language": language
+            },
+            request_id=request_id or f"whisper_{int(time.time())}"
+        )
+
+def parse_response(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse and standardize command response"""
+    if not isinstance(response, dict):
+        return {"status": "error", "message": "Invalid response format"}
+
+    status = "ok" if response.get("success", False) else "error"
+    return {
+        "status": status,
+        "message": response.get("message", ""),
+        "data": response.get("data", {}),
+        "error": response.get("error", None)
+    }
+
+# Factory for creating commands
+class CommandFactory:
+    @staticmethod
+    def create_command(command_type: CommandType, **kwargs) -> BaseCommand:
+        command_map = {
+            CommandType.LLM: LLMCommand,
+            CommandType.SYSTEM: SystemCommand,
+            CommandType.AUDIO: AudioCommand
+        }
+        
+        command_class = command_map.get(command_type)
+        if not command_class:
+            raise ValueError(f"Unknown command type: {command_type}")
+            
+        return command_class(**kwargs)
+
+def generate_request_id(prefix: str = "") -> str:
+    """Generate unique request ID"""
+    return f"{prefix}_{int(time.time())}"
+
+# System Commands
+SYSTEM_COMMANDS = {
+    "lsmode": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "lsmode",
+        "object": "sys.lsmode",
+        "data": "None"
+    },
+    "hwinfo": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "hwinfo",
+        "object": "sys.hwinfo",
+        "data": "None"
+    },
+    "reset": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "reset",
+        "object": "None",
+        "data": "None"
+    },
+    "reboot": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "reboot",
+        "object": "None",
+        "data": "None"
+    },
+    "ping": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "ping",
+        "object": "None",
+        "data": "None"
+    }
+}
+
+# Audio Commands
+AUDIO_COMMANDS = {
+    "setup": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "setup",
+        "object": "audio.setup",
+        "data": {
+            "capcard": 0,
+            "capdevice": 0,
+            "capVolume": 0.5,
+            "playcard": 0,
+            "playdevice": 1,
+            "playVolume": 0.5
+        }
+    },
+    "pause": {
+        "request_id": "",
+        "work_id": "audio",
+        "action": "pause",
+        "object": "None",
+        "data": "None"
+    },
+    "work": {
+        "request_id": "",
+        "work_id": "audio",
+        "action": "work",
+        "object": "None",
+        "data": "None"
+    },
+    "exit": {
+        "request_id": "",
+        "work_id": "audio",
+        "action": "exit",
+        "object": "None",
+        "data": "None"
+    },
+    "taskinfo": {
+        "request_id": "",
+        "work_id": "audio",
+        "action": "taskinfo",
+        "object": "None",
+        "data": "None"
+    }
+}
+
+# KWS (Keyword Spotting) Commands
+KWS_COMMANDS = {
+    "setup": {
+        "request_id": "",
+        "work_id": "kws",
+        "action": "setup",
+        "object": "kws.setup",
+        "data": {
+            "model": "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01",
+            "response_format": "kws.bool",
+            "input": "sys.pcm",
+            "enoutput": True,
+            "kws": "HELLO"
+        }
+    },
+    "pause": {
+        "request_id": "",
+        "work_id": "kws",
+        "action": "pause",
+        "object": "None",
+        "data": "None"
+    },
+    "work": {
+        "request_id": "",
+        "work_id": "kws",
+        "action": "work",
+        "object": "None",
+        "data": "None"
+    },
+    "exit": {
+        "request_id": "",
+        "work_id": "kws",
+        "action": "exit",
+        "object": "None",
+        "data": "None"
+    },
+    "taskinfo": {
+        "request_id": "",
+        "work_id": "kws",
+        "action": "taskinfo",
+        "object": "None",
+        "data": "None"
+    }
+}
+
+# ASR (Automatic Speech Recognition) Commands
+ASR_COMMANDS = {
+    "setup": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "setup",
+        "object": "asr.setup",
+        "data": {
+            "model": "whisper.base",
+            "response_format": "asr.utf-8",
+            "input": "asr.base64.wav",
+            "enoutput": True
+        }
+    },
+    "inference": {
+        "request_id": "",
+        "work_id": "asr",
+        "action": "inference",
+        "object": "None",
+        "data": {
+            "audio": None
+        }
+    },
+    "pause": {
+        "request_id": "",
+        "work_id": "asr",
+        "action": "pause",
+        "object": "None",
+        "data": "None"
+    },
+    "work": {
+        "request_id": "",
+        "work_id": "asr",
+        "action": "work",
+        "object": "None",
+        "data": "None"
+    },
+    "exit": {
+        "request_id": "",
+        "work_id": "asr",
+        "action": "exit",
+        "object": "None",
+        "data": "None"
+    },
+    "taskinfo": {
+        "request_id": "",
+        "work_id": "asr",
+        "action": "taskinfo",
+        "object": "None",
+        "data": "None"
+    }
+}
+
+# LLM Commands
+LLM_COMMANDS = {
+    "setup": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "setup",
+        "object": "llm.setup",
+        "data": {
+            "model": None,
+            "response_format": "llm.utf-8",
+            "input": "llm.utf-8",
+            "enoutput": True,
+            "enkws": False,
+            "max_token_len": 127,
+            "prompt": None
+        }
+    },
+    "inference": {
+        "request_id": "",
+        "work_id": "llm",
+        "action": "inference",
+        "object": "None",
+        "data": {
+            "delta": None,
+            "index": 0,
+            "finish": True
+        }
+    },
+    "pause": {
+        "request_id": "",
+        "work_id": "llm",
+        "action": "pause",
+        "object": "None",
+        "data": "None"
+    },
+    "work": {
+        "request_id": "",
+        "work_id": "llm",
+        "action": "work",
+        "object": "None",
+        "data": "None"
+    },
+    "exit": {
+        "request_id": "",
+        "work_id": "llm",
+        "action": "exit",
+        "object": "None",
+        "data": "None"
+    },
+    "taskinfo": {
+        "request_id": "",
+        "work_id": "llm",
+        "action": "taskinfo",
+        "object": "None",
+        "data": "None"
+    }
+}
+
+# TTS Commands
+TTS_COMMANDS = {
+    "setup": {
+        "request_id": "",
+        "work_id": "sys",
+        "action": "setup",
+        "object": "tts.setup",
+        "data": {
+            "model": "single_speaker_english_fast",
+            "response_format": "tts.base64.wav",
+            "input": "tts.utf-8.stream",
+            "enoutput": True,
+            "enkws": True
+        }
+    },
+    "inference": {
+        "request_id": "",
+        "work_id": "tts",
+        "action": "inference",
+        "object": "None",
+        "data": {
+            "text": None
+        }
+    },
+    "pause": {
+        "request_id": "",
+        "work_id": "tts",
+        "action": "pause",
+        "object": "None",
+        "data": "None"
+    },
+    "work": {
+        "request_id": "",
+        "work_id": "tts",
+        "action": "work",
+        "object": "None",
+        "data": "None"
+    },
+    "exit": {
+        "request_id": "",
+        "work_id": "tts",
+        "action": "exit",
+        "object": "None",
+        "data": "None"
+    },
+    "taskinfo": {
+        "request_id": "",
+        "work_id": "tts",
+        "action": "taskinfo",
+        "object": "None",
+        "data": "None"
+    }
+}
+
+# Error codes from API specification
+ERROR_CODES = {
+    0: "Operation Successful!",
+    -1: "Communication channel receive state machine reset warning!",
+    -2: "JSON parsing error",
+    -3: "sys action match error",
+    -4: "Inference data push error",
+    -5: "Model loading failed",
+    -6: "Unit does not exist",
+    -7: "Unknown operation",
+    -8: "Unit resource allocation failed",
+    -9: "Unit call failed",
+    -10: "Model initialization failed",
+    -11: "Model run error",
+    -12: "Module not initialized",
+    -13: "Module is already working",
+    -14: "Module is not working",
+    -19: "Unit resource release failed"
+}
+
+def create_command(unit_type: str, command_name: str, **kwargs) -> Dict[str, Any]:
+    """
+    @deprecated Use CommandFactory or specific Command classes instead
+    """
+    import warnings
+    warnings.warn(
+        "create_command is deprecated. Use CommandFactory or specific Command classes instead",
+        DeprecationWarning
+    )
+    command_map = {
+        "sys": SYSTEM_COMMANDS,
+        "audio": AUDIO_COMMANDS,
+        "kws": KWS_COMMANDS,
+        "asr": ASR_COMMANDS,
+        "llm": LLM_COMMANDS,
+        "tts": TTS_COMMANDS
+    }
+    
+    if unit_type not in command_map:
+        raise ValueError(f"Unknown unit type: {unit_type}")
+        
+    command_template = command_map[unit_type].get(command_name)
+    if not command_template:
+        raise ValueError(f"Unknown command: {command_name} for unit: {unit_type}")
+        
+    command = command_template.copy()
+    command["request_id"] = generate_request_id(f"{unit_type}_{command_name}")
+    
+    # Update command data if provided
+    if "data" in kwargs and isinstance(kwargs["data"], dict):
+        if "data" in command:
+            command["data"].update(kwargs["data"])
+        else:
+            command["data"] = kwargs["data"]
+            
+    return command
+
+def parse_response(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse API response into standardized format"""
+    if not response:
+        return {"status": "error", "message": "Empty response"}
+        
+    if "error" in response:
+        error_code = response["error"].get("code", -1)
+        error_msg = ERROR_CODES.get(error_code, "Unknown error")
+        return {
+            "status": "error",
+            "code": error_code,
+            "message": error_msg,
+            "data": response.get("data")
+        }
+        
+    return {
+        "status": "ok",
+        "data": response.get("data", {}),
+        "message": response.get("message", "Success")
+    }
+
+__all__ = [
+    'BaseCommand',
+    'CommandType',
+    'LLMCommand',
+    'SystemCommand',
+    'AudioCommand',
+    'create_command',
+    'parse_response'
+] 

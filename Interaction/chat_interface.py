@@ -14,120 +14,85 @@ from typing import Optional, Any
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.config import CONFIG
 from Interaction.chat_manager import ChatManager
+from Mind.mind import Mind
 
 # Initialize journaling
 journaling = SystemJournelingManager(CONFIG.log_level)
 
-async def interactive_chat(mind=None):
-    """
-    Interactive chat interface for PenphinMind
-    
-    This function provides a text-based interface for chatting with the LLM.
-    It uses the ChatManager to handle the communication with Mind.
+async def interactive_chat(primary_mind: Mind, secondary_mind: Mind = None):
+    """Interactive chat with one or two minds
     
     Args:
-        mind: The Mind instance to use for communication
+        primary_mind: Primary mind instance for chat
+        secondary_mind: Optional second mind for mind-to-mind chat
     """
-    if not mind:
-        journaling.recordError("[Chat] No Mind instance provided")
-        print("Error: Mind not initialized")
+    is_dual_mode = secondary_mind is not None
+    
+    # Display mind identities
+    print("\n" + primary_mind.format_identity())
+    if is_dual_mode:
+        print(secondary_mind.format_identity())
+        print("\n🔄 Mind-to-Mind Chat Mode")
+    else:
+        print("\n👤 User Chat Mode")
+    
+    # Check connections
+    print("\nEstablishing connections...")
+    p_status = await primary_mind.check_connection()
+    if p_status.get("status") != "ok":
+        print(f"Error connecting to {primary_mind.name}: {p_status.get('message')}")
         return
         
-    journaling.recordInfo("[Chat] Starting interactive chat session")
+    if is_dual_mode:
+        s_status = await secondary_mind.check_connection()
+        if s_status.get("status") != "ok":
+            print(f"Error connecting to {secondary_mind.name}: {s_status.get('message')}")
+            return
     
-    # Initialize the chat manager with the Mind instance
-    chat_manager = ChatManager(mind)
+    # Display hardware info
+    hw_info = await primary_mind.get_hardware_info()
+    if hw_info.get("status") == "ok":
+        print(hw_info.get("hardware_info"))
     
-    # Print welcome messages
-    print_chat_header()
-    print("Type your message and press Enter. Type 'exit' to return to the main menu.\n")
+    if is_dual_mode:
+        hw_info = await secondary_mind.get_hardware_info()
+        if hw_info.get("status") == "ok":
+            print(hw_info.get("hardware_info"))
     
-    # Initialize chat with default or auto-selected model
-    print("Initializing chat system...")
-    init_success = await chat_manager.initialize()
+    print("\n💭 Chat session started\n")
     
-    if not init_success:
-        print("Failed to initialize chat. Please check your connection and try again.")
-        input("Press Enter to return to the main menu...")
-        return
-    
-    # Show which model is active
-    model_info = chat_manager.get_summary()
-    print(f"Using model: {model_info['model']}\n")
-    
-    # Main chat loop
     while True:
-        # Get user input
-        user_input = input("🧠 You: ").strip()
-
-        # Handle exit
-        if user_input.lower() in ("exit", "quit", "menu"):
-            journaling.recordInfo("[Chat] Ending session")
-            print("Returning to main menu...")
-            break
-
-        # Skip empty input
-        if not user_input:
-            continue
-
-        # Handle reset command
-        if user_input.lower() == "reset":
-            print("\nResetting LLM...")
-            reset_result = await chat_manager.reset_chat()
-            if reset_result.get("status") == "ok":
-                print("LLM has been reset.\n")
-            else:
-                print(f"Reset failed: {reset_result.get('message', 'Unknown error')}\n")
-            continue
-
-        # Process thinking with streaming
-        print("\n🐧🐬 PenphinMind: ", end="", flush=True)
-        
-        try:
-            # Use chat_manager to send message with streaming
-            response = await chat_manager.send_message(user_input, stream=True)
-            
-            if hasattr(response, "active"):  # It's a task
-                # Wait for the task to complete, showing streaming results
-                last_result = ""
-                while response.active:
-                    if hasattr(response, 'result') and response.result and response.result != last_result:
-                        # Only print the new part of the response
-                        new_part = response.result[len(last_result):]
-                        print(new_part, end="", flush=True)
-                        last_result = response.result
-                    await asyncio.sleep(0.1)
+        if is_dual_mode:
+            # Mind to mind chat
+            response = await primary_mind.process_thought("What would you like to discuss?")
+            if response.get("status") != "ok":
+                print(f"\nError: {response.get('message')}")
+                continue
                 
-                # Print any final result not yet displayed
-                if hasattr(response, 'result') and response.result and response.result != last_result:
-                    new_part = response.result[len(last_result):]
-                    print(new_part, end="", flush=True)
-                    
-                # Make sure task properly stops
-                if response.active and hasattr(response, 'stop') and callable(response.stop):
-                    response.stop()
-            elif isinstance(response, dict) and response.get("status") == "error":
-                # Handle error response
-                print(f"Error: {response.get('message', 'Unknown error')}")
-                
-                # If there's a model error, try an alternative one
-                if "model" in str(response.get("message", "")).lower():
-                    print("\nTrying an alternative model...")
-                    if await chat_manager.try_alternative_model():
-                        print("Switched to an alternative model. Please try again.")
-                    else:
-                        print("No alternative models available.")
-            else:
-                # Handle direct response
-                print(response)
-                    
-        except Exception as e:
-            journaling.recordError(f"Error in chat: {e}")
-            import traceback
-            journaling.recordError(f"Stack trace: {traceback.format_exc()}")
-            print(f"Error processing your request: {e}")
+            print(f"\n{primary_mind.name}: {response.get('response')}")
             
-        print()  # Add newline after response
+            # Get second mind's response
+            response = await secondary_mind.process_thought(response.get('response'))
+            if response.get("status") == "ok":
+                print(f"\n{secondary_mind.name}: {response.get('response')}")
+            
+        else:
+            # Normal user chat
+            user_input = input("👤 You: ").strip()
+            
+            if user_input.lower() in ("exit", "quit", "menu"):
+                break
+                
+            if not user_input:
+                continue
+                
+            print(f"\n{primary_mind.name}: ", end="", flush=True)
+            response = await primary_mind.process_thought(user_input)
+            
+            if response.get("status") == "ok":
+                print(response.get("response"))
+            else:
+                print(f"Error: {response.get('message')}")
 
 def print_chat_header():
     """Print the chat interface header with penguin and dolphin emojis"""

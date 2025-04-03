@@ -5,6 +5,15 @@ import asyncio
 import time
 import logging
 import json
+from Mind.CorpusCallosum.api_commands import (
+    BaseCommand, 
+    CommandType,
+    LLMCommand, 
+    SystemCommand, 
+    parse_response
+)
+from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+from Mind.config import CONFIG
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -12,19 +21,23 @@ journaling_manager = SystemJournelingManager()
 class ThinkTask(NeuralTask):
     """Task to perform deep thought with LLM."""
     
-    def __init__(self, prompt, priority=5, stream=False):
+    def __init__(self, prompt: str, system_message: str = None, model_name: str = None, stream: bool = False):
         """Initialize the thinking task with a prompt.
         
         Args:
             prompt: The prompt to send to the model
-            priority: Task priority (lower is higher)
+            system_message: The system message to send to the model
+            model_name: The name of the model to use
             stream: Whether to stream the response
         """
-        super().__init__("ThinkTask", priority)
+        super().__init__("ThinkTask")
         self.prompt = prompt
+        # Use provided system_message or fall back to CONFIG.persona
+        self.system_message = system_message or CONFIG.persona
+        self.model_name = model_name
+        self.stream = stream
         self.result = None
         self.active = True
-        self.stream = stream
         self.creation_time = time.time()  # Add creation timestamp
         
         # Use a valid task type that exists in your enum
@@ -35,163 +48,83 @@ class ThinkTask(NeuralTask):
         journaling_manager.recordDebug(f"Available TaskType values: {[t.name for t in TaskType]}")
         
     async def execute(self):
-        """Execute the thinking task asynchronously."""
-        journaling_manager.recordInfo(f"[BasalGanglia] Executing thinking task: {self.prompt[:50]}...")
-        
+        """Execute the thinking task"""
         try:
-            # Only import SynapticPathways here when needed
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-            
-            # Create unique work_id for this task
-            work_id = f"think_{int(time.time())}"
-            
-            # FIX: Use exactly the correct API format for inference
-            inference_command = {
-                "request_id": f"inference_{int(time.time())}",
-                "work_id": work_id,
-                "action": "inference",
-                "object": "llm.inference",  # Added object field
-                "data": {
-                    "delta": self.prompt  # Keep it simple - just the prompt
-                }
-            }
-            
-            # Send command and get response
             if self.stream:
-                journaling_manager.recordInfo("[ThinkTask] Using streaming mode")
-                response = await self._stream_response(inference_command)
+                return await self._stream_response()
             else:
-                journaling_manager.recordInfo("[ThinkTask] Using non-streaming mode")
-                response = await SynapticPathways.transmit_json(inference_command)
+                think_command = LLMCommand.create_think_command(
+                    prompt=self.prompt,
+                    stream=False,
+                    system_message=self.system_message
+                )
+                return await NeurocorticalBridge.execute(think_command)
                 
-                # Extract the response
-                if "data" in response:
-                    data = response["data"]
-                    if isinstance(data, dict) and "delta" in data:
-                        self.result = data.get("delta", "")
-                    elif isinstance(data, str):
-                        self.result = data
-                    else:
-                        self.result = str(data)
-                else:
-                    error_code = response.get("error", {}).get("code", -1)
-                    error_msg = response.get("error", {}).get("message", "Unknown error")
-                    self.result = f"Error {error_code}: {error_msg}"
-            
-            # Make sure to clean up the LLM task on the device
-            try:
-                exit_command = {
-                    "request_id": f"exit_{int(time.time())}",
-                    "work_id": work_id,
-                    "action": "exit",
-                    "object": "llm"
-                }
-                await SynapticPathways.transmit_json(exit_command)
-            except Exception as e:
-                journaling_manager.recordError(f"[ThinkTask] Error cleaning up LLM task: {e}")
-            
-            # Task is complete
-            self.stop()  # Use stop() not just setting active=False
-            journaling_manager.recordInfo(f"[BasalGanglia] Thinking task completed and stopped")
-            
-            return self.result
-            
         except Exception as e:
-            journaling_manager.recordError(f"[BasalGanglia] Error in thinking task: {e}")
-            import traceback
-            journaling_manager.recordError(f"[BasalGanglia] Stack trace: {traceback.format_exc()}")
-            self.result = f"Error: {str(e)}"
-            self.stop()  # Make sure to stop on error too
-            return self.result
-    
-    async def _stream_response(self, command):
-        """Stream response from LLM and update result as it arrives."""
-        # Import here to avoid circular dependency
-        from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-        
+            journaling_manager.recordError(f"[ThinkTask] Execution error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def _stream_response(self):
+        """Stream response from LLM"""
         try:
-            # Initialize the LLM with better setup
-            setup_command = {
-                "request_id": f"setup_{int(time.time())}",
-                "work_id": command["work_id"],
-                "action": "setup",
-                "object": "llm.setup",
-                "data": {
-                    "model": SynapticPathways.default_llm_model,
-                    "response_format": "llm.utf-8.stream", 
-                    "input": "llm.utf-8.stream", 
-                    "enoutput": True,
-                    "enkws": True,
-                    "max_token_len": 127,
-                    "unit": "llm"
-                }
-            }
+            setup_command = LLMCommand.create_setup_command(
+                model=self.model_name,
+                response_format="llm.utf-8.stream",
+                input="llm.utf-8.stream",
+                enoutput=True,
+                enkws=True,
+                max_token_len=127,
+                prompt=self.system_message
+            )
             
-            # Log the exact command we're sending
-            journaling_manager.recordInfo(f"[ThinkTask] Sending setup command: {setup_command}")
-            
-            # Send setup command and check for success
-            setup_response = await SynapticPathways.transmit_json(setup_command)
-            
-            if setup_response and setup_response.get("error", {}).get("code", 0) != 0:
-                error_msg = setup_response.get("error", {}).get("message", "Unknown error")
-                journaling_manager.recordError(f"[ThinkTask] Setup error: {error_msg}")
-                self.result = f"Error during setup: {error_msg}"
+            setup_response = await NeurocorticalBridge.execute(setup_command)
+            if setup_response["status"] != "ok":
                 return setup_response
             
-            # Fixed: Use exact inference format that we know works
-            inference_command = {
-                "request_id": f"inference_{int(time.time())}",
-                "work_id": command["work_id"],
-                "action": "inference",
-                "data": {
-                    "delta": self.prompt,
-                    "index": 0,  
-                    "finish": True
-                }
-            }
+            think_command = LLMCommand.create_think_command(
+                prompt=self.prompt,
+                stream=True
+            )
             
-            # Send inference command
-            journaling_manager.recordInfo(f"[ThinkTask] Sending inference command")
-            response = await SynapticPathways.transmit_json(inference_command)
-            
-            if not response or "data" not in response:
-                error_code = response.get("error", {}).get("code", -1)
-                error_msg = response.get("error", {}).get("message", "Unknown error")
-                self.result = f"Error {error_code}: {error_msg}"
-                return response
-            
-            # Initialize streaming result
-                self.result = ""
-            
-            # Extract initial response
-            if isinstance(response["data"], dict) and "delta" in response["data"]:
-                delta = response["data"]["delta"]
-                self.result += delta
-            elif isinstance(response["data"], str):
-                # Handle direct string response
-                self.result = response["data"]
-            
-            # Clean up LLM resources
-            exit_command = {
-                "request_id": f"exit_{int(time.time())}",
-                "work_id": command["work_id"],
-                "action": "exit"
-            }
-            await SynapticPathways.transmit_json(exit_command)
-            
-            return response
+            return await NeurocorticalBridge.execute(think_command)
             
         except Exception as e:
             journaling_manager.recordError(f"[ThinkTask] Error in streaming: {e}")
-            self.result = f"Error: {str(e)}"
-            return {"error": {"code": -1, "message": str(e)}}
+            return {"status": "error", "message": str(e)}
     
     def run(self):
-        """Implementation of abstract method from Task base class.
+        """Run the thinking task in the main thread.
         
-        Note: This runs in the main thread, so it's not suitable for long-running operations.
-        Use execute() for async operations.
+        Note: This method runs in the main thread and should only handle
+        lightweight operations. Use execute() for actual LLM operations.
         """
-        journaling_manager.recordInfo(f"[BasalGanglia] ThinkTask.run() called")
-        return {"status": "running", "message": "Use execute() for async operations"}
+        try:
+            if not self.active:
+                return
+            
+            self.status = "running"
+            journaling_manager.recordInfo(f"[ThinkTask] Running task (stream={self.stream})")
+            
+            # Check if we have required parameters
+            if not self.prompt:
+                self.status = "error"
+                journaling_manager.recordError("[ThinkTask] No prompt provided")
+                return
+            
+            # Update task state
+            self.last_run = time.time()
+            
+            # For streaming, we need to ensure setup is complete
+            if self.stream and not self.model_name:
+                journaling_manager.recordWarning("[ThinkTask] Stream requested but no model specified")
+                self.model_name = CONFIG.minds[self.mind_id]["llm"]["default_model"]
+            
+            # Schedule the execute coroutine to run in the event loop
+            asyncio.create_task(self.execute())
+            
+            journaling_manager.recordDebug(f"[ThinkTask] Task scheduled for execution with prompt: {self.prompt[:50]}...")
+            
+        except Exception as e:
+            self.status = "error"
+            journaling_manager.recordError(f"[ThinkTask] Error in run: {e}")
+            self.active = False

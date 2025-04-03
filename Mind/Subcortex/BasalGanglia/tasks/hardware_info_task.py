@@ -7,6 +7,7 @@ import asyncio
 from typing import Dict, Any
 import psutil
 import json
+from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
@@ -82,24 +83,8 @@ class HardwareInfoTask(NeuralTask):
     async def _refresh_hardware_info(self):
         """Refresh hardware information from API."""
         try:
-            # Get communication task
-            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-            bg = SynapticPathways.get_basal_ganglia()
-            comm_task = bg.get_communication_task()
-            
-            if not comm_task:
-                raise Exception("Communication task not found")
-            
-            # Create request with exact API format
-            hwinfo_command = {
-                "request_id": "001",
-                "work_id": "sys",
-                "action": "hwinfo"
-            }
-            
-            # Send command
-            journaling_manager.recordInfo("[HardwareInfoTask] 🐬 Requesting hardware info")
-            response = await comm_task.send_command(hwinfo_command)
+            # CHANGE: Use NeurocorticalBridge instead of direct command
+            response = await NeurocorticalBridge.execute("hardware_info")
             
             # Fix: Handle the case where response might be a string
             if isinstance(response, str):
@@ -130,6 +115,7 @@ class HardwareInfoTask(NeuralTask):
                 }
                 
                 # Update shared cache in SynapticPathways
+                from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
                 SynapticPathways.current_hw_info = self.hardware_info
                 
                 journaling_manager.recordInfo(f"[HardwareInfoTask] 🐧 Hardware info refreshed: {self.hardware_info}")
@@ -139,9 +125,7 @@ class HardwareInfoTask(NeuralTask):
                 return False
                 
         except Exception as e:
-            journaling_manager.recordError(f"[HardwareInfoTask] 🐧 Error refreshing hardware info: {e}")
-            import traceback
-            journaling_manager.recordError(f"[HardwareInfoTask] Stack trace: {traceback.format_exc()}")
+            journaling_manager.recordError(f"[HardwareInfoTask] Error: {e}")
             return False
 
     def run(self):

@@ -37,6 +37,8 @@ class ChatManager:
         self.last_response = ""
         self.chat_initialized = False
         self.model_setup_complete = False
+        # Use the mind's persona if available
+        self.system_message = mind._persona if mind else None
         
     async def initialize(self, model_name: Optional[str] = None):
         """
@@ -68,18 +70,19 @@ class ChatManager:
             # If we found a model, set it up
             if model_name:
                 journaling_manager.recordInfo(f"[ChatManager] Using model: {model_name}")
-                self.mind.set_default_model(model_name)  # Cache locally
+                self.mind.set_default_model(model_name)
                 
-                # Activate the model
-                setup_result = await self.mind.set_model(model_name)
+                # Activate the model with mind's persona
+                setup_result = await self.mind.set_model(
+                    model_name, 
+                    system_message=self.mind._persona
+                )
                 if setup_result.get("status") == "ok":
                     self.active_model = model_name
                     self.model_setup_complete = True
-                    journaling_manager.recordInfo(f"[ChatManager] Model {model_name} initialized successfully")
+                    journaling_manager.recordInfo(f"[ChatManager] Model {model_name} initialized with persona")
                 else:
                     journaling_manager.recordError(f"[ChatManager] Failed to initialize model: {model_name}")
-                    error_msg = setup_result.get("message", "Unknown error")
-                    journaling_manager.recordError(f"[ChatManager] Error: {error_msg}")
                     return False
             else:
                 journaling_manager.recordError("[ChatManager] No suitable model found")

@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.CorpusCallosum.api_commands import BaseCommand, AudioCommand, CommandType
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class IntegrationArea:
             journaling_manager.recordError(f"Failed to initialize auditory integration area: {e}")
             raise
             
-    async def process_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_command(self, command: BaseCommand) -> Dict[str, Any]:
         """Process an auditory command"""
         if not self._initialized:
             raise RuntimeError("Integration area not initialized")
@@ -50,16 +51,20 @@ class IntegrationArea:
         try:
             self._processing = True
             
-            # Process command based on type
-            command_type = command.get("type")
-            if command_type == "TTS":
+            if not isinstance(command, AudioCommand):
+                raise ValueError(f"Expected AudioCommand, got {type(command)}")
+            
+            # Process command based on action
+            if command.action == "tts":
                 return await self._process_tts(command)
-            elif command_type == "ASR":
+            elif command.action == "asr":
                 return await self._process_asr(command)
-            elif command_type == "VAD":
+            elif command.action == "vad":
                 return await self._process_vad(command)
+            elif command.action == "whisper":
+                return await self._process_whisper(command)
             else:
-                raise ValueError(f"Unknown command type: {command_type}")
+                raise ValueError(f"Unknown audio action: {command.action}")
                 
         except Exception as e:
             journaling_manager.recordError(f"Error processing command: {e}")
@@ -68,66 +73,61 @@ class IntegrationArea:
         finally:
             self._processing = False
             
-    async def _process_tts(self, command: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_tts(self, command: AudioCommand) -> Dict[str, Any]:
         """Process text-to-speech command"""
         try:
-            text = command.get("text", "")
-            voice_id = command.get("voice_id", "default")
-            speed = command.get("speed", 1.0)
-            pitch = command.get("pitch", 1.0)
-            
-            # Process TTS command
             response = await SynapticPathways.send_tts(
-                text=text,
-                voice_id=voice_id,
-                speed=speed,
-                pitch=pitch
+                text=command.data["text"],
+                voice_id=command.data.get("voice", "default"),
+                speed=command.data.get("speed", 1.0),
+                pitch=command.data.get("pitch", 1.0)
             )
-            
             return response
             
         except Exception as e:
             journaling_manager.recordError(f"Error processing TTS command: {e}")
             return {"status": "error", "message": str(e)}
             
-    async def _process_asr(self, command: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_asr(self, command: AudioCommand) -> Dict[str, Any]:
         """Process automatic speech recognition command"""
         try:
-            audio_data = command.get("audio_data")
-            language = command.get("language", "en")
-            model_type = command.get("model_type", "base")
-            
-            # Process ASR command
             response = await SynapticPathways.send_asr(
-                audio_data=audio_data,
-                language=language,
-                model_type=model_type
+                audio_data=command.data["audio_data"],
+                language=command.data.get("language", "en"),
+                model_type=command.data.get("model_type", "base")
             )
-            
             return response
             
         except Exception as e:
             journaling_manager.recordError(f"Error processing ASR command: {e}")
             return {"status": "error", "message": str(e)}
             
-    async def _process_vad(self, command: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_vad(self, command: AudioCommand) -> Dict[str, Any]:
         """Process voice activity detection command"""
         try:
-            audio_chunk = command.get("audio_chunk")
-            threshold = command.get("threshold", 0.5)
-            frame_duration = command.get("frame_duration", 30)
-            
-            # Process VAD command
             response = await SynapticPathways.send_vad(
-                audio_chunk=audio_chunk,
-                threshold=threshold,
-                frame_duration=frame_duration
+                audio_chunk=command.data["audio_chunk"],
+                threshold=command.data.get("threshold", 0.5),
+                frame_duration=command.data.get("frame_duration", 30)
             )
-            
             return response
             
         except Exception as e:
             journaling_manager.recordError(f"Error processing VAD command: {e}")
+            return {"status": "error", "message": str(e)}
+            
+    async def _process_whisper(self, command: AudioCommand) -> Dict[str, Any]:
+        """Process whisper command"""
+        try:
+            response = await SynapticPathways.send_whisper(
+                audio_data=command.data["audio_data"],
+                language=command.data.get("language", "en"),
+                model_type=command.data.get("model_type", "base")
+            )
+            return response
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Error processing whisper command: {e}")
             return {"status": "error", "message": str(e)}
             
     async def cleanup(self) -> None:

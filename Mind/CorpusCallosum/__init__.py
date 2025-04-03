@@ -2,11 +2,14 @@
 CorpusCallosum - Neural communication pathways for PenphinOS
 """
 
-from .neural_commands import (
-    BaseCommand, CommandType, CommandFactory, CommandSerializer,
-    TTSCommand, ASRCommand, VADCommand, LLMCommand, VLMCommand,
-    KWSCommand, SystemCommand, AudioCommand, CameraCommand,
-    YOLOCommand, WhisperCommand, MeloTTSCommand
+from .api_commands import (
+    create_command,
+    parse_response,
+    SYSTEM_COMMANDS,
+    LLM_COMMANDS,
+    AUDIO_COMMANDS,
+    ASR_COMMANDS,
+    TTS_COMMANDS
 )
 
 from .synaptic_pathways import (
@@ -16,22 +19,13 @@ from .synaptic_pathways import (
 )
 
 __all__ = [
-    'BaseCommand',
-    'CommandType',
-    'CommandFactory',
-    'CommandSerializer',
-    'TTSCommand',
-    'ASRCommand',
-    'VADCommand',
-    'LLMCommand',
-    'VLMCommand',
-    'KWSCommand',
-    'SystemCommand',
-    'AudioCommand',
-    'CameraCommand',
-    'YOLOCommand',
-    'WhisperCommand',
-    'MeloTTSCommand',
+    'create_command',
+    'parse_response',
+    'SYSTEM_COMMANDS',
+    'LLM_COMMANDS',
+    'AUDIO_COMMANDS',
+    'ASR_COMMANDS',
+    'TTS_COMMANDS',
     'SynapticPathways',
     'SerialConnectionError',
     'CommandTransmissionError'

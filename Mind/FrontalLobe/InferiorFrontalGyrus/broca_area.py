@@ -22,7 +22,7 @@ import logging
 from typing import Dict, Any, Optional, List
 from ...config import CONFIG
 from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from ...CorpusCallosum.neural_commands import CommandType, TTSCommand
+from ...CorpusCallosum.api_commands import CommandType, TTSCommand
 from .llm import LLM
 
 # Initialize journaling manager
