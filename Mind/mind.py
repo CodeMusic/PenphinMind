@@ -409,19 +409,16 @@ class Mind:
             Dict with response from LLM
         """
         try:
-            # Create the think command
-            think_command = {
-                "request_id": f"think_{int(time.time())}",
-                "work_id": "llm",
-                "action": "inference",
-                "data": {
-                    "prompt": prompt,
-                    "stream": stream
-                }
-            }
+            # Use NeurocorticalBridge.create_llm_inference_command instead of creating manually
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            # Create the think command using the proper factory method
+            think_command = NeurocorticalBridge.create_llm_inference_command(
+                prompt=prompt,
+                stream=stream
+            )
             
             # Execute via bridge
-            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             result = await NeurocorticalBridge.execute(think_command)
             
             # Return standardized result format

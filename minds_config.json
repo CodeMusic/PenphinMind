@@ -5,7 +5,7 @@
             "device_id": "auto",
             "connection": {
                 "type": "tcp",
-                "ip": "10.0.0.82",
+                "ip": "10.0.0.141",
                 "port": 10001
             },
             "llm": {

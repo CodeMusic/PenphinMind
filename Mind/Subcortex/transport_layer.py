@@ -536,7 +536,7 @@ class WiFiTransport(BaseTransport):
                     
                     try:
                         while True:
-                            chunk = s.recv(4096)  # Larger buffer
+                            chunk = s.recv(4096)
                             if not chunk:
                                 break
                             buffer.extend(chunk)
@@ -1000,6 +1000,178 @@ class WiFiTransport(BaseTransport):
                 "error": {
                     "code": -1,
                     "message": f"Transmission error: {str(e)}"
+                }
+            }
+
+    async def stream(self, command: Union[Dict[str, Any], str], callback) -> Dict[str, Any]:
+        """
+        Stream responses from device over TCP and process through callback
+        
+        Args:
+            command: The command to send (dict or string)
+            callback: Async callback function that receives each chunk
+            
+        Returns:
+            Dict: Final status and metadata
+        """
+        if not self.connected:
+            journaling_manager.recordError("Attempting to stream but not connected")
+            try:
+                # Attempt to reconnect
+                reconnect_result = await self.connect()
+                if not reconnect_result:
+                    return {
+                        "error": {
+                            "code": -1,
+                            "message": "Failed to connect for streaming"
+                        }
+                    }
+            except Exception as e:
+                journaling_manager.recordError(f"Error reconnecting for streaming: {e}")
+                return {
+                    "error": {
+                        "code": -1,
+                        "message": f"Reconnection error: {str(e)}"
+                    }
+                }
+        
+        try:
+            # Convert command to string if it's a dict
+            if isinstance(command, dict):
+                command_str = json.dumps(command) + "\n"
+            else:
+                # Ensure string command ends with newline
+                command_str = command if command.endswith("\n") else command + "\n"
+            
+            # Debug log showing truncated command
+            cmd_log = command_str[:200] + "..." if len(command_str) > 200 else command_str
+            journaling_manager.recordInfo(f"📤 Streaming command: {cmd_log}")
+            
+            # Create fresh socket for this streaming session
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(10.0)  # Initial timeout for connection
+                
+                # Connect and send
+                try:
+                    ip, port = self.ip, self.port
+                    journaling_manager.recordInfo(f"Connecting to {ip}:{port} for streaming")
+                    s.connect((ip, port))
+                    
+                    # Send command
+                    s.sendall(command_str.encode())
+                    journaling_manager.recordInfo("Stream command sent, awaiting response stream")
+                    
+                    # Set a longer timeout for streaming
+                    s.settimeout(30.0)  # Long timeout for streaming session
+                    
+                    # Track stream status
+                    total_chunks = 0
+                    stream_active = True
+                    chunk_buffer = bytearray()
+                    last_chunk_time = time.time()
+                    
+                    # Process streaming chunks
+                    while stream_active:
+                        try:
+                            # Read chunk with adaptive timeout
+                            current_time = time.time()
+                            elapsed = current_time - last_chunk_time
+                            
+                            # If it's been too long since last chunk, end stream
+                            if elapsed > 20.0:
+                                journaling_manager.recordWarning(f"Stream timeout after {elapsed:.1f}s without data")
+                                break
+                            
+                            # Try to read a chunk
+                            chunk = s.recv(4096)
+                            
+                            # If no data, end of stream
+                            if not chunk:
+                                journaling_manager.recordInfo("End of stream (no more data)")
+                                break
+                                
+                            # Add to buffer
+                            chunk_buffer.extend(chunk)
+                            last_chunk_time = time.time()
+                            
+                            # Process complete JSON objects in buffer
+                            while b'\n' in chunk_buffer:
+                                # Split at the newline
+                                newline_pos = chunk_buffer.find(b'\n')
+                                json_bytes = chunk_buffer[:newline_pos]
+                                chunk_buffer = chunk_buffer[newline_pos + 1:]
+                                
+                                # Skip empty lines
+                                if not json_bytes.strip():
+                                    continue
+                                    
+                                # Process the JSON chunk
+                                try:
+                                    # Decode and parse
+                                    json_str = json_bytes.decode().strip()
+                                    json_obj = json.loads(json_str)
+                                    
+                                    # Update counters
+                                    total_chunks += 1
+                                    
+                                    # Log chunk details (truncated)
+                                    log_str = json_str[:100] + "..." if len(json_str) > 100 else json_str
+                                    journaling_manager.recordDebug(f"Received stream chunk #{total_chunks}: {log_str}")
+                                    
+                                    # Call the callback
+                                    await callback(json_obj)
+                                    
+                                    # Check if this is the end of the stream
+                                    if isinstance(json_obj, dict):
+                                        data = json_obj.get("data", {})
+                                        if isinstance(data, dict) and data.get("finish", False):
+                                            journaling_manager.recordInfo("Received finish flag, ending stream")
+                                            stream_active = False
+                                            break
+                                        
+                                except json.JSONDecodeError as e:
+                                    journaling_manager.recordError(f"Error parsing JSON chunk: {e}")
+                                    # Don't terminate stream on parse error, try to continue
+                                except Exception as e:
+                                    journaling_manager.recordError(f"Error processing chunk: {e}")
+                                    # Don't terminate stream on processing error
+                            
+                        except socket.timeout:
+                            # Socket timeout - check if we should continue
+                            journaling_manager.recordWarning("Socket timeout during streaming")
+                            if time.time() - last_chunk_time > 20.0:
+                                journaling_manager.recordWarning("No data received for too long, ending stream")
+                                break
+                            # Continue waiting for more data
+                        
+                    # End of streaming session
+                    journaling_manager.recordInfo(f"Streaming completed with {total_chunks} chunks processed")
+                    
+                    # Return success with metadata
+                    return {
+                        "status": "ok",
+                        "chunks_processed": total_chunks,
+                        "stream_time": time.time() - last_chunk_time
+                    }
+                    
+                except socket.error as e:
+                    self.connected = False  # Mark as disconnected on socket error
+                    journaling_manager.recordError(f"Socket error during streaming: {e}")
+                    return {
+                        "error": {
+                            "code": -1,
+                            "message": f"Socket error: {str(e)}"
+                        }
+                    }
+                    
+        except Exception as e:
+            journaling_manager.recordError(f"Error in TCP streaming: {e}")
+            import traceback
+            journaling_manager.recordError(f"Streaming error trace: {traceback.format_exc()}")
+            return {
+                "error": {
+                    "code": -1,
+                    "message": f"Streaming error: {str(e)}"
                 }
             }
 
