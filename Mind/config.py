@@ -262,4 +262,65 @@ class Config:
         journaling_manager.recordInfo("Environment variables loaded successfully")
 
 # Global config instance
-CONFIG = Config() 
+CONFIG = Config()
+
+# Configuration for the system
+CONFIG_SYSTEM = {
+    # Add system-wide configuration items here
+    "log_level": "INFO",
+    "connection": {
+        "default_type": "tcp",
+        "default_ip": "auto",
+        "default_port": 8008,
+        "timeout": 5.0
+    },
+    "audio_sample_rate": 16000,
+    "audio_channels": 1,
+    "asr_model": "whisper.base",
+    "tts_implementation": "local",
+    "wake_word": "hey penphin",
+    "elevenlabs_voice_id": "default"
+}
+
+# Add the get_mind_config function if not already present
+import importlib.util
+import os
+from typing import Dict, Any
+
+def get_mind_config(mind_id: str = None) -> Dict[str, Any]:
+    """Get configuration for a specific mind"""
+    # Default fallback config
+    default_config = {
+        "name": "PenphinMind",
+        "device_id": "auto",
+        "connection": {
+            "type": "tcp",
+            "ip": "auto",
+            "port": 8008
+        },
+        "llm": {
+            "default_model": "qwen2.5-0.5b-prefill",
+            "temperature": 0.7,
+            "max_tokens": 127,
+            "persona": "You are a helpful assistant named {name}."
+        }
+    }
+    
+    try:
+        # Try to load from root config file
+        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.py'))
+        if os.path.exists(config_path):
+            # Import the root config module
+            spec = importlib.util.spec_from_file_location("root_config", config_path)
+            root_config = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(root_config)
+            
+            # If the root config has a get_mind_config function, use it
+            if hasattr(root_config, "get_mind_config"):
+                return root_config.get_mind_config(mind_id)
+    except Exception as e:
+        journaling_manager.recordError(f"Error loading root config: {e}")
+    
+    # Return default config if we couldn't load from root
+    journaling_manager.recordWarning(f"Using default mind config for {mind_id}")
+    return default_config 

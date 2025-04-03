@@ -158,6 +158,17 @@ class AudioCommand(BaseCommand):
                 "model_type": model_type
             }
         )
+        
+    @classmethod
+    def create_kws_command(cls, audio_data: bytes,
+                          wake_word: str = "hey penphin") -> 'AudioCommand':
+        return cls(
+            action="kws",
+            data={
+                "audio_data": audio_data,
+                "wake_word": wake_word
+            }
+        )
 
 class WhisperCommand(BaseCommand):
     """Command for Whisper ASR operations"""
@@ -539,15 +550,54 @@ ERROR_CODES = {
     -19: "Unit resource release failed"
 }
 
+# Mapping from CommandType enum to unit_type string for create_command
+COMMAND_TYPE_MAP = {
+    CommandType.SYSTEM: "sys",
+    CommandType.LLM: "llm",
+    CommandType.AUDIO: "audio"
+}
+
+# Special case mappings for specific operations
+SPECIAL_OPERATION_MAP = {
+    "asr": "asr",         # ASR has its own module
+    "tts": "tts",         # TTS has its own module
+    "whisper": "asr",     # Whisper uses ASR module
+    "kws": "kws"          # KWS has its own module
+}
+
+def command_type_to_unit_type(command_type: CommandType, operation: str = None) -> str:
+    """Convert CommandType enum to unit_type string for create_command
+    
+    Args:
+        command_type: The CommandType enum value
+        operation: Optional operation name for special case handling
+        
+    Returns:
+        str: The unit_type string expected by create_command
+    """
+    # First check if it's a special case operation
+    if operation and operation in SPECIAL_OPERATION_MAP:
+        return SPECIAL_OPERATION_MAP[operation]
+    
+    # Otherwise use the standard mapping
+    return COMMAND_TYPE_MAP.get(command_type, "sys")
+
 def create_command(unit_type: str, command_name: str, **kwargs) -> Dict[str, Any]:
     """
-    @deprecated Use CommandFactory or specific Command classes instead
+    Create a command from a template based on unit type and command name
+    
+    Args:
+        unit_type: The unit type (sys, llm, audio, asr, etc.)
+        command_name: The command name (setup, inference, etc.)
+        **kwargs: Additional command parameters
+        
+    Returns:
+        Dict[str, Any]: The complete command dictionary
     """
-    import warnings
-    warnings.warn(
-        "create_command is deprecated. Use CommandFactory or specific Command classes instead",
-        DeprecationWarning
-    )
+    # Handle CommandType enum input
+    if isinstance(unit_type, CommandType):
+        unit_type = command_type_to_unit_type(unit_type, command_name)
+    
     command_map = {
         "sys": SYSTEM_COMMANDS,
         "audio": AUDIO_COMMANDS,
@@ -569,7 +619,11 @@ def create_command(unit_type: str, command_name: str, **kwargs) -> Dict[str, Any
     
     # Update command data if provided
     if "data" in kwargs and isinstance(kwargs["data"], dict):
-        if "data" in command:
+        # If data is a string (like "None"), replace it with the kwargs data
+        if isinstance(command["data"], str):
+            command["data"] = kwargs["data"]
+        # Otherwise if it's a dict, update it
+        elif isinstance(command["data"], dict):
             command["data"].update(kwargs["data"])
         else:
             command["data"] = kwargs["data"]

@@ -12,6 +12,7 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime
 import subprocess
+import json
 
 # Add the project root to Python path
 project_root = str(Path(__file__).parent)
@@ -19,10 +20,10 @@ sys.path.append(project_root)
 
 from Mind.mind import Mind, setup_connection
 from Mind.config import CONFIG
-from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager, SystemJournelingLevel
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from menu_system import clear_screen, run_menu_system
-from Mind.CorpusCallosum.transport_layer import run_adb_command, get_transport
+from Mind.Subcortex.transport_layer import run_adb_command, get_transport, BaseTransport
 
 # Create logs directory if it doesn't exist
 log_dir = Path(CONFIG.log_file).parent
@@ -63,10 +64,10 @@ class BrainRegion:
 class PenphinMind:
     """Main system class that manages all neural subsystems"""
     
-    def __init__(self):
+    def __init__(self, mind_id=None):
         self.logger = logger
         self.running = False
-        self.mind = Mind()
+        self.mind = Mind(mind_id)
         # Set up signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -266,8 +267,16 @@ async def run_menu(mind: Mind, connection_type: str) -> None:
             logger.info("Cleaning up after menu system...")
             await mind.cleanup()
 
+def load_available_minds():
+    """Load list of available minds from minds_config.json"""
+    from Mind.mind_config import get_available_minds
+    return get_available_minds()
+
 def parse_args():
     """Parse command line arguments"""
+    # Get available minds for argument choices
+    available_minds = load_available_minds()
+    
     parser = argparse.ArgumentParser(
         description="""PenphinMind - A Neuromorphic AI System
 
@@ -313,10 +322,24 @@ tcp    - TCP/IP network connection"""
     )
     
     parser.add_argument(
+        '--mind',
+        choices=available_minds if available_minds else None,
+        help="""Select which mind configuration to use from minds_config.json.
+Available mind configurations: {}""".format(", ".join(available_minds) if available_minds else "None")
+    )
+    
+    parser.add_argument(
         '--debug',
         action='store_true',
         help="""Enable debug logging for detailed system information.
 This will show all debug messages and system state changes."""
+    )
+    
+    parser.add_argument(
+        '--show-json',
+        action='store_true',
+        help="""Enable raw JSON logging for network communication.
+This will show all JSON requests and responses between components."""
     )
     
     # Check if --mode is used without a value
@@ -343,10 +366,59 @@ async def main():
     logging.basicConfig(level=log_level)
     logger = logging.getLogger(__name__)
     
+    # Set SystemJournelingManager debug level
+    if args.debug:
+        journaling_manager = SystemJournelingManager()
+        journaling_manager.setLevel(SystemJournelingLevel.DEBUG)
+        print("Debug logging enabled - all system transactions will be visible")
+    
+    # Set JSON logging if requested
+    if args.show_json:
+        journaling_manager = SystemJournelingManager()
+        journaling_manager.setLevel(SystemJournelingLevel.DEBUG)
+        
+        # Update CONFIG.log_level to ensure all components log at DEBUG level
+        CONFIG.log_level = "DEBUG"
+        
+        # Also modify transport layer to make JSON visible
+        # Make _log_transport_json always print to console
+        original_log_method = BaseTransport._log_transport_json
+        def enhanced_log_json(self, direction, data, transport_type=None):
+            # Call original method
+            original_log_method(self, direction, data, transport_type)
+            # Also print to console
+            if isinstance(data, dict):
+                import json
+                data_str = json.dumps(data, indent=2)
+            else:
+                data_str = str(data)
+            
+            print(f"\n{'='*40}")
+            print(f"🔍 {direction} JSON via {transport_type or self.__class__.__name__}")
+            print(f"{'='*40}")
+            print(data_str)
+            print(f"{'='*40}\n")
+        
+        # Replace the method
+        BaseTransport._log_transport_json = enhanced_log_json
+        print("Enhanced JSON logging enabled - all transport messages will be displayed")
+    
     try:
         # Set mode in SynapticPathways
         if args.mode:
             SynapticPathways.set_mode(args.mode)
+        
+        # Create PenphinMind instance with selected mind or mind selection menu
+        selected_mind_id = args.mind
+        if selected_mind_id:
+            from Mind.mind_config import get_mind_by_id
+            mind_config = get_mind_by_id(selected_mind_id)
+            print(f"\n🧠 Using mind: {mind_config['name']} ({selected_mind_id})")
+            print(f"   Connection: {mind_config['connection']['type'].upper()} - {mind_config['connection']['ip']}:{mind_config['connection']['port']}")
+        else:
+            print("\n🧠 No specific mind selected, using interactive selection")
+            
+        penphin = PenphinMind(mind_id=selected_mind_id)
             
         # Set connection mode if specified
         if args.connection:
@@ -358,8 +430,6 @@ async def main():
                     print(f"Failed to establish {args.connection} connection")
             except Exception as e:
                 print(f"Error setting up connection: {e}")
-            
-        penphin = PenphinMind()
         
         if args.mode:
             if args.mode == 'vc':
@@ -367,13 +437,13 @@ async def main():
             elif args.mode == 'ac':
                 await run_auditory_cortex_test(penphin.mind)
             elif args.mode == 'fc':
-                # Use the new menu system when in frontal cortex mode
+                # Use the menu system when in frontal cortex mode
                 await run_menu(penphin.mind, args.connection)
             elif args.mode == 'full':
                 await penphin.run()
         else:
             # Default to menu system if no mode specified
-            await run_menu(penphin.mind, args.connection)
+            await run_menu_system(penphin.mind)
             
     except Exception as e:
         logger.error(f"Error in main: {e}")

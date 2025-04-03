@@ -19,13 +19,13 @@ Project Function:
 
 import logging
 from typing import Dict, Any, Optional
-from ...config import CONFIG
-from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from ...CorpusCallosum.api_commands import create_command, parse_response
+from Mind.config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.Subcortex.api_commands import create_command, parse_response
 import time
 import traceback
 from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
-from ...CorpusCallosum.api_commands import (
+from Mind.Subcortex.api_commands import (
     CommandType,
     LLMCommand,
     AudioCommand,
@@ -37,7 +37,7 @@ journaling_manager = SystemJournelingManager()
 
 def get_synaptic_pathways():
     """Get the SynapticPathways class, avoiding circular imports"""
-    from ...CorpusCallosum.synaptic_pathways import SynapticPathways
+    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
     return SynapticPathways
 
 class LLM:
@@ -48,6 +48,7 @@ class LLM:
         journaling_manager.recordScope("LLM.__init__")
         self._initialized = False
         self._processing = False
+        self._config = CONFIG  # Use the imported CONFIG
         self.current_state = {
             "model": None,
             "status": "idle",

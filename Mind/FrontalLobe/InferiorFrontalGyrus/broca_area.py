@@ -1,28 +1,25 @@
 """
 Neurological Function:
-    Broca's Area (Inferior Frontal Gyrus) handles:
-    - Speech production
-    - Language generation
-    - Grammar processing
-    - Sentence structure
-    - Word formation
-    - Articulatory planning
-    - Language fluency
-
+    Broca's Area is involved in speech production, language processing, 
+    and speech-motor functions.
+    
 Project Function:
-    Handles language production:
-    - Text generation
-    - Grammar checking
-    - Sentence construction
-    - Word selection
-    - Language fluency
+    Maps to linguistic processing, specifically:
+    - Text-to-speech (TTS) generation
+    - Linguistic output formatting
+    - Speech production
 """
 
+import asyncio
 import logging
-from typing import Dict, Any, Optional, List
-from ...config import CONFIG
-from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from ...CorpusCallosum.api_commands import CommandType, TTSCommand
+from typing import Dict, Any, Optional, List, Tuple
+import os
+import platform
+import time
+
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.Subcortex.api_commands import CommandType, AudioCommand
+from Mind.config import CONFIG
 from .llm import LLM
 
 # Initialize journaling manager
@@ -30,7 +27,7 @@ journaling_manager = SystemJournelingManager()
 
 def get_synaptic_pathways():
     """Get SynapticPathways while avoiding circular imports"""
-    from ...CorpusCallosum.synaptic_pathways import SynapticPathways
+    from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
     return SynapticPathways
 
 class BrocaArea:
@@ -85,10 +82,9 @@ class BrocaArea:
             processed_text = await self._llm.process_input(text)
             
             # Create TTS command with processed text
-            command = TTSCommand(
-                command_type=CommandType.TTS,
+            command = AudioCommand.create_tts_command(
                 text=processed_text.get("response", text),
-                voice_id=voice_id,
+                voice=voice_id,
                 speed=speed,
                 pitch=pitch
             )
@@ -159,4 +155,77 @@ class BrocaArea:
             
         except Exception as e:
             journaling_manager.recordError(f"Error cleaning up Broca's area: {e}")
-            raise 
+            raise
+
+    async def text_to_speech(self, text: str, use_elevenlabs: bool = None) -> dict:
+        """
+        Convert text to speech using configured TTS provider
+        
+        Args:
+            text: Text to convert to speech
+            use_elevenlabs: Override config to use ElevenLabs
+            
+        Returns:
+            Dict with status and audio data
+        """
+        try:
+            # Process text first (add filler words, etc)
+            processed_text = await self.process_language_output(text)
+            
+            # Create TTS command with processed text
+            command = AudioCommand.create_tts_command(
+                text=processed_text.get("response", text),
+                voice=CONFIG.elevenlabs_voice_id if use_elevenlabs or CONFIG.tts_implementation == "elevenlabs" else "default"
+            )
+            
+            # Send to synaptic pathways
+            journaling_manager.recordInfo(f"Sending TTS request: {text[:50]}...")
+            response = await self.llm.send_tts(
+                text=command.data["text"],
+                voice_id=command.data["voice"]
+            )
+            
+            journaling_manager.recordInfo("TTS response received")
+            
+            return {
+                "status": "success",
+                "audio_data": response.get("audio_data", b"")
+            }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"TTS error: {e}")
+            
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
+    async def process_language_output(self, text: str) -> Dict[str, Any]:
+        """
+        Process language output for natural speech patterns
+        
+        Args:
+            text: Text to process
+            
+        Returns:
+            Dict with processed response
+        """
+        try:
+            if not self._initialized:
+                raise RuntimeError("Broca's area not initialized")
+                
+            # Simple processing for now - in the future this could add
+            # filler words, adjust timing markers, etc.
+            return {
+                "status": "success",
+                "response": text
+            }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"Language output processing error: {e}")
+            
+            return {
+                "status": "error",
+                "message": str(e),
+                "response": text  # Return original text on error
+            } 

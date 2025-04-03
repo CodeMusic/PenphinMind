@@ -5,7 +5,7 @@ import asyncio
 import time
 import logging
 import json
-from Mind.CorpusCallosum.api_commands import (
+from Mind.Subcortex.api_commands import (
     BaseCommand, 
     CommandType,
     LLMCommand, 

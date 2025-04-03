@@ -2,7 +2,7 @@
 CorpusCallosum - Neural communication pathways for PenphinOS
 """
 
-from .api_commands import (
+from ..Subcortex.api_commands import (
     create_command,
     parse_response,
     SYSTEM_COMMANDS,

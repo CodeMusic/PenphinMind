@@ -37,27 +37,47 @@ async def interactive_chat(primary_mind: Mind, secondary_mind: Mind = None):
         print("\n👤 User Chat Mode")
     
     # Check connections
-    print("\nEstablishing connections...")
+    print("\n🔍 Checking connections...")
     p_status = await primary_mind.check_connection()
     if p_status.get("status") != "ok":
-        print(f"Error connecting to {primary_mind.name}: {p_status.get('message')}")
+        print(f"⚠️ Error connecting to {primary_mind.name}: {p_status.get('message')}")
+        print(f"⚠️ You may need to reset the device or check connection settings.")
         return
+    else:
+        print(f"✅ Successfully connected to {primary_mind.name}")
         
     if is_dual_mode:
         s_status = await secondary_mind.check_connection()
         if s_status.get("status") != "ok":
-            print(f"Error connecting to {secondary_mind.name}: {s_status.get('message')}")
+            print(f"⚠️ Error connecting to {secondary_mind.name}: {s_status.get('message')}")
             return
+        else:
+            print(f"✅ Successfully connected to {secondary_mind.name}")
     
     # Display hardware info
+    print("\n🖥️ Hardware Information:")
     hw_info = await primary_mind.get_hardware_info()
     if hw_info.get("status") == "ok":
         print(hw_info.get("hardware_info"))
+    else:
+        print(f"⚠️ Could not retrieve hardware info: {hw_info.get('message')}")
     
     if is_dual_mode:
         hw_info = await secondary_mind.get_hardware_info()
         if hw_info.get("status") == "ok":
             print(hw_info.get("hardware_info"))
+        else:
+            print(f"⚠️ Could not retrieve hardware info: {hw_info.get('message')}")
+    
+    # Get active model
+    try:
+        model_info = await primary_mind.get_model()
+        if model_info.get("status") == "ok":
+            print(f"🧠 Active model: {model_info.get('model', 'Unknown')}")
+        else:
+            print(f"⚠️ Could not retrieve model info: {model_info.get('message')}")
+    except Exception as e:
+        print(f"⚠️ Error getting model info: {str(e)}")
     
     print("\n💭 Chat session started\n")
     
@@ -66,7 +86,7 @@ async def interactive_chat(primary_mind: Mind, secondary_mind: Mind = None):
             # Mind to mind chat
             response = await primary_mind.process_thought("What would you like to discuss?")
             if response.get("status") != "ok":
-                print(f"\nError: {response.get('message')}")
+                print(f"\n⚠️ Error: {response.get('message')}")
                 continue
                 
             print(f"\n{primary_mind.name}: {response.get('response')}")
@@ -81,6 +101,7 @@ async def interactive_chat(primary_mind: Mind, secondary_mind: Mind = None):
             user_input = input("👤 You: ").strip()
             
             if user_input.lower() in ("exit", "quit", "menu"):
+                print("\n🔚 Exiting chat session...")
                 break
                 
             if not user_input:
@@ -92,7 +113,7 @@ async def interactive_chat(primary_mind: Mind, secondary_mind: Mind = None):
             if response.get("status") == "ok":
                 print(response.get("response"))
             else:
-                print(f"Error: {response.get('message')}")
+                print(f"⚠️ Error: {response.get('message')}")
 
 def print_chat_header():
     """Print the chat interface header with penguin and dolphin emojis"""

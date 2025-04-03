@@ -16,11 +16,11 @@ Project Function:
 
 import logging
 from typing import Dict, Any, Optional
-from ...config import CONFIG
-from ...FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from ...FrontalLobe.InferiorFrontalGyrus.broca_area import BrocaArea
-from ...FrontalLobe.InferiorFrontalGyrus.wernicke_area import WernickeArea
-from ...FrontalLobe.InferiorFrontalGyrus.llm import LLM
+from Mind.config import CONFIG
+from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from Mind.FrontalLobe.InferiorFrontalGyrus.broca_area import BrocaArea
+from Mind.FrontalLobe.InferiorFrontalGyrus.wernicke_area import WernickeArea
+from Mind.FrontalLobe.InferiorFrontalGyrus.llm import LLM
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()

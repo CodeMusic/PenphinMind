@@ -52,13 +52,18 @@ class PerspectiveThinkingManager:
         Process input with logical, structured thinking
         """
         journaling_manager.recordScope("PerspectiveThinkingManager._logical_perspective", input_text=input_text)
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=f"Analyze this logically: {input_text}",
-            max_tokens=150,
-            temperature=0.3
+        
+        # Use NeurocorticalBridge instead of direct SynapticPathways call
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Create a think command for logical perspective
+        response = await NeurocorticalBridge.execute_operation(
+            operation="think",
+            data={
+                "prompt": f"Analyze this logically: {input_text}",
+                "temperature": 0.3
+            }
         )
-        response = await SynapticPathways.transmit_json(command)
         return response.get("response", "")
 
     async def _creative_perspective(self, input_text: str) -> str:
@@ -66,13 +71,18 @@ class PerspectiveThinkingManager:
         Process input with creative, lateral thinking
         """
         journaling_manager.recordScope("PerspectiveThinkingManager._creative_perspective", input_text=input_text)
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=f"Think creatively about: {input_text}",
-            max_tokens=150,
-            temperature=0.8
+        
+        # Use NeurocorticalBridge instead of direct SynapticPathways call
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Create a think command for creative perspective
+        response = await NeurocorticalBridge.execute_operation(
+            operation="think",
+            data={
+                "prompt": f"Think creatively about: {input_text}",
+                "temperature": 0.8
+            }
         )
-        response = await SynapticPathways.transmit_json(command)
         return response.get("response", "")
 
     async def _emotional_perspective(self, input_text: str) -> str:
@@ -80,13 +90,18 @@ class PerspectiveThinkingManager:
         Process input with emotional intelligence
         """
         journaling_manager.recordScope("PerspectiveThinkingManager._emotional_perspective", input_text=input_text)
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=f"Consider the emotional aspects of: {input_text}",
-            max_tokens=150,
-            temperature=0.6
+        
+        # Use NeurocorticalBridge instead of direct SynapticPathways call
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Create a think command for emotional perspective
+        response = await NeurocorticalBridge.execute_operation(
+            operation="think",
+            data={
+                "prompt": f"Consider the emotional aspects of: {input_text}",
+                "temperature": 0.6
+            }
         )
-        response = await SynapticPathways.transmit_json(command)
         return response.get("response", "")
 
     async def _intuitive_perspective(self, input_text: str) -> str:
@@ -94,13 +109,18 @@ class PerspectiveThinkingManager:
         Process input with intuitive thinking
         """
         journaling_manager.recordScope("PerspectiveThinkingManager._intuitive_perspective", input_text=input_text)
-        command = LLMCommand(
-            command_type=CommandType.LLM,
-            prompt=f"Consider this from an intuitive perspective: {input_text}",
-            max_tokens=150,
-            temperature=0.7
+        
+        # Use NeurocorticalBridge instead of direct SynapticPathways call
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Create a think command for intuitive perspective
+        response = await NeurocorticalBridge.execute_operation(
+            operation="think",
+            data={
+                "prompt": f"Consider this from an intuitive perspective: {input_text}",
+                "temperature": 0.7
+            }
         )
-        response = await SynapticPathways.transmit_json(command)
         return response.get("response", "")
 
     def _integrate_perspectives(self, responses: Dict[str, str]) -> str:

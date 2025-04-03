@@ -19,7 +19,7 @@ import platform
 from pathlib import Path
 
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
-from ...CorpusCallosum.api_commands import CommandType, SystemCommand
+from ...Subcortex.api_commands import CommandType, SystemCommand
 from ...config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
@@ -91,16 +91,18 @@ class PrimaryArea:
     async def _transmit_tactile_signal(self, signal_type: str) -> None:
         """Transmit tactile signal through synaptic pathways"""
         try:
-            await SynapticPathways.transmit_json(
-                SystemCommand(
-                    command_type=CommandType.SYSTEM,
-                    event=signal_type,
-                    data={
-                        "pin": self.button_pin,
-                        "state": self.pressed
-                    }
-                )
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            command = SystemCommand(
+                command_type=CommandType.SYSTEM,
+                event=signal_type,
+                data={
+                    "pin": self.button_pin,
+                    "state": self.pressed
+                }
             )
+            await NeurocorticalBridge.execute(command)
         except Exception as e:
             self.logger.error(f"Tactile signal transmission error: {e}")
             

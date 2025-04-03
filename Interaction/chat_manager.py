@@ -73,10 +73,7 @@ class ChatManager:
                 self.mind.set_default_model(model_name)
                 
                 # Activate the model with mind's persona
-                setup_result = await self.mind.set_model(
-                    model_name, 
-                    system_message=self.mind._persona
-                )
+                setup_result = await self.mind.set_model(model_name)
                 if setup_result.get("status") == "ok":
                     self.active_model = model_name
                     self.model_setup_complete = True

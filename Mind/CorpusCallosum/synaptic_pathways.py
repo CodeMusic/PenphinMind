@@ -41,14 +41,14 @@ import serial.tools.list_ports
 from Mind.config import CONFIG
 # Local imports
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from Mind.CorpusCallosum.api_commands import (
+from Mind.Subcortex.api_commands import (
     BaseCommand,
     CommandType,
     LLMCommand,
     SystemCommand,
     AudioCommand  # Just import AudioCommand instead of individual audio commands
 )
-from Mind.CorpusCallosum.transport_layer import get_transport, ConnectionError, CommandError, run_adb_command
+from Mind.Subcortex.transport_layer import get_transport, ConnectionError, CommandError, run_adb_command
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager(CONFIG.log_level)
@@ -331,22 +331,35 @@ class SynapticPathways:
         journaling_manager.recordInfo("Synaptic pathways cleaned up")
 
     @classmethod
-    async def transmit_json(cls, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Direct hardware communication - only called by NeurocorticalBridge"""
+    async def relay_to_bridge(cls, operation: str, data: Dict[str, Any] = None, use_task: bool = None, stream: bool = False) -> Dict[str, Any]:
+        """Relay command to NeurocorticalBridge
+        
+        This is the ONLY method that should be called from higher brain regions.
+        It forwards operations to NeurocorticalBridge which handles hardware communication.
+        
+        Args:
+            operation: Operation name to execute
+            data: Operation data
+            use_task: Whether to use task system
+            stream: Whether to stream results
+            
+        Returns:
+            Dict[str, Any]: Operation result
+        """
+        # Import here to avoid circular imports - NeurocorticalBridge should import SynapticPathways, not the other way around
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        journaling_manager.recordInfo(f"[SynapticPathways] Relaying operation to bridge: {operation}")
+        
         try:
-            if not all(k in command for k in ["work_id", "action", "object"]):
-                raise ValueError("Invalid command structure")
-            
-            journaling_manager.recordInfo(f"[SynapticPathways] Transmitting: {command}")
-            return await cls._send_to_hardware(command)
-            
+            # Simply forward to NeurocorticalBridge
+            result = await NeurocorticalBridge.execute_operation(operation, data, use_task, stream)
+            return result
         except Exception as e:
-            journaling_manager.recordError(f"Transmission error: {e}")
-            return {
-                "status": "error",
-                "code": -1,
-                "message": str(e)
-            }
+            journaling_manager.recordError(f"[SynapticPathways] Error relaying to bridge: {e}")
+            import traceback
+            journaling_manager.recordError(f"[SynapticPathways] Relay error stack trace: {traceback.format_exc()}")
+            return {"status": "error", "message": str(e)}
 
     @classmethod
     def get_manager(cls, manager_type: str) -> Any:
@@ -552,7 +565,7 @@ class SynapticPathways:
             # Send reboot command
             journaling_manager.recordInfo("Sending reboot command...")
             try:
-                response = await cls.transmit_json(reboot_command)
+                response = await cls.relay_to_bridge("reboot", reboot_command)
                 journaling_manager.recordInfo(f"Reboot response: {response}")
                 
                 # API shows message will be "rebooting ..."
@@ -725,7 +738,7 @@ class SynapticPathways:
             "model": model_name,
             **(params or {})
         }
-        return await cls.send_system_command("setup", data)
+        return await cls.relay_to_bridge("setup", data)
 
     @classmethod
     async def run_llm_inference(cls, prompt: str, stream: bool = False) -> Dict[str, Any]:

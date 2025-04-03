@@ -13,9 +13,9 @@ Neurological Function:
 
 import logging
 from typing import Dict, Any, Optional
-from ...CorpusCallosum.synaptic_pathways import SynapticPathways
-from ...CorpusCallosum.neural_commands import CommandType, ASRCommand
-from ...config import CONFIG
+from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+from Mind.Subcortex.api_commands import CommandType, AudioCommand
+from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 
 logger = logging.getLogger(__name__)

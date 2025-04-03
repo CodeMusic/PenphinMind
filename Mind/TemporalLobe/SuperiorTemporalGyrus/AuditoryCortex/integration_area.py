@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from Mind.CorpusCallosum.api_commands import BaseCommand, AudioCommand, CommandType
+from Mind.Subcortex.api_commands import BaseCommand, AudioCommand, CommandType
 
 logger = logging.getLogger(__name__)
 

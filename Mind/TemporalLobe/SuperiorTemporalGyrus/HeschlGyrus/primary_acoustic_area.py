@@ -17,7 +17,7 @@ import numpy as np
 import subprocess
 from pathlib import Path
 from ....CorpusCallosum.synaptic_pathways import SynapticPathways
-from ....CorpusCallosum.api_commands import (
+from ....Subcortex.api_commands import (
     CommandType,
     AudioCommand,
     BaseCommand
@@ -25,6 +25,9 @@ from ....CorpusCallosum.api_commands import (
 from ....config import CONFIG, AudioOutputType
 import platform
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+import os
+import wave
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +109,16 @@ class PrimaryAcousticArea:
             
         try:
             self.vad_active = True
+            
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
             command = AudioCommand.create_vad_command(
                 audio_chunk=b'',  # Initial empty chunk
                 threshold=0.5,
                 frame_duration=30
             )
-            await SynapticPathways.transmit_json(command)
+            await NeurocorticalBridge.execute(command)
             journaling_manager.recordInfo("VAD started")
         except Exception as e:
             journaling_manager.recordError(f"VAD start error: {e}")
@@ -146,15 +153,18 @@ class PrimaryAcousticArea:
             bytes: Processed acoustic data
         """
         try:
-            response = await SynapticPathways.transmit_command(
-                AudioCommand(
-                    command_type=CommandType.AUDIO,
-                    operation=operation,
-                    audio_data=audio_data,
-                    sample_rate=CONFIG.audio_sample_rate,
-                    channels=CONFIG.audio_channels
-                )
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            command = AudioCommand(
+                action=operation,
+                data={
+                    "audio_data": audio_data,
+                    "sample_rate": CONFIG.audio_sample_rate,
+                    "channels": CONFIG.audio_channels
+                }
             )
+            response = await NeurocorticalBridge.execute(command)
             return response.get("processed_audio", b'')
         except Exception as e:
             journaling_manager.recordError(f"Acoustic processing error: {e}")
@@ -195,13 +205,16 @@ class PrimaryAcousticArea:
     async def text_to_speech(self, text: str) -> bytes:
         """Convert text to speech using configured TTS implementation"""
         try:
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
             command = AudioCommand.create_tts_command(
                 text=text,
                 voice=CONFIG.elevenlabs_voice_id if CONFIG.tts_implementation == "elevenlabs" else "default",
                 speed=1.0,
                 pitch=1.0
             )
-            response = await SynapticPathways.transmit_command(command)
+            response = await NeurocorticalBridge.execute(command)
             return response.get("audio_data", b'')
         except Exception as e:
             journaling_manager.recordError(f"TTS error: {e}")
@@ -218,17 +231,15 @@ class PrimaryAcousticArea:
             str: Transcribed text
         """
         try:
-            command_data = {
-                "command_type": CommandType.AUDIO,
-                "operation": "asr",
-                "audio_data": audio_data,
-                "sample_rate": CONFIG.audio_sample_rate,
-                "channels": CONFIG.audio_channels
-            }
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            response = await SynapticPathways.transmit_command(
-                AudioCommand(**command_data)
+            command = AudioCommand.create_asr_command(
+                audio_data=audio_data, 
+                language="en"
             )
+            
+            response = await NeurocorticalBridge.execute(command)
             return response.get("text", "")
         except Exception as e:
             journaling_manager.recordError(f"ASR error: {e}")
@@ -245,18 +256,15 @@ class PrimaryAcousticArea:
             bool: True if wake word detected
         """
         try:
-            command_data = {
-                "command_type": CommandType.AUDIO,
-                "operation": "kws",
-                "audio_data": audio_data,
-                "sample_rate": CONFIG.audio_sample_rate,
-                "channels": CONFIG.audio_channels,
-                "wake_word": CONFIG.wake_word
-            }
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            response = await SynapticPathways.transmit_command(
-                AudioCommand(**command_data)
+            command = AudioCommand.create_kws_command(
+                audio_data=audio_data,
+                wake_word=CONFIG.wake_word
             )
+            
+            response = await NeurocorticalBridge.execute(command)
             return response.get("wake_word_detected", False)
         except Exception as e:
             journaling_manager.recordError(f"KWS error: {e}")
@@ -329,8 +337,11 @@ class PrimaryAcousticArea:
     async def record_acoustic_signal(self, duration: float) -> bytes:
         """Record audio for specified duration"""
         try:
-            response = await SynapticPathways.send_system_command(
-                command_type="record_audio",
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            response = await NeurocorticalBridge.execute_operation(
+                operation="record_audio", 
                 data={"duration": duration}
             )
             return response.get("audio_data", b"")
@@ -349,8 +360,11 @@ class PrimaryAcousticArea:
             Dict[str, Any]: Frequency analysis data
         """
         try:
-            response = await SynapticPathways.send_system_command(
-                command_type="analyze_frequency",
+            # Use NeurocorticalBridge instead of direct SynapticPathways call
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            
+            response = await NeurocorticalBridge.execute_operation(
+                operation="analyze_frequency",
                 data={"audio_data": audio_data}
             )
             return response.get("frequency_data", {})

@@ -14,7 +14,7 @@ import socket
 import subprocess
 import time
 import traceback
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, List, Optional, Union
 import paramiko
 import serial
 import serial.tools.list_ports
@@ -37,8 +37,9 @@ _direct_adb_failed = False  # Flag to remember if direct ADB call has failed
 _adb_executable_path = None  # Cache the working executable path
 _tcp_gateway_active = False  # Flag to indicate if TCP gateway is active and working
 
+# Exception types
 class TransportError(Exception):
-    """Base exception for transport layer errors"""
+    """Base class for transport-related exceptions"""
     pass
 
 class ConnectionError(TransportError):
@@ -46,7 +47,7 @@ class ConnectionError(TransportError):
     pass
 
 class CommandError(TransportError):
-    """Raised when command transmission fails"""
+    """Error during command execution"""
     pass
 
 class BaseTransport:
@@ -72,6 +73,42 @@ class BaseTransport:
     def is_available(self) -> bool:
         """Check if this transport type is available"""
         raise NotImplementedError("Subclasses must implement is_available()")
+        
+    def _log_transport_json(self, direction: str, data: Union[Dict[str, Any], str], transport_type: str = None):
+        """Log JSON data being sent or received through the transport layer
+        
+        Args:
+            direction: "SEND" or "RECEIVE" 
+            data: JSON data as dict or string
+            transport_type: Optional transport type identifier
+        """
+        if not transport_type:
+            transport_type = self.__class__.__name__
+        
+        # Ensure data is a string for logging
+        if isinstance(data, dict):
+            data_str = json.dumps(data, indent=2)
+        else:
+            data_str = str(data)
+            
+        # Truncate if too large
+        if len(data_str) > 1000:
+            shortened = f"{data_str[:500]}...{data_str[-500:]}"
+        else:
+            shortened = data_str
+            
+        # Log with visual separation and direction indicators
+        if direction == "SEND":
+            header = f"=== 🐬 {transport_type} SENDING JSON ==="
+            arrow = "  ↓ "
+        else:  # RECEIVE
+            header = f"=== 🐧 {transport_type} RECEIVING JSON ==="
+            arrow = "  ↑ "
+            
+        journaling_manager.recordDebug(header)
+        for line in shortened.split('\n'):
+            journaling_manager.recordDebug(f"{arrow}{line}")
+        journaling_manager.recordDebug("=" * len(header))
 
 class SerialTransport(BaseTransport):
     """Serial communication transport layer"""
@@ -252,8 +289,15 @@ class SerialTransport(BaseTransport):
             raise ConnectionError("Tunnel not established")
         
         try:
-            # Send command through tunnel
+            # Log the outgoing command
+            self._log_transport_json("SEND", command, "SerialTransport")
+            
+            # Prepare the JSON data
             json_data = json.dumps(command) + "\n"
+            journaling_manager.recordInfo("🔤 NETWORK RAW REQUEST (SERIAL):")
+            journaling_manager.recordInfo(f"  {json_data.strip()}")
+            
+            # Send command through tunnel
             cmd = f"echo '{json_data.strip()}' | nc localhost {self.port}\n"
             journaling_manager.recordInfo(f">>> SENDING THROUGH TUNNEL: {cmd.strip()}")
             
@@ -271,9 +315,17 @@ class SerialTransport(BaseTransport):
                     journaling_manager.recordInfo(f">>> RECEIVED: {char!r}")
                     
                     if char == '\n':
+                        # Log the raw response before parsing
+                        journaling_manager.recordInfo("🔤 NETWORK RAW RESPONSE (SERIAL):")
+                        journaling_manager.recordInfo(f"  {buffer.strip()}")
+                        
                         try:
                             response = json.loads(buffer.strip())
                             journaling_manager.recordInfo(f">>> VALID JSON: {response}")
+                            
+                            # Log the received response
+                            self._log_transport_json("RECEIVE", response, "SerialTransport")
+                            
                             return response
                         except json.JSONDecodeError:
                             journaling_manager.recordInfo(f">>> INVALID JSON: {buffer.strip()!r}")
@@ -542,16 +594,21 @@ class WiFiTransport(BaseTransport):
             ip, port = self.endpoint.split(":")
             port = int(port)
             
+            # Log the outgoing command
+            self._log_transport_json("SEND", command, "WiFiTransport")
+            
             # Detailed request logging
             journaling_manager.recordDebug(f"🔶 API REQUEST to {ip}:{port}:")
             journaling_manager.recordDebug(f"🔶 {json.dumps(command, indent=2)}")
             
+            # Prepare JSON data - log the exact string that will be sent
+            json_data = json.dumps(command) + "\n"
+            journaling_manager.recordInfo("🔤 NETWORK RAW REQUEST:")
+            journaling_manager.recordInfo(f"  {json_data.strip()}")
+            
             # Connect to the LLM service
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(self.timeout)
-                
-                # Prepare JSON data
-                json_data = json.dumps(command) + "\n"
                 
                 # Connect and send
                 journaling_manager.recordDebug(f"Connecting to {ip}:{port}...")
@@ -581,9 +638,17 @@ class WiFiTransport(BaseTransport):
                         journaling_manager.recordError("Socket timeout")
                         break
             
+            # Log the raw response string before parsing
+            journaling_manager.recordInfo("🔤 NETWORK RAW RESPONSE:")
+            journaling_manager.recordInfo(f"  {buffer.strip()}")
+            
             # Parse response
             try:
                 response = json.loads(buffer.strip())
+                
+                # Log the received response
+                self._log_transport_json("RECEIVE", response, "WiFiTransport")
+                
                 # Detailed response logging
                 journaling_manager.recordDebug(f"🔷 API RESPONSE:")
                 journaling_manager.recordDebug(f"🔷 {json.dumps(response, indent=2)}")
@@ -591,6 +656,10 @@ class WiFiTransport(BaseTransport):
             except json.JSONDecodeError:
                 journaling_manager.recordError(f"Failed to parse JSON: {buffer.strip()!r}")
                 journaling_manager.recordDebug(f"Raw response data: {buffer.strip()!r}")
+                
+                # Log the failed response
+                self._log_transport_json("RECEIVE", f"INVALID JSON: {buffer.strip()}", "WiFiTransport")
+                
                 return {
                     "request_id": command.get("request_id", f"error_{int(time.time())}"),
                     "work_id": command.get("work_id", "sys"),
@@ -760,8 +829,16 @@ class ADBTransport(BaseTransport):
                 raise ConnectionError("Not connected to device")
         
         try:
+            # Log the outgoing command
+            self._log_transport_json("SEND", command, "ADBTransport")
+            
             ip, port = self.endpoint.split(":")
             port = int(port)
+            
+            # Prepare JSON data - log the exact string that will be sent
+            json_data = json.dumps(command) + "\n"
+            journaling_manager.recordInfo("🔤 NETWORK RAW REQUEST (ADB):")
+            journaling_manager.recordInfo(f"  {json_data.strip()}")
             
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5.0)
@@ -779,7 +856,6 @@ class ADBTransport(BaseTransport):
                 _tcp_gateway_active = True
                 
                 # Send command
-                json_data = json.dumps(command) + "\n"
                 s.sendall(json_data.encode())
                 
                 # Read response with larger buffer
@@ -795,12 +871,26 @@ class ADBTransport(BaseTransport):
                     except socket.timeout:
                                 break
                 
+                # Log the raw response before parsing
+                raw_response = buffer.decode() if buffer else ""
+                journaling_manager.recordInfo("🔤 NETWORK RAW RESPONSE (ADB):")
+                journaling_manager.recordInfo(f"  {raw_response.strip()}")
+                
                 if buffer:
                     try:
-                        response = json.loads(buffer.decode().strip())
+                        response_str = buffer.decode().strip()
+                        response = json.loads(response_str)
+                        
+                        # Log the received response
+                        self._log_transport_json("RECEIVE", response, "ADBTransport")
+                        
                         return response
                     except json.JSONDecodeError as e:
                         journaling_manager.recordError(f"Failed to parse JSON: {e}")
+                        
+                        # Log the failed response
+                        self._log_transport_json("RECEIVE", f"INVALID JSON: {buffer.decode().strip()}", "ADBTransport")
+                        
                         return {
                             "request_id": command.get("request_id", "error"),
                             "work_id": command.get("work_id", "local"),
@@ -812,6 +902,10 @@ class ADBTransport(BaseTransport):
                 else:
                     journaling_manager.recordError("Empty response received")
                     _tcp_gateway_active = False  # Mark gateway as inactive on empty response
+                    
+                    # Log the empty response
+                    self._log_transport_json("RECEIVE", "EMPTY RESPONSE", "ADBTransport")
+                    
                     return {
                     "request_id": command.get("request_id", "error"),
                     "work_id": command.get("work_id", "local"),

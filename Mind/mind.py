@@ -16,11 +16,10 @@ from .ParietalLobe.SomatosensoryCortex.integration_area import IntegrationArea a
 from .OccipitalLobe.VisualCortex.integration_area import IntegrationArea as VisualProcessor
 from .FrontalLobe.MotorCortex.integration_area import IntegrationArea as MotorIntegration
 from .FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from .config import CONFIG
+from .config import CONFIG, get_mind_config
 from .Subcortex.neurocortical_bridge import NeurocorticalBridge
-from ..config import get_mind_config
-from .ChatManager import ChatManager
-from .Subcortex.BasalGanglia.commands import LLMCommand, SystemCommand
+from Interaction.chat_manager import ChatManager
+from .Subcortex.api_commands import LLMCommand, SystemCommand
 # Add other lobe imports as needed
 
 # Initialize journaling manager
@@ -40,6 +39,7 @@ class Mind:
         self._persona = self._config["llm"]["persona"].format(name=self._name)
         self._device_id = self._config["device_id"]
         self._connection = self._config["connection"]
+        self._mind_id = self._config.get("mind_id", "auto")  # Get the mind_id from config
         
         # Initialize connection settings
         self._connection_type = self._connection["type"]
@@ -53,35 +53,12 @@ class Mind:
         self.chat_manager = None
         journaling_manager.recordInfo(f"[Mind] Initialized with persona: {self._persona[:50]}...")
         
-    @property
-    def name(self) -> str:
-        """Get the mind's name"""
-        return self._name
-        
-    @property
-    def identity(self) -> Dict[str, Any]:
-        """Get mind's identity information"""
-        return {
-            "name": self._name,
-            "persona": self._persona,
-            "device_id": self._device_id,
-            "connection": self._connection_type,
-            "initialized": self._initialized
-        }
-    
-    def format_identity(self) -> str:
-        """Format mind's identity for display"""
-        status = "🟢 Connected" if self._initialized else "🔴 Disconnected"
-        return f"🐧🐬 {self._name} [{self._device_id}] - {status}"
-
-    def __init__(self):
         # Initialize instance variables
         self._occipital_lobe = {}
         self._temporal_lobe = {}
         self._parietal_lobe = {}
         self._motor_cortex = {}
         self.primary_acoustic = None
-        self._initialized = False
         self._processing = False
         self._language_processor = None  # Language processor instance
         self._system_journeling_manager = SystemJournelingManager()
@@ -102,6 +79,33 @@ class Mind:
         
         journaling_manager.recordScope("Mind.__init__")
         
+    @property
+    def name(self) -> str:
+        """Get the mind's name"""
+        return self._name
+    
+    @property
+    def mind_id(self) -> str:
+        """Get the mind's ID"""
+        return self._mind_id
+        
+    @property
+    def identity(self) -> Dict[str, Any]:
+        """Get mind's identity information"""
+        return {
+            "name": self._name,
+            "mind_id": self._mind_id,
+            "persona": self._persona,
+            "device_id": self._device_id,
+            "connection": self._connection_type,
+            "initialized": self._initialized
+        }
+    
+    def format_identity(self) -> str:
+        """Format mind's identity for display"""
+        status = "🟢 Connected" if self._initialized else "🔴 Disconnected"
+        return f"🐧🐬 {self._name} [ID: {self._mind_id}] [{self._device_id}] - {status}"
+
     @property
     def temporal_lobe(self) -> Dict[str, Any]:
         """Get temporal lobe components"""
@@ -192,26 +196,23 @@ class Mind:
     async def initialize(self, connection_type: str = None, model_name: str = None) -> bool:
         """Initialize the Mind system"""
         try:
-            # Initialize base connection
+            # Initialize base connection through NeurocorticalBridge
+            # This now directly handles transport initialization
             success = await NeurocorticalBridge.initialize_system(connection_type)
             if not success:
+                journaling_manager.recordError("[Mind] Failed to initialize bridge")
                 return False
 
-            # Initialize chat manager with persona from config
-            self.chat_manager = ChatManager()
-            success = await self.chat_manager.initialize(
-                model_name=model_name,
-                system_message=self._persona
-            )
-
+            # Don't initialize ChatManager yet, we'll create it only when entering chat
+            # ChatManager will be initialized in the start_chat function instead
             self._initialized = success
             self._connection_type = connection_type if success else None
             return success
-
+            
         except Exception as e:
             journaling_manager.recordError(f"[Mind] Initialization error: {e}")
             return False
-
+            
     async def cleanup(self) -> None:
         """Clean up all brain regions"""
         journaling_manager.recordScope("Mind.cleanup")
@@ -380,10 +381,11 @@ class Mind:
         """Perform thinking operation with the LLM"""
         journaling_manager.recordInfo(f"[Mind] Thinking: {prompt[:50]}...")
         
+        # Check the parameters that LLMCommand.create_think_command actually accepts
+        # and modify if necessary
         think_command = LLMCommand.create_think_command(
             prompt=prompt,
-            stream=stream,
-            system_message=self._persona
+            stream=stream
         )
         return await NeurocorticalBridge.execute(think_command)
 
@@ -449,9 +451,9 @@ class Mind:
     async def connect(self, connection_type=None):
         """Connect to hardware using the specified connection type"""
         journaling_manager.recordInfo(f"[Mind] Connecting with type: {connection_type}")
-        self._connection_type = connection_type
-        result = await self.execute_operation("initialize_connection", {"connection_type": connection_type})
-        return result.get("status") == "ok"
+        
+        # Use initialize method which uses NeurocorticalBridge.initialize_system
+        return await self.initialize(connection_type)
     
     def get_system_info(self):
         """Get system information"""
@@ -547,6 +549,46 @@ class Mind:
         """Get the currently active model from the device"""
         journaling_manager.recordInfo("[Mind] Getting active model")
         return await self.execute_operation("get_model")
+        
+    async def process_thought(self, input_text: str) -> Dict[str, Any]:
+        """
+        Process a thought/message and generate a response
+        Used by the chat interface
+        
+        Args:
+            input_text: The user input to process
+            
+        Returns:
+            Dict with status and response
+        """
+        journaling_manager.recordInfo(f"[Mind] Processing thought: {input_text[:50]}...")
+        
+        try:
+            # Use the think method
+            result = await self.think(input_text)
+            
+            # Format the response in a standard way
+            if isinstance(result, dict) and result.get("status") == "ok":
+                return {
+                    "status": "ok",
+                    "response": result.get("response", "")
+                }
+            elif isinstance(result, str):
+                return {
+                    "status": "ok",
+                    "response": result
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": result.get("message", "Unknown error")
+                }
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Error processing thought: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
 
     async def complete_cleanup(self):
         """
@@ -561,9 +603,9 @@ class Mind:
             # Clean up brain regions first
             await self.cleanup()
             
-            # Then clean up connection resources
-            from .CorpusCallosum.synaptic_pathways import SynapticPathways
-            await SynapticPathways.cleanup()
+            # Then clean up connection resources through NeurocorticalBridge
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            await NeurocorticalBridge.cleanup()
             
             journaling_manager.recordInfo("[Mind] Complete cleanup successful")
             return True
@@ -618,11 +660,5 @@ async def setup_connection(connection_type=None):
     
     journaling_manager.recordScope("setup_connection", connection_type=connection_type)
     
-    # Use the NeurocorticalBridge with standardized response format
-    result = await NeurocorticalBridge.execute_operation(
-        "initialize_connection", 
-        {"connection_type": connection_type}
-    )
-    
-    # Return true if status is ok
-    return result.get("status") == "ok" 
+    # Use NeurocorticalBridge's initialize_system method directly
+    return await NeurocorticalBridge.initialize_system(connection_type) 

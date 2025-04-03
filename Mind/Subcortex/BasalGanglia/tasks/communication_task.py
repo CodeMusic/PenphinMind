@@ -1,6 +1,6 @@
 from Mind.Subcortex.BasalGanglia.task_base import NeuralTask
 from Mind.Subcortex.BasalGanglia.task_types import TaskType
-from Mind.CorpusCallosum.transport_layer import get_transport, ConnectionError
+from Mind.Subcortex.transport_layer import get_transport, ConnectionError
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 import logging
 import json
@@ -67,7 +67,7 @@ class CommunicationTask(NeuralTask):
         """Initialize the communication task."""
         try:
             # Import here to avoid circular imports
-            from Mind.CorpusCallosum.transport_layer import get_transport
+            from Mind.Subcortex.transport_layer import get_transport
             
             # Log initialization
             journaling_manager.recordInfo(f"[CommunicationTask] 🔌 Initializing {connection_type} connection")

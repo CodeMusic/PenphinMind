@@ -11,21 +11,25 @@ import json
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.mind import Mind
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
+from pathlib import Path
 # from Interaction.chat_interface import interactive_chat  # This causes circular import
+from Mind.mind_config import load_minds_config, get_available_minds, get_default_mind_id
 
 # Initialize journaling manager
 journaling_manager = SystemJournelingManager()
 
 # Create global Mind instance
-mind = Mind()
+mind = None  # Will be initialized after mind selection
 
 def clear_screen():
-    """Clear the terminal screen"""
-    pass
-    if os.name == 'nt':  # Windows
-        os.system('cls')
-    else:  # Unix/Linux/MacOS
-        os.system('clear')
+    """
+    Prints a separation line instead of clearing the screen
+    to preserve connection status messages and errors
+    """
+    # Instead of clearing screen, print a separator
+    print("\n" + "=" * 80)
+    print("                           MENU NAVIGATION")
+    print("=" * 80 + "\n")
 
 def print_header():
     """Print PenphinMind header"""
@@ -33,6 +37,65 @@ def print_header():
     print("                     PenphinMind")
     print("=" * 60)
     print()
+
+async def select_mind() -> Mind:
+    """Allow user to select which mind to use from minds_config.json"""
+    clear_screen()
+    print_header()
+    print("🧠 Mind Selection\n")
+    
+    # Load mind configurations
+    mind_config = load_minds_config()
+    
+    # Get available minds
+    minds = mind_config.get("minds", {})
+    if not minds:
+        print("⚠️ No minds configured in minds_config.json")
+        print("Using default auto-configuration")
+        return Mind()  # Use default Mind with auto settings
+    
+    # Display available minds
+    print("Available Minds:")
+    mind_options = list(minds.keys())
+    default_mind_id = get_default_mind_id()
+    
+    for i, mind_id in enumerate(mind_options, 1):
+        mind_cfg = minds[mind_id]
+        name = mind_cfg.get("name", "Unknown")
+        device_id = mind_cfg.get("device_id", "unknown")
+        
+        connection = mind_cfg.get("connection", {})
+        conn_type = connection.get("type", "unknown")
+        ip = connection.get("ip", "auto")
+        port = connection.get("port", "auto")
+        
+        # Default indicator
+        default_indicator = " [DEFAULT]" if mind_id == default_mind_id else ""
+        
+        print(f"{i}) {name} [{device_id}]{default_indicator}")
+        print(f"   Connection: {conn_type.upper()} - {ip}:{port}")
+        print()
+    
+    # Get user selection
+    while True:
+        try:
+            choice = input(f"Select mind (1-{len(mind_options)} or Enter for default): ").strip()
+            
+            # Default selection
+            if not choice:
+                print(f"Using default mind: {minds[default_mind_id]['name']}")
+                return Mind(default_mind_id)
+            
+            choice_num = int(choice)
+            if 1 <= choice_num <= len(mind_options):
+                mind_id = mind_options[choice_num - 1]
+                selected_name = minds[mind_id]['name']
+                print(f"Selected mind: {selected_name} ({mind_id})")
+                return Mind(mind_id)
+            else:
+                print("Invalid selection, please try again")
+        except ValueError:
+            print("Invalid input, please enter a number")
 
 async def get_current_model_info():
     """Get information about the current active model"""
@@ -51,6 +114,9 @@ async def get_current_model_info():
 async def display_main_menu() -> str:
     """Display main menu and get user choice"""
     print_header()
+    
+    # Display mind information 
+    print(f"Current Mind: {mind.name} [ID: {mind.mind_id}]")
     
     # First establish connection with ping
     result = await mind.ping_system()
@@ -370,21 +436,38 @@ async def start_chat(mind_instance=None):
     mind_instance = mind_instance or mind
     
     # First establish a basic ping connection
-    print("Establishing connection...")
+    print("🔄 Testing connection to device...")
     ping_result = await mind_instance.ping_system()
     if not ping_result or ping_result.get("status") != "ok":
-        print("Error connecting to hardware. Press Enter to return to main menu...")
+        print("❌ Error connecting to hardware:")
+        print(f"  - Status: {ping_result.get('status', 'unknown')}")
+        print(f"  - Message: {ping_result.get('message', 'No response from device')}")
+        print(f"  - Details: {ping_result.get('error', 'No error details')}")
+        print("\n📋 Troubleshooting suggestions:")
+        print("  - Check if the device is powered on")
+        print("  - Verify connection settings (serial port, IP address, etc.)")
+        print("  - Try rebooting the device from the System Menu")
+        print("  - Check for errors in the application logs")
+        print("\nPress Enter to return to main menu...")
         input()
         return
+    else:
+        print("✅ Device connection successful!")
     
     # Now refresh hardware info before displaying
+    print("🔍 Getting hardware information...")
     hw_info_result = await mind_instance.get_hardware_info()
+    if hw_info_result and hw_info_result.get("status") == "ok":
+        print("✅ Hardware information retrieved successfully")
+    else:
+        print("⚠️ Warning: Could not retrieve hardware information")
+        print(f"  - Details: {hw_info_result.get('message', 'Unknown error')}")
     
     # Display hardware info at the top of chat
     hw_info = SynapticPathways.format_hw_info()
     print(hw_info)
     
-    print("\nWelcome to PenphinMind Chat\n")
+    print("\n🐧 Welcome to PenphinMind Chat 🐬\n")
     print("🔧 Initializing thought loop...\n")
     
     # Get the model from SynapticPathways
@@ -514,6 +597,13 @@ async def start_chat(mind_instance=None):
                 print("\nPress Enter to return to main menu...")
                 input()
                 return
+    
+    # Create and initialize ChatManager only when entering chat
+    from Interaction.chat_manager import ChatManager
+    if not mind_instance.chat_manager:
+        print("Initializing chat manager...")
+        mind_instance.chat_manager = ChatManager(mind_instance)
+        await mind_instance.chat_manager.initialize(model_name)
     
     # Import interactive_chat here to avoid circular imports
     from Interaction.chat_interface import interactive_chat
@@ -684,38 +774,58 @@ async def initialize_system(connection_type=None):
     return result
 
 async def run_menu_system(mind_instance=None):
-    """Run the interactive menu system"""
+    """Main menu system entry point"""
+    global mind
+    
     try:
-        # Use global mind instance if not provided
-        mind_instance = mind_instance or mind
-        
-        # Display the main menu and handle user choices
-        while True:
-            clear_screen()
+        # If no mind instance provided, let user choose one
+        if mind_instance is None:
+            # Let user select a mind
+            selected_mind = await select_mind()
+            mind = selected_mind
+        else:
+            # Use the provided mind instance
+            mind = mind_instance
             
-            # Get main menu choice
+        # Initialize the mind if needed
+        if not mind._initialized:
+            print("\n🔄 Initializing mind system...")
+            conn_type = mind._connection_type
+            result = await mind.initialize(conn_type)
+            if not result:
+                print("❌ Mind initialization failed. Connection may be unavailable.")
+                input("\nPress Enter to continue with limited functionality...")
+        
+        # Main menu loop
+        while True:
             choice = await display_main_menu()
             
             if choice == "1":  # Chat
-                await start_chat(mind_instance)
+                await start_chat()
             elif choice == "2":  # Information
                 await display_model_list()
             elif choice == "3":  # System
                 await system_menu()
             elif choice == "4":  # Exit
-                print("\nExiting PenphinMind menu system...")
+                print("\nExiting PenphinMind system...")
+                await mind.cleanup()
                 break
             else:
                 print("\nInvalid choice. Please try again.")
                 await asyncio.sleep(1)
                 
-    except KeyboardInterrupt:
-        print("\nMenu system interrupted.")
     except Exception as e:
-        journaling_manager.recordError(f"Error in menu system: {e}")
-        print(f"\nAn error occurred: {e}")
+        journaling_manager.recordError(f"Menu system error: {e}")
         import traceback
-        journaling_manager.recordError(traceback.format_exc())
+        journaling_manager.recordError(f"Stack trace: {traceback.format_exc()}")
+        print(f"\nMenu system error: {e}")
+        
+        # Try to clean up
+        try:
+            if mind and mind._initialized:
+                await mind.cleanup()
+        except:
+            pass
 
 # Entry point
 if __name__ == "__main__":

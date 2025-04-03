@@ -7,9 +7,9 @@ from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass
 from pathlib import Path
 
-from .api_commands import CommandType, BaseCommand, LLMCommand
+from ..Subcortex.api_commands import CommandType, BaseCommand, LLMCommand
 from .synaptic_pathways import SynapticPathways
-from Mind.CorpusCallosum.api_commands import create_command, parse_response
+from Mind.Subcortex.api_commands import create_command, parse_response, AudioCommand
 from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
 
 logger = logging.getLogger(__name__)
@@ -114,21 +114,29 @@ class AudioAutomation:
             self.audio_buffer.clear()
             
             # Convert to text using ASR
-            asr_response = await NeurocorticalBridge.execute("asr_inference", {
-                "audio_data": audio_data.tolist()
-            })
+            asr_command = AudioCommand.create_asr_command(
+                audio_data=audio_data.tobytes(),
+                language="en"
+            )
+            asr_response = await NeurocorticalBridge.execute(asr_command)
             
-            if asr_response.get("status") == "ok" and asr_response.get("data", {}).get("text"):
+            if asr_response.get("status") == "ok" and asr_response.get("text", ""):
                 # Process with LLM
-                llm_response = await NeurocorticalBridge.execute("think", {
-                    "prompt": asr_response["data"]["text"]
-                }, stream=True)
+                llm_command = LLMCommand.create_think_command(
+                    prompt=asr_response.get("text", ""),
+                    stream=True
+                )
+                llm_response = await NeurocorticalBridge.execute(llm_command)
                 
-                if llm_response.get("status") == "ok":
+                if llm_response.get("status") == "ok" and llm_response.get("delta", ""):
                     # Convert response to speech
-                    await NeurocorticalBridge.execute("tts_inference", {
-                        "text": llm_response["data"]["delta"]
-                    })
+                    tts_command = AudioCommand.create_tts_command(
+                        text=llm_response.get("delta", ""),
+                        voice="default",
+                        speed=1.0,
+                        pitch=1.0
+                    )
+                    await NeurocorticalBridge.execute(tts_command)
                     
         except Exception as e:
             logger.error(f"Error processing audio: {e}")
@@ -143,25 +151,40 @@ class AudioAutomation:
 
     async def setup_audio(self) -> Dict[str, Any]:
         """Initialize audio system"""
-        return await NeurocorticalBridge.execute("setup_audio", {
-            "capcard": 0,
-            "capdevice": 0,
-            "capVolume": 0.5,
-            "playcard": 0,
-            "playdevice": 1,
-            "playVolume": 0.5
-        })
+        try:
+            command = AudioCommand(
+                action="setup",
+                data={
+                    "capcard": 0,
+                    "capdevice": 0,
+                    "capVolume": 0.5,
+                    "playcard": 0,
+                    "playdevice": 1,
+                    "playVolume": 0.5
+                }
+            )
+            return await NeurocorticalBridge.execute(command)
+        except Exception as e:
+            logger.error(f"Error setting up audio: {e}")
+            return {"status": "error", "message": str(e)}
     
     async def setup_asr(self) -> Dict[str, Any]:
         """Initialize ASR system"""
-        command = create_command("asr", "setup", data={
-            "model": "sherpa-ncnn-streaming-zipformer-20M-2023-02-17",
-            "response_format": "asr.utf-8",
-            "input": "sys.pcm",
-            "enoutput": True,
-            "enkws": True,
-            "rule1": 2.4,
-            "rule2": 1.2,
-            "rule3": 30
-        })
-        return await SynapticPathways.send_command(command) 
+        try:
+            command = AudioCommand(
+                action="setup",
+                data={
+                    "model": "sherpa-ncnn-streaming-zipformer-20M-2023-02-17",
+                    "response_format": "asr.utf-8",
+                    "input": "sys.pcm",
+                    "enoutput": True,
+                    "enkws": True,
+                    "rule1": 2.4,
+                    "rule2": 1.2,
+                    "rule3": 30
+                }
+            )
+            return await NeurocorticalBridge.execute(command)
+        except Exception as e:
+            logger.error(f"Error setting up ASR: {e}")
+            return {"status": "error", "message": str(e)} 

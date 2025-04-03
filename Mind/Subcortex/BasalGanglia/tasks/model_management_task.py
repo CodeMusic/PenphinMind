@@ -5,7 +5,7 @@ import logging
 import time
 import asyncio
 from typing import Dict, Any, List
-from Mind.CorpusCallosum.api_commands import (
+from Mind.Subcortex.api_commands import (
     BaseCommand, 
     CommandType,
     LLMCommand, 
