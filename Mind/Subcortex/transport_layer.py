@@ -1415,7 +1415,6 @@ class ADBTransport(BaseTransport):
         
         if not self.connected:
             if _tcp_gateway_active:
-                # Try to re-establish the connection if gateway is marked active
                 journaling_manager.recordInfo("TCP gateway marked active but connection lost, reconnecting...")
                 await self.connect()
             else:
@@ -1428,7 +1427,7 @@ class ADBTransport(BaseTransport):
             ip, port = self.endpoint.split(":")
             port = int(port)
             
-            # Prepare JSON data - log the exact string that will be sent
+            # Prepare JSON data
             json_data = json.dumps(command) + "\n"
             journaling_manager.recordInfo("🔤 NETWORK RAW REQUEST (ADB):")
             journaling_manager.recordInfo(f"  {json_data.strip()}")
@@ -1439,30 +1438,38 @@ class ADBTransport(BaseTransport):
                 try:
                     s.connect((ip, port))
                 except Exception as e:
-                    # Connection failed, TCP gateway might be down
                     journaling_manager.recordError(f"Socket connection failed: {e}")
                     _tcp_gateway_active = False
                     self.connected = False
                     raise ConnectionError("Failed to connect to forwarded port")
                 
-                # Mark gateway as active if connection succeeds
                 _tcp_gateway_active = True
                 
                 # Send command
                 s.sendall(json_data.encode())
                 
-                # Read response with larger buffer
+                # Read response with retry on empty
                 buffer = bytearray()
+                retries = 3  # Number of empty responses to accept before continuing
+                empty_count = 0
+                
                 while True:
                     try:
                         chunk = s.recv(4096)
                         if not chunk:
-                            break
+                            empty_count += 1
+                            journaling_manager.recordInfo(f"Received empty response (breath {empty_count}/{retries})")
+                            if empty_count >= retries:
+                                break
+                            # Wait a bit before retry
+                            await asyncio.sleep(0.1)
+                            continue
+                        
                         buffer.extend(chunk)
                         if b"\n" in chunk:
-                                break
+                            break
                     except socket.timeout:
-                                break
+                        break
                 
                 # Log the raw response before parsing
                 raw_response = buffer.decode() if buffer else ""
@@ -1473,17 +1480,11 @@ class ADBTransport(BaseTransport):
                     try:
                         response_str = buffer.decode().strip()
                         response = json.loads(response_str)
-                        
-                        # Log the received response
                         self._log_transport_json("RECEIVE", response, "ADBTransport")
-                        
                         return response
                     except json.JSONDecodeError as e:
                         journaling_manager.recordError(f"Failed to parse JSON: {e}")
-                        
-                        # Log the failed response
                         self._log_transport_json("RECEIVE", f"INVALID JSON: {buffer.decode().strip()}", "ADBTransport")
-                        
                         return {
                             "request_id": command.get("request_id", "error"),
                             "work_id": command.get("work_id", "local"),
@@ -1493,24 +1494,19 @@ class ADBTransport(BaseTransport):
                             "created": int(time.time())
                         }
                 else:
-                    journaling_manager.recordError("Empty response received")
-                    _tcp_gateway_active = False  # Mark gateway as inactive on empty response
-                    
-                    # Log the empty response
-                    self._log_transport_json("RECEIVE", "EMPTY RESPONSE", "ADBTransport")
-                    
+                    # Empty response after retries - this might be normal
+                    journaling_manager.recordInfo("Empty response after retries - continuing")
                     return {
-                    "request_id": command.get("request_id", "error"),
-                    "work_id": command.get("work_id", "local"),
-                    "data": None,
-                    "error": {"code": -2, "message": "Empty response"},
+                        "request_id": command.get("request_id", "error"),
+                        "work_id": command.get("work_id", "local"),
+                        "data": "",  # Empty data rather than None
                         "object": command.get("object", "None"),
                         "created": int(time.time())
                     }
             
         except Exception as e:
             journaling_manager.recordError(f"Error transmitting command: {e}")
-            _tcp_gateway_active = False  # Mark gateway as inactive on error
+            _tcp_gateway_active = False
             raise CommandError(f"Command transmission failed: {e}")
 
 # Transport factory
@@ -1557,10 +1553,7 @@ def get_transport(transport_type: str, connection_details: dict = None) -> BaseT
         raise ValueError(f"Unsupported transport type: {transport_type}")
 
 def run_adb_command(command_list):
-    """Run an ADB command with fallback to absolute path from config.
-    
-    This is a standalone utility function that doesn't require a transport instance.
-    Once direct ADB command fails, all subsequent calls will use the config path.
+    """Run an ADB command, trying direct 'adb' first, then fallback to config path
     
     Args:
         command_list: List of ADB command arguments
@@ -1571,83 +1564,29 @@ def run_adb_command(command_list):
     Raises:
         ConnectionError: If command execution fails
     """
-    global _direct_adb_failed, _adb_executable_path, _tcp_gateway_active
-    
-    # If running a command that affects the TCP gateway status
-    is_gateway_command = (command_list and 
-                         command_list[0] in ["start-server", "forward", "kill-server"])
-    
-    # If we already know direct ADB failed, use the cached path immediately
-    if _direct_adb_failed and _adb_executable_path:
-        try:
-            journaling_manager.recordInfo(f"Using cached ADB path: {_adb_executable_path} {' '.join(command_list)}")
-            result = subprocess.run(
-                [_adb_executable_path] + command_list,
-                capture_output=True,
-                text=True,
-                env=os.environ
-            )
-            if result.returncode == 0:
-                # Update TCP gateway status for gateway commands
-                if is_gateway_command and command_list[0] == "forward":
-                    _tcp_gateway_active = True
-                elif is_gateway_command and command_list[0] == "kill-server":
-                    _tcp_gateway_active = False
-                return result.stdout
-            else:
-                journaling_manager.recordError(f"ADB command failed with absolute path: {result.stderr}")
-                # Mark TCP gateway as inactive on failure
-                if is_gateway_command:
-                    _tcp_gateway_active = False
-                raise ConnectionError(f"ADB command failed: {result.stderr}")
-        except Exception as e:
-            journaling_manager.recordError(f"Error running ADB with cached path: {e}")
-            # Mark TCP gateway as inactive on error
-            if is_gateway_command:
-                _tcp_gateway_active = False
-            raise ConnectionError(f"ADB execution error: {e}")
-    
-    # If direct ADB hasn't failed yet, try it first
-    if not _direct_adb_failed:
-        try:
-            # Try running adb directly
-            journaling_manager.recordInfo(f"Running ADB command: adb {' '.join(command_list)}")
-            result = subprocess.run(
-                ["adb"] + command_list,
-                capture_output=True,
-                text=True,
-                env=os.environ
-            )
-            if result.returncode == 0:
-                # Update TCP gateway status for gateway commands
-                if is_gateway_command and command_list[0] == "forward":
-                    _tcp_gateway_active = True
-                elif is_gateway_command and command_list[0] == "kill-server":
-                    _tcp_gateway_active = False
-                return result.stdout
-            else:
-                journaling_manager.recordError(f"ADB command failed: {result.stderr}")
-                # Mark TCP gateway as inactive on failure
-                if is_gateway_command:
-                    _tcp_gateway_active = False
-                _direct_adb_failed = True  # Mark direct ADB as failed
-        except Exception as e:
-            journaling_manager.recordInfo(f"Error running ADB: {e}. Trying absolute path from config...")
-            # Mark TCP gateway as inactive on error
-            if is_gateway_command:
-                _tcp_gateway_active = False
-            _direct_adb_failed = True  # Mark direct ADB as failed
+    # Try direct adb command first
+    try:
+        journaling_manager.recordInfo(f"Running direct ADB command: adb {' '.join(command_list)}")
+        result = subprocess.run(
+            ["adb"] + command_list,
+            capture_output=True,
+            text=True,
+            env=os.environ
+        )
+        if result.returncode == 0:
+            return result.stdout
+    except FileNotFoundError:
+        journaling_manager.recordInfo("Direct ADB command not found, trying config path...")
+    except Exception as e:
+        journaling_manager.recordInfo(f"Direct ADB command failed: {e}, trying config path...")
 
-    # Fallback to absolute path from config
+    # Fallback to config path
     try:
         adb_path = CONFIG.adb_path
         if not adb_path.endswith(".exe") and platform.system() == "Windows":
             adb_path += ".exe"
-        
-        # Cache the path for future use
-        _adb_executable_path = adb_path
             
-        journaling_manager.recordInfo(f"Running ADB with absolute path: {adb_path} {' '.join(command_list)}")
+        journaling_manager.recordInfo(f"Running ADB with config path: {adb_path} {' '.join(command_list)}")
         result = subprocess.run(
             [adb_path] + command_list,
             capture_output=True,
@@ -1655,21 +1594,8 @@ def run_adb_command(command_list):
             env=os.environ
         )
         if result.returncode == 0:
-            # Update TCP gateway status for gateway commands
-            if is_gateway_command and command_list[0] == "forward":
-                _tcp_gateway_active = True
-            elif is_gateway_command and command_list[0] == "kill-server":
-                _tcp_gateway_active = False
             return result.stdout
         else:
-            journaling_manager.recordError(f"ADB command failed with absolute path: {result.stderr}")
-            # Mark TCP gateway as inactive on failure
-            if is_gateway_command:
-                _tcp_gateway_active = False
             raise ConnectionError(f"ADB command failed: {result.stderr}")
     except Exception as e:
-        journaling_manager.recordError(f"Error running ADB with absolute path: {e}")
-        # Mark TCP gateway as inactive on error
-        if is_gateway_command:
-            _tcp_gateway_active = False
         raise ConnectionError(f"ADB execution error: {e}")
