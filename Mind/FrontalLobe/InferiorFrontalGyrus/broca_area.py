@@ -19,7 +19,7 @@ import time
 
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.Subcortex.api_commands import CommandType, AudioCommand
-from config import CONFIG  # Use absolute import
+from config import CONFIG
 from .llm import LLM
 
 # Initialize journaling manager

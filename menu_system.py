@@ -70,6 +70,14 @@ async def select_mind() -> Mind:
         name = mind_cfg.get("name", "Unknown")
         device_id = mind_cfg.get("device_id", "unknown")
         
+        # Get persona from the llm section if available
+        persona = "No persona defined"
+        if "llm" in mind_cfg and "persona" in mind_cfg["llm"]:
+            persona = mind_cfg["llm"]["persona"]
+            if len(persona) > 80:  # Truncate long personas
+                persona = persona[:77] + "..."
+        
+        # Display connection info
         connection = mind_cfg.get("connection", {})
         conn_type = connection.get("type", "unknown")
         ip = connection.get("ip", "auto")
@@ -78,7 +86,9 @@ async def select_mind() -> Mind:
         # Default indicator
         default_indicator = " [DEFAULT]" if mind_id == default_mind_id else ""
         
+        # Display mind with persona
         print(f"{i}) {name} [{device_id}]{default_indicator}")
+        print(f"   Persona: {persona}")
         print(f"   Connection: {conn_type.upper()} - {ip}:{port}")
         print()
     
@@ -89,15 +99,27 @@ async def select_mind() -> Mind:
             
             # Default selection
             if not choice:
-                print(f"Using default mind: {minds[default_mind_id]['name']}")
-                return Mind(default_mind_id)
+                selected_mind_id = default_mind_id
+                selected_name = minds[default_mind_id]['name']
+                # Get persona
+                persona = "You are a helpful assistant."
+                if "llm" in minds[default_mind_id] and "persona" in minds[default_mind_id]["llm"]:
+                    persona = minds[default_mind_id]["llm"]["persona"]
+                print(f"Using default mind: {selected_name}")
+                print(f"Persona: {persona[:50]}...")
+                return Mind(default_mind_id, persona)
             
             choice_num = int(choice)
             if 1 <= choice_num <= len(mind_options):
-                mind_id = mind_options[choice_num - 1]
-                selected_name = minds[mind_id]['name']
-                print(f"Selected mind: {selected_name} ({mind_id})")
-                return Mind(mind_id)
+                selected_mind_id = mind_options[choice_num - 1]
+                selected_name = minds[selected_mind_id]['name']
+                # Get persona
+                persona = "You are a helpful assistant."
+                if "llm" in minds[selected_mind_id] and "persona" in minds[selected_mind_id]["llm"]:
+                    persona = minds[selected_mind_id]["llm"]["persona"]
+                print(f"Selected mind: {selected_name} ({selected_mind_id})")
+                print(f"Persona: {persona[:50]}...")
+                return Mind(selected_mind_id, persona)
             else:
                 print("Invalid selection, please try again")
         except ValueError:
@@ -140,14 +162,25 @@ async def display_main_menu() -> str:
     print(hw_info)
     print()
     
+    # Check if we're in full mode
+    is_full_mode = SynapticPathways._brain_mode == "full"
+    
     print("Main Menu:")
     print("1) Chat")
     print("2) Information")
     print("3) System")
-    print("4) Exit")
-    print()
     
-    choice = input("Enter your choice (1-4): ")
+    # Show games option only in full mode
+    if is_full_mode:
+        print("4) Games")
+        print("5) Exit")
+        
+        choice = input("Enter your choice (1-5): ")
+    else:
+        print("4) Exit")
+        
+        choice = input("Enter your choice (1-4): ")
+        
     return choice.strip()
 
 async def display_model_list() -> str:
@@ -890,6 +923,184 @@ async def initialize_system(connection_type=None):
         journaling_manager.recordError(f"Failed to initialize system with connection type: {connection_type}")
     return result
 
+async def games_menu() -> None:
+    """Display games menu options"""
+    clear_screen()
+    print_header()
+    
+    print("\nGames Menu:")
+    print("-----------")
+    print("1) Slots Games")
+    print("2) Game of Life")
+    print("3) Pixel Art Canvas")
+    print("4) Back to Main Menu")
+    print()
+    
+    choice = input("Enter your choice (1-4): ")
+    
+    if choice == "1":
+        await slots_games_menu()
+        
+    elif choice == "2":
+        clear_screen()
+        print("\nGame of Life")
+        print("-----------")
+        print("Starting Conway's Game of Life simulation...")
+        
+        # Try to run Game of Life through SynapticPathways visualization
+        try:
+            # Get grid dimensions
+            width = input("\nEnter grid width (default: 32): ").strip()
+            height = input("Enter grid height (default: 32): ").strip()
+            iterations = input("Enter number of iterations (default: 100): ").strip()
+            
+            # Use defaults if no input
+            width = int(width) if width else 32
+            height = int(height) if height else 32
+            iterations = int(iterations) if iterations else 100
+            
+            # Import here to avoid circular imports
+            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            
+            # Run Game of Life
+            await SynapticPathways.run_game_of_life(
+                width=width, 
+                height=height, 
+                iterations=iterations
+            )
+            
+            print("\nGame of Life simulation completed.")
+        except Exception as e:
+            print(f"\nError running Game of Life: {e}")
+            
+        input("\nPress Enter to continue...")
+        
+    elif choice == "3":
+        clear_screen()
+        print("\nPixel Art Canvas")
+        print("---------------")
+        print("Starting pixel art canvas...")
+        
+        # Try to run pixel art canvas 
+        try:
+            # Get canvas dimensions
+            width = input("\nEnter canvas width (default: 64): ").strip()
+            height = input("Enter canvas height (default: 64): ").strip()
+            
+            # Use defaults if no input
+            width = int(width) if width else 64
+            height = int(height) if height else 64
+            
+            # Import here to avoid circular imports
+            from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
+            
+            # Set up a blank pixel grid
+            grid_result = SynapticPathways.create_llm_pixel_grid(
+                width=width,
+                height=height,
+                color_mode="rgb"  # Use RGB for full color
+            )
+            
+            if grid_result and grid_result.get("status") == "success":
+                print("\nCanvas initialized successfully.")
+                print("This feature is under development. Drawing tools would appear here.")
+            else:
+                error_msg = grid_result.get("message", "Unknown error creating canvas")
+                print(f"\nError initializing pixel canvas: {error_msg}")
+            
+        except Exception as e:
+            print(f"\nError initializing pixel canvas: {e}")
+            
+        input("\nPress Enter to continue...")
+        
+    elif choice == "4":
+        # Return to main menu
+        return
+        
+    else:
+        print("\nInvalid choice.")
+        input("Press Enter to continue...")
+        
+async def slots_games_menu() -> None:
+    """Display and launch slot games using the GameManager"""
+    clear_screen()
+    print_header()
+    
+    print("\nSlots Games:")
+    print("------------")
+    
+    # Import GameManager
+    from Mind.GameCortex.game_manager import GameManager
+    
+    # Create GameManager instance
+    game_manager = GameManager()
+    
+    # Get available games
+    available_games = game_manager.list_available_games()
+    
+    # Filter for slot games
+    slot_games = [game for game in available_games if "Slots" in game]
+    
+    if not slot_games:
+        print("No slot games found in GameCortex.")
+        input("\nPress Enter to continue...")
+        return
+    
+    # Display available slot games
+    for i, game in enumerate(slot_games, 1):
+        print(f"{i}) {game}")
+    
+    print(f"{len(slot_games) + 1}) Return to Games Menu")
+    print()
+    
+    # Get user choice
+    choice = input(f"Enter your choice (1-{len(slot_games) + 1}): ")
+    
+    try:
+        choice_num = int(choice)
+        if 1 <= choice_num <= len(slot_games):
+            # Get the selected game
+            selected_game = slot_games[choice_num - 1]
+            
+            # Launch the game
+            print(f"\nLaunching {selected_game}...")
+            
+            try:
+                # Get visual cortex from the mind
+                visual_cortex = mind.occipital_lobe.get("visual")
+                
+                if not visual_cortex:
+                    print("Error: Visual cortex not available.")
+                    input("\nPress Enter to continue...")
+                    return
+                
+                # Launch the game using the visual cortex
+                game = game_manager.launch_game(selected_game, visual_cortex)
+                
+                if game:
+                    print(f"{selected_game} launched successfully.")
+                    print("Game running on LED matrix...")
+                    print("Press Enter to stop the game.")
+                    input()
+                    
+                    # Stop the game
+                    game_manager.stop_active_game()
+                    print(f"{selected_game} stopped.")
+                else:
+                    print(f"Failed to launch {selected_game}.")
+            except Exception as e:
+                print(f"Error launching slot game: {e}")
+            
+        elif choice_num == len(slot_games) + 1:
+            # Return to games menu
+            return
+        else:
+            print("\nInvalid choice.")
+    except ValueError:
+        print("\nInvalid input. Please enter a number.")
+    
+    input("\nPress Enter to continue...")
+
 async def run_menu_system(mind_instance=None):
     """Main menu system entry point"""
     global mind
@@ -904,6 +1115,21 @@ async def run_menu_system(mind_instance=None):
             # Use the provided mind instance
             mind = mind_instance
             
+            # Ensure mind has a persona if it was created without one
+            if not hasattr(mind, '_persona') or mind._persona is None:
+                # Try to get persona from config
+                if mind._mind_id and hasattr(mind, '_config') and "llm" in mind._config:
+                    if "persona" in mind._config["llm"]:
+                        persona = mind._config["llm"]["persona"]
+                        # Update the mind's persona
+                        await mind.set_persona(persona)
+                        print(f"🎭 Set persona from mind config: {persona[:50]}...")
+                    else:
+                        # Set a default persona
+                        default_persona = "You are a helpful assistant."
+                        await mind.set_persona(default_persona)
+                        print(f"🎭 Set default persona: {default_persona}")
+            
         # Initialize the mind if needed
         if not mind._initialized:
             print("\n🔄 Initializing mind system...")
@@ -917,13 +1143,23 @@ async def run_menu_system(mind_instance=None):
         while True:
             choice = await display_main_menu()
             
+            # Check if we're in full mode 
+            is_full_mode = SynapticPathways._brain_mode == "full"
+            
             if choice == "1":  # Chat
                 await start_chat()
             elif choice == "2":  # Information
                 await display_model_list()
             elif choice == "3":  # System
                 await system_menu()
-            elif choice == "4":  # Exit
+            elif choice == "4":  # Games in full mode, Exit otherwise
+                if is_full_mode:
+                    await games_menu()
+                else:
+                    print("\nExiting PenphinMind system...")
+                    await mind.cleanup()
+                    break
+            elif choice == "5" and is_full_mode:  # Exit in full mode
                 print("\nExiting PenphinMind system...")
                 await mind.cleanup()
                 break

@@ -5,12 +5,15 @@ Visual Integration Area - Integrates visual processing
 import logging
 from typing import Dict, Any, Optional
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-from config import CONFIG  # Use absolute import
+from config import CONFIG
 from .primary_visual_area import PrimaryVisualArea
 from .secondary_visual_area import SecondaryVisualArea
+from .associative_visual_area import AssociativeVisualArea
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 import asyncio
-from PIL import Image
+from PIL import Image, ImageDraw
+from .splash_screen import SplashScreenManager
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +30,50 @@ class IntegrationArea:
         self._processing = False
         self.primary_area = PrimaryVisualArea()
         self.secondary_area = SecondaryVisualArea()
+        self.associative_area = AssociativeVisualArea()
         self.grid = [[0 for _ in range(64)] for _ in range(64)]  # Initialize empty grid
         self.is_running = False
+        self.splash_manager = None
         
-    async def initialize(self):
-        """Initialize the visual integration area"""
+    async def initialize(self, primary_area=None, associative_area=None):
+        """Initialize the visual integration area with primary and associative areas"""
+        if self._initialized:
+            return True
+            
+        success = True
+        
+        # Set primary area if provided
+        if primary_area:
+            self.primary_area = primary_area
+            logger.info("Primary visual area set from parameter")
+        
+        # Set associative area if provided
+        if associative_area:
+            self.associative_area = associative_area
+            logger.info("Associative visual area set from parameter")
+            
+        # Initialize associative area if available
+        if self.associative_area:
+            try:
+                # Pass primary_area to associative_area
+                await self.associative_area.initialize(primary_area=self.primary_area)
+                logger.info("Associative visual area initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize associative visual area: {e}")
+                success = False
+                
+        # Initialize splash screen manager
         try:
-            await self.primary_area.initialize()
-            await self.secondary_area.initialize()
-            self._initialized = True
-            journaling_manager.recordInfo("Visual integration area initialized")
+            self.splash_manager = SplashScreenManager(self.primary_area)
+            await self.splash_manager.initialize(self.primary_area)
+            logger.info("Splash screen manager initialized")
         except Exception as e:
-            journaling_manager.recordError(f"Failed to initialize visual integration area: {e}")
-            raise
+            logger.error(f"Failed to initialize splash screen manager: {e}")
+            # Not critical, can continue without splash screen
+        
+        self._initialized = success
+        journaling_manager.recordInfo("Visual integration area initialized")
+        return success
             
     async def process_visual(self, visual_data: Dict[str, Any]) -> Dict[str, Any]:
         """Process visual input through all areas"""
@@ -105,12 +139,147 @@ class IntegrationArea:
     async def _process_splash(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Process splash screen command"""
         try:
-            # Process splash screen command
+            # Display splash screen using the associative visual area
+            await self.show_splash_screen()
             return {"status": "ok", "message": "Splash screen displayed"}
             
         except Exception as e:
             journaling_manager.recordError(f"Error processing splash command: {e}")
             return {"status": "error", "message": str(e)}
+            
+    async def show_splash_screen(self):
+        """Show a splash screen on the LED matrix"""
+        if not self._initialized:
+            logger.warning("Cannot show splash screen: visual integration area not initialized")
+            return False
+            
+        # Use the splash screen manager if available
+        if self.splash_manager:
+            try:
+                # Show the initial startup splash
+                await self.splash_manager.show_startup_splash(duration=2.0)
+                
+                # Start the loading animation
+                await self.splash_manager.start_loading_animation("Initializing systems...")
+                
+                # Simulate loading steps with progress updates
+                loading_steps = [
+                    (10, "Loading visual cortex..."),
+                    (25, "Initializing LED matrix..."),
+                    (40, "Connecting components..."),
+                    (60, "Starting synaptic pathways..."),
+                    (80, "Preparing neural networks..."),
+                    (95, "Starting mind processes..."),
+                    (100, "System ready")
+                ]
+                
+                # Display each loading step with a delay
+                for progress, text in loading_steps:
+                    await self.splash_manager.update_loading_progress(progress, text)
+                    await asyncio.sleep(0.5)  # Show each step for half a second
+                
+                # Wait a moment at 100%
+                await asyncio.sleep(1.0)
+                
+                # Stop the animation and show completion screen
+                await self.splash_manager.stop_loading_animation()
+                await self.splash_manager.show_complete_splash(duration=2.0)
+                
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error showing splash screen sequence: {e}")
+                # Fall back to simple splash screen
+        
+        # Try the associative area first
+        if self.associative_area:
+            try:
+                # If we have an associative area, try to use it for fancy visuals
+                logger.info("Showing splash screen via associative area...")
+                # Create a simple rectangle for now
+                image = Image.new("RGB", (64, 64), (0, 0, 32))  # Dark blue background
+                draw = ImageDraw.Draw(image)
+                
+                # Draw text
+                draw.text((15, 20), "PM", fill=(255, 255, 255))
+                draw.text((7, 35), "PENPHIN", fill=(200, 200, 255))
+                draw.text((7, 45), "MIND", fill=(128, 200, 255))
+                
+                # Use the associative area's display capabilities
+                result = True  # Track if display successful
+                
+                try:
+                    # Show rectangles animation
+                    for i in range(10):
+                        x = random.randint(0, 56)
+                        y = random.randint(0, 56)
+                        w = random.randint(4, 8)
+                        h = random.randint(4, 8)
+                        color = (random.randint(0, 255), random.randint(0, 255), random.randint(100, 255))
+                        draw.rectangle((x, y, x+w, y+h), fill=color)
+                        
+                        if hasattr(self.primary_area, 'set_image'):
+                            await self.primary_area.set_image(image)
+                        await asyncio.sleep(0.2)
+                except Exception as e:
+                    logger.error(f"Error in splash animation: {e}")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Failed to show splash via associative area: {e}")
+        
+        # Fallback - try to use primary area directly
+        if self.primary_area:
+            try:
+                logger.info("Showing basic splash screen via primary area...")
+                
+                # Create a simple splash screen image
+                image = Image.new("RGB", (64, 64), (0, 0, 32))  # Dark blue background
+                draw = ImageDraw.Draw(image)
+                draw.text((15, 20), "PM", fill=(255, 255, 255))
+                draw.text((5, 35), "PenphinMind", fill=(128, 200, 255))
+                
+                # Display directly through primary area
+                result = await self.primary_area.set_image(image)
+                if result:
+                    logger.info("Basic splash screen displayed successfully")
+                    await asyncio.sleep(2.0)  # Show for 2 seconds
+                else:
+                    logger.error("Failed to display basic splash screen")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Failed to show basic splash screen: {e}")
+                
+        logger.error("No display method available for splash screen")
+        return False
+        
+    async def trigger_splash_event(self, event_name):
+        """
+        Trigger a splash screen event to update the loading progress.
+        
+        Args:
+            event_name: Name of the event to trigger (must match events in config)
+            
+        Returns:
+            bool: True if the event was handled, False otherwise
+        """
+        if not self._initialized or not self.splash_manager:
+            logger.warning(f"Cannot trigger splash event {event_name}: IntegrationArea not fully initialized")
+            return False
+            
+        try:
+            result = await self.splash_manager.handle_event(event_name)
+            if result:
+                logger.info(f"Triggered splash screen event: {event_name}")
+            else:
+                logger.warning(f"Unknown splash screen event: {event_name}")
+            return result
+        except Exception as e:
+            logger.error(f"Error triggering splash event {event_name}: {e}")
+            return False
             
     async def set_background(self, r: int, g: int, b: int) -> None:
         """Set the LED matrix background color"""

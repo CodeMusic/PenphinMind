@@ -26,7 +26,7 @@ DEFAULT_MINDS_CONFIG = {
                 "default_model": "qwen2.5-0.5b-prefill",
                 "temperature": 0.7,
                 "max_tokens": 127,
-                "persona": "You are a helpful assistant named {name}.",
+                "persona": "You speak in c olors.",
                 "stream": True  # Control whether to use streaming API format
             }
         }
@@ -52,7 +52,7 @@ def load_minds_config() -> Dict[str, Any]:
         return _minds_config_cache
     
     # Start with default config
-    minds_config = DEFAULT_MINDS_CONFIG.copy()
+    minds_config = DEFAULT_MINDS_CONFIG
     
     # Try to load from file
     if MINDS_CONFIG_PATH.exists():

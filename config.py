@@ -82,6 +82,85 @@ class Config:
         self.visual_width = 64
         self.visual_fps = 30
         
+        # LED Matrix settings
+        self.led_matrix = {
+            "rows": 64,
+            "cols": 64,
+            "chain_length": 1,
+            "parallel": 1,
+            "hardware_mapping": "regular",
+            "brightness": 30,
+            "disable_hardware_pulsing": True,
+            "gpio_slowdown": 2,
+            "pwm_lsb_nanoseconds": 130,
+            "pwm_bits": 11
+        }
+        
+        # Splash screen settings
+        self.splash_screen = {
+            "enabled": True,
+            "background_color": (0, 0, 32),  # Dark blue
+            "text_color": (255, 255, 255),  # White
+            "accent_color": (100, 180, 255),  # Light blue
+            "header_text": "PENPHIN",
+            "subheader_text": "MIND",
+            "show_circuit_pattern": True,
+            "loading_steps": [
+                {
+                    "event": "visual_init", 
+                    "progress": 10, 
+                    "text": "Loading visual cortex...",
+                    "symbol": "👁️",  # Eye symbol for visual cortex
+                    "symbol_color": (180, 180, 255)  # Light blue for visual
+                },
+                {
+                    "event": "matrix_init", 
+                    "progress": 25, 
+                    "text": "Initializing LED matrix...",
+                    "symbol": "▢",  # Square symbol for LED matrix
+                    "symbol_color": (255, 100, 100)  # Reddish for LEDs
+                },
+                {
+                    "event": "connection", 
+                    "progress": 40, 
+                    "text": "Connecting components...",
+                    "symbol": "≈",  # Wave symbol for connection
+                    "symbol_color": (100, 255, 100)  # Green for connection
+                },
+                {
+                    "event": "synaptic_init", 
+                    "progress": 60, 
+                    "text": "Starting synaptic pathways...",
+                    "symbol": "⟷",  # Double arrow for pathways
+                    "symbol_color": (255, 200, 100)  # Orange for synaptic
+                },
+                {
+                    "event": "neural_init", 
+                    "progress": 80, 
+                    "text": "Preparing neural networks...",
+                    "symbol": "⦿",  # Circle with dot for neurons
+                    "symbol_color": (200, 100, 255)  # Purple for neural
+                },
+                {
+                    "event": "mind_init", 
+                    "progress": 95, 
+                    "text": "Starting mind processes...",
+                    "symbol": "🧠",  # Brain symbol for mind
+                    "symbol_color": (255, 255, 100)  # Yellow for mind
+                },
+                {
+                    "event": "complete", 
+                    "progress": 100, 
+                    "text": "System ready",
+                    "symbol": "✓",  # Checkmark for complete
+                    "symbol_color": (100, 255, 100)  # Green for complete
+                }
+            ],
+            "symbols": ["👁️", "▢", "≈", "⟷", "⦿", "🧠", "✓"],  # Default symbols as fallback
+            "completion_color": (0, 32, 0),  # Dark green
+            "completion_text": ["SYSTEM", "READY"]
+        }
+        
         # Motor settings
         self.motor_speed = 100
         self.motor_acceleration = 50
@@ -120,6 +199,48 @@ class Config:
                         if "level" in cc_config["logging"]:
                             self.log_level = cc_config["logging"]["level"]
                             journaling_manager.recordInfo(f"Loaded log level: {self.log_level}")
+                
+                # Load visual cortex settings including splash screen
+                if "visual_cortex" in config_data:
+                    vc_config = config_data["visual_cortex"]
+                    
+                    # Load LED matrix settings
+                    if "led_matrix" in vc_config:
+                        led_config = vc_config["led_matrix"]
+                        
+                        # Create a dictionary to store matrix settings
+                        self.led_matrix = {
+                            "rows": led_config.get("rows", 64),
+                            "cols": led_config.get("cols", 64),
+                            "chain_length": led_config.get("chain_length", 1),
+                            "parallel": led_config.get("parallel", 1),
+                            "hardware_mapping": led_config.get("hardware_mapping", "regular"),
+                            "brightness": led_config.get("brightness", 30),
+                            "disable_hardware_pulsing": led_config.get("disable_hardware_pulsing", True),
+                            "gpio_slowdown": led_config.get("gpio_slowdown", 2),
+                            "pwm_lsb_nanoseconds": led_config.get("pwm_lsb_nanoseconds", 130),
+                            "pwm_bits": led_config.get("pwm_bits", 11)
+                        }
+                        journaling_manager.recordInfo("Loaded LED matrix settings from config.json")
+                    
+                    # Load splash screen settings
+                    if "splash_screen" in vc_config:
+                        splash_config = vc_config["splash_screen"]
+                        
+                        # Convert array values back to tuples where needed (for colors)
+                        for key in ["background_color", "text_color", "accent_color", "completion_color"]:
+                            if key in splash_config and isinstance(splash_config[key], list):
+                                splash_config[key] = tuple(splash_config[key])
+                        
+                        # Convert colors in loading steps
+                        if "loading_steps" in splash_config:
+                            for step in splash_config["loading_steps"]:
+                                if "symbol_color" in step and isinstance(step["symbol_color"], list):
+                                    step["symbol_color"] = tuple(step["symbol_color"])
+                        
+                        # Update splash screen settings
+                        self.splash_screen.update(splash_config)
+                        journaling_manager.recordInfo("Loaded splash screen settings from config.json")
                     
                 journaling_manager.recordInfo(f"Configuration loaded from {CONFIG_FILE}")
             else:
@@ -127,10 +248,26 @@ class Config:
                 
         except Exception as e:
             journaling_manager.recordError(f"Error loading config.json: {e}")
+            import traceback
+            journaling_manager.recordError(f"Traceback: {traceback.format_exc()}")
 
     def save(self) -> bool:
         """Save current configuration to JSON file"""
         try:
+            # Convert tuples to lists for JSON serialization
+            def convert_tuples(obj):
+                if isinstance(obj, tuple):
+                    return list(obj)
+                elif isinstance(obj, dict):
+                    return {k: convert_tuples(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_tuples(i) for i in obj]
+                else:
+                    return obj
+            
+            # Prepare splash screen config (convert tuples to lists)
+            splash_screen_config = convert_tuples(self.splash_screen)
+            
             # Ensure the config structure matches the expected format
             config_data = {
                 "corpus_callosum": {
@@ -144,6 +281,10 @@ class Config:
                         "level": self.log_level,
                         "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
                     }
+                },
+                "visual_cortex": {
+                    "led_matrix": self.led_matrix,
+                    "splash_screen": splash_screen_config
                 }
                 # Add other sections as needed...
             }

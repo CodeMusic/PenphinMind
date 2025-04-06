@@ -60,6 +60,58 @@ class NeurocorticalBridge:
     _initialized = False
     
     @classmethod
+    async def create_llm_pixel_grid(cls, width: int = 64, height: int = 64, color_mode: str = "rgb") -> Dict[str, Any]:
+        """
+        Create a pixel grid for drawing
+        
+        Args:
+            width: Width of the grid in pixels
+            height: Height of the grid in pixels
+            color_mode: Color mode ('rgb', 'grayscale')
+            
+        Returns:
+            Dict with grid information
+        """
+        journaling_manager.recordInfo(f"[NeurocorticalBridge] Creating pixel grid: {width}x{height} ({color_mode})")
+        
+        try:
+            # Import needed modules
+            import numpy as np
+            from PIL import Image, ImageDraw
+            
+            # Create a blank grid
+            if color_mode == "rgb":
+                grid = np.zeros((height, width, 3), dtype=np.uint8)
+            else:  # grayscale
+                grid = np.zeros((height, width), dtype=np.uint8)
+                
+            # Create a PIL image from the grid for drawing
+            if color_mode == "rgb":
+                image = Image.fromarray(grid, mode="RGB")
+            else:
+                image = Image.fromarray(grid, mode="L")
+                
+            # Return grid information
+            return {
+                "status": "success",
+                "grid": {
+                    "width": width,
+                    "height": height,
+                    "color_mode": color_mode,
+                    "image": image
+                }
+            }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[NeurocorticalBridge] Error creating pixel grid: {e}")
+            import traceback
+            journaling_manager.recordError(f"[NeurocorticalBridge] Error trace: {traceback.format_exc()}")
+            return {
+                "status": "error",
+                "message": f"Error creating pixel grid: {str(e)}"
+            }
+            
+    @classmethod
     def _to_dict_safely(cls, command):
         """
         Safely convert a command to a dictionary
@@ -108,6 +160,13 @@ class NeurocorticalBridge:
         """
         try:
             journaling_manager.recordInfo(f"Execute operation: {operation}")
+            
+            # Special handling for pixel_grid operation
+            if operation == "pixel_grid":
+                width = data.get("width", 64)
+                height = data.get("height", 64)
+                color_mode = data.get("color_mode", "rgb")
+                return await cls.create_llm_pixel_grid(width, height, color_mode)
             
             # If this is a special command, show debug info
             if operation in ["set_model", "hardware_info", "reset_system", "list_models", "ping", "reboot"]:
@@ -1099,9 +1158,12 @@ class NeurocorticalBridge:
         This is used to maintain compatibility when BasalGanglia is not available
         """
         try:
-            bg = cls.get_basal_ganglia()
+            # Import here to avoid circular imports
+            from Mind.Subcortex.BasalGanglia.basal_ganglia_integration import BasalGangliaIntegration
+            # Create instance if needed
+            bg_integration = BasalGangliaIntegration()
             journaling_manager.recordInfo("Using actual BasalGanglia")
-            return bg
+            return bg_integration
         except ImportError:
             # Create a minimal implementation with only essential functionality
             class MinimalBasalGanglia:

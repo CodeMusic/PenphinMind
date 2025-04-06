@@ -8,11 +8,13 @@ import logging
 import sys
 import signal
 import os
-from typing import Optional
+import time
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 from datetime import datetime
 import subprocess
 import json
+from PIL import Image, ImageDraw
 
 # Add the project root to Python path
 project_root = str(Path(__file__).parent)
@@ -64,10 +66,14 @@ class BrainRegion:
 class PenphinMind:
     """Main system class that manages all neural subsystems"""
     
-    def __init__(self, mind_id=None):
+    def __init__(self, mind_id=None, persona="You are a helpful assistant."):
         self.logger = logger
         self.running = False
-        self.mind = Mind(mind_id)
+        # Ensure persona is provided
+        if not persona:
+            self.logger.warning("Empty persona provided, using default")
+            persona = "You are a helpful assistant."
+        self.mind = Mind(mind_id, persona)
         # Set up signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -204,7 +210,6 @@ async def run_auditory_cortex_test(mind: Mind) -> None:
     except Exception as e:
         logger.error(f"Auditory cortex test error: {e}")
         raise
-
 async def run_frontal_cortex_test(mind: Mind) -> None:
     """Run frontal cortex (LLM) unit tests"""
     try:
@@ -239,22 +244,173 @@ async def run_frontal_cortex_test(mind: Mind) -> None:
 async def run_menu(mind: Mind, connection_type: str) -> None:
     """Run the interactive menu system"""
     was_initialized = False
+    splash_manager = None
     
     try:
         logger.info("Starting interactive menu system...")
         
-        # Ensure the connection is initialized if not done already
+        # Initialize auditory capabilities FIRST for testing hardware audio
+        brain_mode = SynapticPathways._brain_mode
+        if brain_mode in ["full", "ac"]:
+            logger.info(f"Running in {brain_mode} mode with auditory capabilities...")
+            try:
+                # Ensure mind is initialized for basic functionality
+                if not mind._initialized:
+                    logger.info("Initializing basic mind capabilities...")
+                    await mind.initialize(auditory_only=True)  # Only initialize basic components
+                
+                # Play a simple sine wave test using aplay BEFORE any visual initialization
+                logger.info("Running audio test before visual initialization...")
+                try:
+                    # First test using speaker-test with a sine wave
+                    import os
+                    audio_test_cmd = "speaker-test -D plughw:0,0 -t sine -f 1000 -c 2 -l 1"
+                    logger.info(f"Running audio test command: {audio_test_cmd}")
+                    os.system(audio_test_cmd)
+                    logger.info("Audio hardware test completed")
+                    
+                    # Additionally try using the auditory cortex if available
+                    if "auditory" in mind.temporal_lobe:
+                        logger.info("Testing audio through auditory cortex...")
+                        auditory_cortex = mind.temporal_lobe["auditory"]
+                        
+                        # Play a test sound if available
+                        try:
+                            from Mind.TemporalLobe.SuperiorTemporalGyrus.AuditoryCortex.audio_playback_utils import play_sound
+                            # Test with both direct audio play and fallback
+                            play_sound("front_center_fixed.wav")
+                            logger.info("Audio test through cortex completed")
+                        except Exception as audio_err:
+                            logger.error(f"Error during cortex audio test: {audio_err}")
+                            # Non-fatal, continue with initialization
+                    else:
+                        logger.warning("Auditory cortex component not found in temporal lobe")
+                except Exception as e:
+                    logger.error(f"Error during audio test: {e}")
+                    # Continue despite audio errors - don't block initialization
+            except Exception as e:
+                logger.error(f"Error initializing auditory capabilities: {e}", exc_info=True)
+                # Continue despite errors to allow visual to initialize
+        
+        # NOW initialize visual capabilities after audio test
+        if brain_mode in ["full", "vc"]:
+            logger.info(f"Running in {brain_mode} mode with visual capabilities...")
+            try:
+                # Ensure mind is fully initialized for basic functionality
+                if not mind._initialized:
+                    logger.info("Initializing basic mind capabilities...")
+                    await mind.initialize(visual_only=True)  # Only initialize basic components
+                
+                # Initialize visual cortex for splash screen BEFORE connection
+                if "visual" in mind.occipital_lobe:
+                    logger.info("Accessing visual cortex for splash screen...")
+                    visual_cortex = mind.occipital_lobe["visual"]
+                    
+                    # Initialize the primary visual area first
+                    logger.info("Initializing primary visual area...")
+                    if hasattr(visual_cortex, 'primary_area'):
+                        try:
+                            if not visual_cortex.primary_area._initialized:
+                                logger.info("Primary visual area not initialized, initializing now...")
+                                await visual_cortex.primary_area.initialize()
+                                logger.info(f"Primary visual area initialized: {visual_cortex.primary_area._initialized}")
+                                
+                                # Get splash manager if available
+                                if hasattr(visual_cortex, 'splash_manager') and visual_cortex.splash_manager:
+                                    splash_manager = visual_cortex.splash_manager
+                                    logger.info("Found existing splash manager in visual cortex")
+                                else:
+                                    # Initialize a new splash manager
+                                    from Mind.OccipitalLobe.VisualCortex.splash_screen import SplashScreenManager
+                                    splash_manager = SplashScreenManager(visual_cortex.primary_area)
+                                    logger.info("Created new splash manager")
+                                
+                                # Initial splash screen immediately after primary area initialization
+                                if visual_cortex.primary_area._initialized:
+                                    # Show splash screen and start loading animation
+                                    logger.info("Showing startup splash screen...")
+                                    if splash_manager:
+                                        await splash_manager.show_startup_splash(duration=2.0)
+                                        await splash_manager.start_loading_animation("Initializing systems...")
+                                        # Signal visual_init event
+                                        await splash_manager.handle_event("visual_init")
+                                    else:
+                                        # Fallback to old method
+                                        await visual_cortex.show_splash_screen()
+                        except Exception as e:
+                            logger.error(f"Error initializing primary visual area: {e}")
+                    else:
+                        logger.error("Primary visual area not found")
+                else:
+                    logger.error("Visual cortex component not found in occipital lobe")
+            except Exception as e:
+                logger.error(f"Error initializing visual capabilities: {e}", exc_info=True)
+        
+        # Signal matrix initialization
+        if splash_manager:
+            await splash_manager.handle_event("matrix_init")
+        
+        # NOW establish connection after splash screen is showing
         if connection_type:
             logger.info(f"Initializing connection with type: {connection_type}")
             # Use Mind to establish connection
             result = await mind.connect(connection_type)
             was_initialized = result
+            
+            # Signal connection event
+            if splash_manager:
+                await splash_manager.handle_event("connection")
+                
         else:
-            # Try to auto-detect connection
-            logger.info("Auto-detecting connection...")
-            # Use Mind to establish connection with auto-detection
+            # Try to auto-detect connection from mind config
+            logger.info("Using connection from mind configuration...")
+            # Use Mind to establish connection with config
             result = await mind.connect()
             was_initialized = result
+            
+            # Signal connection event
+            if splash_manager:
+                await splash_manager.handle_event("connection")
+            
+        # Signal synaptic pathways initialized
+        if splash_manager:
+            await splash_manager.handle_event("synaptic_init")
+            
+        # Complete mind initialization now that connection is established
+        if brain_mode in ["full", "vc"]:
+            try:
+                # Complete full mind initialization
+                logger.info("Completing full mind initialization...")
+                await mind.initialize(complete=True)
+                
+                # Signal neural networks initialized
+                if splash_manager:
+                    await splash_manager.handle_event("neural_init")
+                
+                # Signal mind processes initialized
+                if splash_manager:
+                    await splash_manager.handle_event("mind_init")
+                    
+                # Update the splash screen to indicate completion
+                if "visual" in mind.occipital_lobe:
+                    visual_cortex = mind.occipital_lobe["visual"]
+                    
+                    # Signal completion
+                    if splash_manager:
+                        await splash_manager.handle_event("complete")
+                    
+                    # Test pattern after full initialization
+                    if hasattr(visual_cortex, 'primary_area') and visual_cortex.primary_area._initialized:
+                        logger.info("Verifying matrix with test pattern after full initialization...")
+                        test_result = await visual_cortex.primary_area.test_pattern()
+                        if test_result:
+                            logger.info("Test pattern displayed successfully!")
+                            # Sleep briefly to show the test pattern
+                            await asyncio.sleep(1)
+                        else:
+                            logger.error("Failed to display test pattern on matrix")
+            except Exception as e:
+                logger.error(f"Error completing mind initialization: {e}", exc_info=True)
         
         # Run the menu system with the Mind instance
         await run_menu_system(mind)
@@ -286,7 +442,7 @@ This system implements a bicameral mind architecture with various neural subsyst
 - Frontal Cortex (fc): Language processing and LLM with interactive menu
 - Full Mind (full): Complete system integration
 
-If no mode is specified, the system defaults to the interactive menu mode.
+If no mode is specified, the system defaults to the full mode.
 Each mode provides direct interaction with its respective subsystem.""",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -294,6 +450,7 @@ Each mode provides direct interaction with its respective subsystem.""",
     parser.add_argument(
         '--mode',
         choices=['vc', 'ac', 'fc', 'full'],
+        default='full',  # Default to full mode
         help="""Run in specific mode:
   vc  - Visual Cortex (LED Matrix)
         Test LED matrix and visual processing
@@ -307,7 +464,7 @@ Each mode provides direct interaction with its respective subsystem.""",
         Interactive menu system for model management and chat
         Example: python run.py --mode fc
         
-  full - Full Mind
+  full - Full Mind (Default)
         Run the complete system
         Example: python run.py --mode full"""
     )
@@ -315,7 +472,7 @@ Each mode provides direct interaction with its respective subsystem.""",
     parser.add_argument(
         '--connection',
         choices=['serial', 'adb', 'tcp'],
-        help="""Select connection mode:
+        help="""Select connection mode (Note: mostly redundant as connection is set in minds_config.json):
 serial - Direct USB connection
 adb    - Android Debug Bridge
 tcp    - TCP/IP network connection"""
@@ -340,6 +497,15 @@ This will show all debug messages and system state changes."""
         action='store_true',
         help="""Enable raw JSON logging for network communication.
 This will show all JSON requests and responses between components."""
+    )
+    
+    parser.add_argument(
+        '--persona',
+        type=str,
+        help="""Specify the persona for the mind.
+This defines the behavior and personality of the AI.
+Example: python run.py --persona "You are a friendly assistant with a sense of humor."
+"""
     )
     
     # Check if --mode is used without a value
@@ -405,8 +571,14 @@ async def main():
     
     try:
         # Set mode in SynapticPathways
+        # If no mode specified, default to 'full'
         if args.mode:
-            SynapticPathways.set_mode(args.mode)
+            mode = args.mode
+        else:
+            mode = 'full'
+            logger.info("No mode specified, defaulting to 'full' mode")
+        
+        SynapticPathways.set_mode(mode)
         
         # Create PenphinMind instance with selected mind or mind selection menu
         selected_mind_id = args.mind
@@ -415,34 +587,52 @@ async def main():
             mind_config = get_mind_by_id(selected_mind_id)
             print(f"\n🧠 Using mind: {mind_config['name']} ({selected_mind_id})")
             print(f"   Connection: {mind_config['connection']['type'].upper()} - {mind_config['connection']['ip']}:{mind_config['connection']['port']}")
+            
+            # Get persona from mind config's llm section
+            persona = None
+            if "llm" in mind_config and "persona" in mind_config["llm"]:
+                persona = mind_config["llm"]["persona"]
+                print(f"🎭 Using persona from mind config: {persona[:50]}...")
         else:
             print("\n🧠 No specific mind selected, using interactive selection")
+            persona = None  # Will use default in PenphinMind constructor
+        
+        # Override persona with command line argument if provided
+        if args.persona:
+            persona = args.persona
+            print(f"🎭 Using custom persona from command line: {persona[:50]}...")
             
-        penphin = PenphinMind(mind_id=selected_mind_id)
+        # Create PenphinMind with the selected mind and persona
+        penphin = PenphinMind(mind_id=selected_mind_id, persona=persona)
             
         # Set connection mode if specified
-        if args.connection:
-            print("\n🔍 Setting connection mode to {}...".format(args.connection))
+        # Note: This is somewhat redundant as connection info is in minds_config.json,
+        # but kept for flexibility and backward compatibility
+        connection_type = args.connection
+        if connection_type:
+            print(f"\n🔍 Setting connection mode to {connection_type}... (Note: this overrides the mind config)")
             try:
-                if await setup_connection(args.connection):
-                    print(f"{args.connection.capitalize()} connection established successfully")
+                if await setup_connection(connection_type):
+                    print(f"{connection_type.capitalize()} connection established successfully")
                 else:
-                    print(f"Failed to establish {args.connection} connection")
+                    print(f"Failed to establish {connection_type} connection")
             except Exception as e:
                 print(f"Error setting up connection: {e}")
         
-        if args.mode:
-            if args.mode == 'vc':
-                await run_visual_cortex_test(penphin.mind)
-            elif args.mode == 'ac':
-                await run_auditory_cortex_test(penphin.mind)
-            elif args.mode == 'fc':
-                # Use the menu system when in frontal cortex mode
-                await run_menu(penphin.mind, args.connection)
-            elif args.mode == 'full':
-                await penphin.run()
+        if mode == 'vc':
+            await run_visual_cortex_test(penphin.mind)
+        elif mode == 'ac':
+            await run_auditory_cortex_test(penphin.mind)
+        elif mode == 'fc':
+            # Use the menu system when in frontal cortex mode
+            await run_menu(penphin.mind, connection_type)
+        elif mode == 'full':
+            # Set full mode flag in SynapticPathways for access to all features
+            SynapticPathways.set_mode('full')
+            # Run the full menu system with all features
+            await run_menu(penphin.mind, connection_type)
         else:
-            # Default to menu system if no mode specified
+            # Default to menu system if no mode specified (though we now default to 'full')
             await run_menu_system(penphin.mind)
             
     except Exception as e:
@@ -457,7 +647,7 @@ async def shutdown(mind_instance: Mind = None):
             await mind_instance.complete_cleanup()
         else:
             # Create a new Mind instance if none provided
-            mind = Mind()
+            mind = Mind(persona="You are a helpful assistant.")
             await mind.complete_cleanup()
             
         print("All connections and resources cleaned up.")

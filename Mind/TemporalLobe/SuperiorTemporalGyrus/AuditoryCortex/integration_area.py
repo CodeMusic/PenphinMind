@@ -5,7 +5,7 @@ Auditory Integration Area - Processes and integrates auditory information
 import logging
 from typing import Dict, Any, Optional
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
-from config import CONFIG  # Use absolute import
+from config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.Subcortex.api_commands import BaseCommand, AudioCommand, CommandType
 

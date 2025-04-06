@@ -20,5 +20,82 @@
             "level": "DEBUG",
             "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         }
+    },
+    "visual_cortex": {
+        "led_matrix": {
+            "rows": 64,
+            "cols": 64,
+            "chain_length": 1,
+            "parallel": 1,
+            "hardware_mapping": "regular",
+            "brightness": 30,
+            "disable_hardware_pulsing": true,
+            "gpio_slowdown": 2,
+            "pwm_lsb_nanoseconds": 130,
+            "pwm_bits": 11
+        },
+        "splash_screen": {
+            "enabled": true,
+            "background_color": [0, 0, 32],
+            "text_color": [255, 255, 255],
+            "accent_color": [100, 180, 255],
+            "header_text": "PENPHIN",
+            "subheader_text": "MIND",
+            "show_circuit_pattern": true,
+            "loading_steps": [
+                {
+                    "event": "visual_init", 
+                    "progress": 10, 
+                    "text": "Loading visual cortex...",
+                    "symbol": "👁️",
+                    "symbol_color": [180, 180, 255]
+                },
+                {
+                    "event": "matrix_init", 
+                    "progress": 25, 
+                    "text": "Initializing LED matrix...",
+                    "symbol": "▢",
+                    "symbol_color": [255, 100, 100]
+                },
+                {
+                    "event": "connection", 
+                    "progress": 40, 
+                    "text": "Connecting components...",
+                    "symbol": "≈",
+                    "symbol_color": [100, 255, 100]
+                },
+                {
+                    "event": "synaptic_init", 
+                    "progress": 60, 
+                    "text": "Starting synaptic pathways...",
+                    "symbol": "⟷",
+                    "symbol_color": [255, 200, 100]
+                },
+                {
+                    "event": "neural_init", 
+                    "progress": 80, 
+                    "text": "Preparing neural networks...",
+                    "symbol": "⦿",
+                    "symbol_color": [200, 100, 255]
+                },
+                {
+                    "event": "mind_init", 
+                    "progress": 95, 
+                    "text": "Starting mind processes...",
+                    "symbol": "🧠",
+                    "symbol_color": [255, 255, 100]
+                },
+                {
+                    "event": "complete", 
+                    "progress": 100, 
+                    "text": "System ready",
+                    "symbol": "✓",
+                    "symbol_color": [100, 255, 100]
+                }
+            ],
+            "symbols": ["👁️", "▢", "≈", "⟷", "⦿", "🧠", "✓"],
+            "completion_color": [0, 32, 0],
+            "completion_text": ["SYSTEM", "READY"]
+        }
     }
 }

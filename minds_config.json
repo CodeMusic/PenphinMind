@@ -1,27 +1,11 @@
 {
     "minds": {
-        "auto": {
-            "name": "PenphinMind",
-            "device_id": "auto",
-            "connection": {
-                "type": "tcp",
-                "ip": "10.0.0.141",
-                "port": 10001
-            },
-            "llm": {
-                "default_model": "qwen2.5-0.5b-prefill",
-                "temperature": 0.7,
-                "max_tokens": 127,
-                "persona": "You are a helpful assistant named {name}.",
-                "stream": true
-            }
-        },
         "penphin": {
             "name": "PenphinMind",
             "device_id": "penphin",
             "connection": {
                 "type": "tcp",
-                "ip": "10.0.0.141",
+                "ip": "10.0.0.135",
                 "port": 10001
             },
             "llm": {
@@ -37,7 +21,7 @@
             "device_id": "dolphin",
             "connection": {
                 "type": "tcp",
-                "ip": "192.168.1.100",
+                "ip": "192.168.1.1",
                 "port": 10001
             },
             "llm": {
@@ -66,6 +50,6 @@
         }
     },
     "system": {
-        "default_mind": "auto"
+        "default_mind": "penphin"
     }
 }

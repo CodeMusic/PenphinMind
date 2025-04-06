@@ -143,6 +143,7 @@ async def start_chat(mind: Mind):
         print("\nInitializing chat system...")
         
         # Check connection
+        persona = mind.config.get("persona")
         ping_result = await mind.execute_operation("ping")
         if ping_result.get("status") != "ok":
             print("Error: Could not establish connection")

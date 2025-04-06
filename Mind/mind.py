@@ -37,10 +37,14 @@ class Mind:
     # Class variables
     _current_llm_work_id = None  # Store the current LLM work_id
     
-    def __init__(self, mind_id: str = None):
+    def __init__(self, mind_id: str = None, persona: str = "You are a helpful assistant."):
         """Initialize Mind with optional configuration ID from minds_config.json"""
         journaling_manager.recordScope("Mind.__init__")
         
+        # Ensure persona is provided
+        if not persona:
+            raise ValueError("Persona cannot be empty")
+            
         # Initialize basic attributes
         self._mind_id = None
         self._config = {}
@@ -49,7 +53,7 @@ class Mind:
         self._initialized = False
         self._ip = None
         self._port = None
-        self._persona = "You are a helpful assistant."
+        self._persona = persona
         self._device_id = ""
         
         # Set mind_id and load configuration if provided
@@ -70,10 +74,18 @@ class Mind:
         
         # Default system prompts
         self._llm_config = {
-            "persona": "You are a helpful assistant.",
+            "persona": self._persona,
             "stream": True,  # Default to streaming mode for better UX
             "model": None
         }
+        
+        # If there's an llm config in the mind config, update with our settings
+        if "llm" in self._config:
+            # Start with the config llm settings
+            llm_settings = self._config["llm"].copy()
+            # But always use our persona
+            llm_settings["persona"] = self._persona
+            self._llm_config.update(llm_settings)
         
         # Initialize the default model from config if available
         if "llm" in self._config and "default_model" in self._config["llm"]:
@@ -148,7 +160,6 @@ class Mind:
         # Store key properties from the configuration
         self._name = mind_config.get("name", "PenphinMind")
         self._device_id = mind_config.get("device_id", "")
-        self._persona = mind_config.get("persona", "You are a helpful assistant.")
         
         # Ensure connection settings are properly initialized
         connection_settings = mind_config.get("connection", {})
@@ -173,9 +184,42 @@ class Mind:
         # Store LLM configuration
         self._llm_config = mind_config.get("llm", {
             "default_model": "qwen2.5-0.5b",
-            "persona": "You are a helpful assistant.",
+            "persona": self._persona,
             "stream": True
         })
+        
+        # Ensure the persona is always from initialization
+        self._llm_config["persona"] = self._persona
+        
+        # Set the default model from LLM config
+        self._default_model = self._llm_config.get("default_model", "qwen2.5-0.5b")
+        
+        # Update SynapticPathways with the default model for cross-component access
+        try:
+            from .CorpusCallosum.synaptic_pathways import SynapticPathways
+            SynapticPathways.default_llm_model = self._default_model
+            journaling_manager.recordDebug(f"[Mind] Updated SynapticPathways with default model: {self._default_model}")
+        except ImportError:
+            journaling_manager.recordWarning("[Mind] Could not update SynapticPathways with default model")
+        
+        # Process additional configuration sections if available
+        if "hardware" in mind_config:
+            hardware_config = mind_config.get("hardware", {})
+            try:
+                from .CorpusCallosum.synaptic_pathways import SynapticPathways
+                SynapticPathways.update_hardware_info(hardware_config)
+                journaling_manager.recordDebug(f"[Mind] Updated hardware info from config")
+            except ImportError:
+                journaling_manager.recordWarning("[Mind] Could not update hardware info from config")
+        
+        # Populate any additional capabilities from the config
+        for capability_name, capability_config in mind_config.items():
+            if capability_name not in ["name", "device_id", "connection", "llm", "hardware"]:
+                # Store the capability config in a standardized location
+                if not hasattr(self, "_capabilities"):
+                    self._capabilities = {}
+                self._capabilities[capability_name] = capability_config
+                journaling_manager.recordDebug(f"[Mind] Registered capability: {capability_name}")
         
         journaling_manager.recordInfo(f"[Mind] Configuration loaded for {self._name} (ID: {mind_id})")
         
@@ -283,9 +327,25 @@ class Mind:
         except:
             return False
             
-    async def initialize(self, connection_type: str = None, model_name: str = None) -> bool:
-        """Initialize the Mind system"""
+    async def initialize(self, connection_type: str = None, model_name: str = None, visual_only: bool = False, auditory_only: bool = False, complete: bool = False) -> bool:
+        """
+        Initialize the Mind system
+        
+        Args:
+            connection_type: Type of connection to use
+            model_name: Optional LLM model to use
+            visual_only: If True, only initialize visual components for splash screen
+            auditory_only: If True, only initialize auditory components for sound test
+            complete: If True, complete the initialization after a partial initialization
+            
+        Returns:
+            bool: True if initialization was successful
+        """
         try:
+            # If already fully initialized and not forced to complete, return success
+            if self._initialized and not complete:
+                return True
+                
             # Use the connection type from the mind config if not specified
             if connection_type is None:
                 connection_type = self._connection_type
@@ -302,21 +362,101 @@ class Mind:
             
             journaling_manager.recordInfo(f"[Mind] Connection details: {connection_details}")
             
-            # Initialize base connection through NeurocorticalBridge
-            # Pass the connection details from the mind configuration
-            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
-            success = await NeurocorticalBridge.initialize_system(connection_type)
+            # Initialize SynapticPathways and NeurocorticalBridge
+            from .CorpusCallosum.synaptic_pathways import SynapticPathways
+            from .Subcortex.neurocortical_bridge import NeurocorticalBridge
             
-            if not success:
-                journaling_manager.recordError("[Mind] Failed to initialize bridge")
-                return False
-
-            # Don't initialize ChatManager yet, we'll create it only when entering chat
-            # ChatManager will be initialized in the start_chat function instead
+            # Skip actual connection if we're just initializing visual or auditory
+            connection_result = True
+            
+            if not visual_only and not auditory_only:
+                # Initialize NeurocorticalBridge for connection to hardware
+                connection_result = await NeurocorticalBridge.initialize_system(connection_type)
+                journaling_manager.recordInfo(f"[Mind] Connection result: {connection_result}")
+                
+                # If connection failed and this is a complete initialization, return failure
+                if not connection_result and complete:
+                    journaling_manager.recordError("[Mind] Connection failed during complete initialization")
+                    return False
+            
+            # Initialize specific brain regions if requested
+            success = True
+            
+            # Visual-only initialization for splash screen
+            if visual_only or not auditory_only:
+                try:
+                    # Initialize visual processing components
+                    if "visual" in self._occipital_lobe:
+                        journaling_manager.recordInfo("[Mind] Initializing visual cortex...")
+                        self._occipital_lobe["visual"].initialize()
+                        journaling_manager.recordInfo("[Mind] Visual cortex initialized")
+                except Exception as e:
+                    journaling_manager.recordError(f"[Mind] Visual cortex initialization error: {e}")
+                    if not auditory_only:  # Only fail if this wasn't just a temporary visual init for splash
+                        success = False
+                
+            # Auditory-only initialization for audio testing
+            if auditory_only or not visual_only:
+                try:
+                    # Initialize auditory processing components
+                    if "auditory" in self._temporal_lobe:
+                        journaling_manager.recordInfo("[Mind] Initializing auditory cortex...")
+                        self._temporal_lobe["auditory"].initialize()
+                        journaling_manager.recordInfo("[Mind] Auditory cortex initialized")
+                except Exception as e:
+                    journaling_manager.recordError(f"[Mind] Auditory cortex initialization error: {e}")
+                    if not visual_only:  # Only fail if this wasn't just a temporary auditory init for test
+                        success = False
+            
+            # If this is a complete initialization or not partial, initialize all remaining components
+            if complete or (not visual_only and not auditory_only):
+                # Initialize the remaining brain regions
+                try:
+                    # Motor & Somatosensory
+                    if "motor" in self._motor_cortex:
+                        journaling_manager.recordInfo("[Mind] Initializing motor cortex...")
+                        self._motor_cortex["motor"].initialize()
+                        journaling_manager.recordInfo("[Mind] Motor cortex initialized")
+                        
+                    if "somatosensory" in self._parietal_lobe:
+                        journaling_manager.recordInfo("[Mind] Initializing somatosensory cortex...")
+                        self._parietal_lobe["somatosensory"].initialize()
+                        journaling_manager.recordInfo("[Mind] Somatosensory cortex initialized")
+                except Exception as e:
+                    journaling_manager.recordError(f"[Mind] Brain region initialization error: {e}")
+                    success = False
+            
+            # Store model name for later (used when chat is initialized, not setting model here)
+            # This prevents the model loading during initialization
+            if model_name:
+                self._default_model = model_name
+                journaling_manager.recordInfo(f"[Mind] Stored model name for later use: {model_name}")
+            elif complete and self._default_model:
+                journaling_manager.recordInfo(f"[Mind] Using default model from config: {self._default_model}")
+            
+            # Only set the model when explicitly completing initialization AND not in auditory_only mode
+            if complete and not auditory_only and success and self._default_model and connection_result:
+                journaling_manager.recordInfo(f"[Mind] Setting default model from config during completion: {self._default_model}")
+                model_result = await self.set_model(self._default_model)
+                if model_result.get("status") != "ok":
+                    journaling_manager.recordWarning(f"[Mind] Failed to set default model: {model_result.get('message', 'Unknown error')}")
+                    # Continue despite model loading error - this is non-critical
+            
+            # Initialize any capabilities defined in the config
+            if success and hasattr(self, "_capabilities"):
+                journaling_manager.recordInfo(f"[Mind] Initializing {len(self._capabilities)} capabilities from config")
+                for capability_name, capability_config in self._capabilities.items():
+                    try:
+                        journaling_manager.recordDebug(f"[Mind] Initializing capability: {capability_name}")
+                        # Here you would initialize specific capabilities based on config
+                        # This is extensibility point for future capabilities
+                    except Exception as e:
+                        journaling_manager.recordError(f"[Mind] Error initializing capability {capability_name}: {e}")
+            
             self._initialized = success
             self._connection_type = connection_type if success else None
             return success
-            
+        
         except Exception as e:
             journaling_manager.recordError(f"[Mind] Initialization error: {e}")
             import traceback
@@ -1075,16 +1215,25 @@ class Mind:
             "initialized": self._initialized
         }
 
-    async def set_persona(self, new_persona: str):
-        """Update the Mind's persona in config
+    async def set_persona(self, persona: str) -> None:
+        """
+        Set the mind's persona
         
         Args:
-            new_persona: New system message defining the AI's personality/role
+            persona: The new persona to use
         """
-        self._persona = new_persona
-        if self.chat_manager:
-            await self.chat_manager.set_system_message(new_persona)
-        journaling_manager.recordInfo(f"[Mind] Updated persona in config: {new_persona[:50]}...")
+        if not persona:
+            raise ValueError("Persona cannot be empty")
+            
+        # Update the persona
+        self._persona = persona
+        
+        # Also update it in the llm_config
+        if hasattr(self, '_llm_config') and isinstance(self._llm_config, dict):
+            self._llm_config["persona"] = persona
+            
+        journaling_manager.recordInfo(f"[Mind] Updated persona: {persona[:50]}...")
+        return None
 
     def get_chat_manager(self):
         """
@@ -1192,6 +1341,101 @@ class Mind:
             import traceback
             journaling_manager.recordError(f"[Mind.llm_inference] Stack trace: {traceback.format_exc()}")
             return f"Error: {str(e)}"
+
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        """
+        Get available capabilities loaded from configuration
+        
+        Returns:
+            Dict mapping capability names to their configurations
+        """
+        if not hasattr(self, "_capabilities"):
+            self._capabilities = {}
+        return self._capabilities
+    
+    def has_capability(self, capability_name: str) -> bool:
+        """
+        Check if a specific capability is available
+        
+        Args:
+            capability_name: Name of the capability to check
+            
+        Returns:
+            bool: True if the capability is available
+        """
+        return capability_name in self.capabilities
+    
+    def get_capability_config(self, capability_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get configuration for a specific capability
+        
+        Args:
+            capability_name: Name of the capability
+            
+        Returns:
+            Optional[Dict]: Configuration for the capability or None if not available
+        """
+        return self.capabilities.get(capability_name)
+    
+    async def execute_capability(self, capability_name: str, operation: str = None, data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Execute an operation on a specific capability
+        
+        Args:
+            capability_name: Name of the capability
+            operation: Operation to execute
+            data: Additional data for the operation
+            
+        Returns:
+            Dict with operation result
+        """
+        journaling_manager.recordInfo(f"[Mind] Executing capability: {capability_name}.{operation}")
+        
+        # Check if capability exists
+        if not self.has_capability(capability_name):
+            journaling_manager.recordError(f"[Mind] Capability not available: {capability_name}")
+            return {
+                "status": "error",
+                "message": f"Capability '{capability_name}' not available"
+            }
+        
+        try:
+            # Get the capability config
+            capability_config = self.get_capability_config(capability_name)
+            
+            # Log the request
+            journaling_manager.recordDebug(f"[Mind.execute_capability] Request: {capability_name}.{operation}")
+            journaling_manager.recordDebug(f"[Mind.execute_capability] Config: {json.dumps(capability_config)}")
+            journaling_manager.recordDebug(f"[Mind.execute_capability] Data: {json.dumps(data) if data else 'None'}")
+            
+            # Here we would dispatch to the appropriate handler based on capability_name
+            # This is a placeholder for future implementation of specific capabilities
+            
+            # For now, log that this is unimplemented
+            journaling_manager.recordWarning(f"[Mind] Capability '{capability_name}' execution not implemented yet")
+            return {
+                "status": "error",
+                "message": f"Capability '{capability_name}' execution not implemented"
+            }
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[Mind] Error executing capability {capability_name}: {e}")
+            import traceback
+            journaling_manager.recordError(f"[Mind] Capability execution error trace: {traceback.format_exc()}")
+            return {
+                "status": "error",
+                "message": f"Error executing capability: {str(e)}"
+            }
+
+    def _setup_components(self):
+        """
+        Set up components for the Mind
+        
+        This method is called after the base connection is established
+        and is intended to be overridden by subclasses to set up additional components
+        """
+        pass
 
 async def setup_connection(connection_type=None):
     """

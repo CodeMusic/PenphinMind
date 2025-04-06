@@ -19,7 +19,7 @@ Project Function:
 
 import logging
 from typing import Dict, Any, Optional
-from config import CONFIG  # Use absolute import
+from config import CONFIG
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
 from Mind.Subcortex.api_commands import create_command, parse_response
 import time

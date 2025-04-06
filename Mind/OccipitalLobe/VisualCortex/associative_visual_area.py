@@ -28,7 +28,7 @@ Project Function:
 from typing import Dict, Any, Optional, Tuple, List, NamedTuple
 from enum import Enum
 import logging
-from config import CONFIG  # Use absolute import
+from config import CONFIG
 import math
 import asyncio
 from ...CorpusCallosum.synaptic_pathways import SynapticPathways
@@ -89,8 +89,12 @@ class AssociativeVisualArea:
     
     def __init__(self):
         """Initialize the associative visual area"""
+        self._initialized = False
         journaling_manager.recordScope("AssociativeVisualArea.__init__")
         try:
+            # Primary visual area reference - will be set during initialization
+            self.primary_area = None
+            
             self.current_expression = Expression.NEUTRAL
             self.current_x = 0
             self.current_y = 0
@@ -113,11 +117,17 @@ class AssociativeVisualArea:
             journaling_manager.recordError(f"Error initializing associative visual area: {e}")
             raise
             
-    async def initialize(self) -> None:
+    async def initialize(self, primary_area=None) -> None:
         """Initialize the visual area"""
         journaling_manager.recordScope("AssociativeVisualArea.initialize")
         try:
+            # Set the primary area if provided
+            if primary_area:
+                self.primary_area = primary_area
+                journaling_manager.recordInfo("Primary visual area set from parameter")
+            
             # Initialize visual components
+            self._initialized = True
             journaling_manager.recordInfo("Visual area initialized")
             
         except Exception as e:

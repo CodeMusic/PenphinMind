@@ -750,6 +750,9 @@ class SynapticPathways:
     @classmethod 
     def show_splash_screen(cls, title: str = "Penphin Mind", subtitle: str = "Neural Architecture") -> None:
         """Show application splash screen"""
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
         # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
         NeurocorticalBridge.execute("display_visual", {
             "visualization_type": "splash_screen",
@@ -760,11 +763,14 @@ class SynapticPathways:
         })
         
     @classmethod
-    def run_game_of_life(cls, width: int = 20, height: int = 20, iterations: int = 10, 
+    async def run_game_of_life(cls, width: int = 20, height: int = 20, iterations: int = 10, 
                         initial_state: list = None) -> None:
         """Run Conway's Game of Life visualization"""
-        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
-        NeurocorticalBridge.execute("display_visual", {
+        # Import here to avoid circular imports
+        from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+        
+        # Use NeurocorticalBridge.execute_operation instead of execute
+        return await NeurocorticalBridge.execute_operation("display_visual", {
             "visualization_type": "game_of_life",
             "visualization_params": {
                 "width": width,
@@ -844,24 +850,31 @@ class SynapticPathways:
             return {"error": str(e)}
 
     @classmethod
-    def create_llm_pixel_grid(cls, 
-                             width: int = 64, 
-                             height: int = 64,
-                             wrap: bool = True,
-                             color_mode: str = "grayscale") -> Any:
-        """
-        Create an LLM token-to-pixel grid visualization task that can be updated manually
-        
-        Returns:
-            The DisplayVisualTask instance that can be updated with update_stream()
-        """
-        # Use NeurocorticalBridge.execute instead of accessing BasalGanglia directly
-        return NeurocorticalBridge.execute("create_llm_pixel_grid", {
-            "width": width,
-            "height": height,
-            "wrap": wrap,
-            "color_mode": color_mode
-        })
+    def create_llm_pixel_grid(cls, width: int = 64, height: int = 64, color_mode: str = "rgb") -> Dict[str, Any]:
+        """Create a pixel grid for drawing applications"""
+        try:
+            # Import NeurocorticalBridge to delegate the operation
+            from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
+            journaling_manager.recordInfo(f"[CorpusCallosum] Creating pixel grid: {width}x{height} ({color_mode})")
+            
+            # Use execute_operation to standardize the approach
+            return NeurocorticalBridge.execute_operation(
+                "pixel_grid", 
+                {
+                    "width": width,
+                    "height": height,
+                    "color_mode": color_mode
+                }
+            )
+            
+        except Exception as e:
+            journaling_manager.recordError(f"[CorpusCallosum] Error creating pixel grid: {e}")
+            import traceback
+            journaling_manager.recordError(f"Error trace: {traceback.format_exc()}")
+            return {
+                "status": "error", 
+                "message": f"Failed to create pixel grid: {str(e)}"
+            }
 
     @classmethod
     def create_llm_stream_visualization(cls, 
