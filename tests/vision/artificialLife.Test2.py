@@ -16,7 +16,7 @@ options.disable_hardware_pulsing = True
 matrix = RGBMatrix(options=options)
 
 WIDTH, HEIGHT = matrix.width, matrix.height
-STATUS_BAR_HEIGHT = 12
+STATUS_BAR_HEIGHT = 17
 MAIN_HEIGHT = HEIGHT - STATUS_BAR_HEIGHT
 CHAR_RADIUS = 2
 TRAIL_LENGTH = 40
@@ -44,6 +44,7 @@ class LifeForm:
         self.x = x
         self.y = y
         self.hue = hue
+        self.original_hue = hue
         self.vx = random.uniform(-1, 1)
         self.vy = random.uniform(-1, 1)
         self.path = []
@@ -84,6 +85,13 @@ class LifeForm:
     def move(self):
         self.x = (self.x + self.vx) % WIDTH
         self.y = STATUS_BAR_HEIGHT + ((self.y + self.vy - STATUS_BAR_HEIGHT) % MAIN_HEIGHT)
+        
+        # Turn purple in the title area (temporary effect)
+        if self.y < STATUS_BAR_HEIGHT:
+            self.hue = 270  # Purple
+        else:
+            self.hue = self.original_hue
+            
         self.path.append((int(self.x), int(self.y), self.hue))
         if len(self.path) > TRAIL_LENGTH:
             self.path.pop(0)
@@ -141,6 +149,18 @@ try:
         img = Image.new("RGB", (WIDTH, HEIGHT))
         draw = ImageDraw.Draw(img)
 
+        # Draw title bar with light purple background
+        for y in range(STATUS_BAR_HEIGHT):
+            for x in range(WIDTH):
+                draw.point((x, y), fill=(180, 160, 220))  # Light purple background
+
+        # Draw PENPHIN text in gold at top
+        gold_color = (255, 215, 0)  # Gold color
+        draw.text((12, 5), "PENPHIN", fill=gold_color)
+        
+        # Draw MIND text in gold at bottom
+        draw.text((20, HEIGHT - 12), "MIND", fill=gold_color)
+
         # Update headings & movement
         red.update_heading(violet)
         violet.update_heading(red)
@@ -156,12 +176,9 @@ try:
         draw.ellipse((red.x - CHAR_RADIUS, red.y - CHAR_RADIUS, red.x + CHAR_RADIUS, red.y + CHAR_RADIUS), fill=red.rgb())
         draw.ellipse((violet.x - CHAR_RADIUS, violet.y - CHAR_RADIUS, violet.x + CHAR_RADIUS, violet.y + CHAR_RADIUS), fill=violet.rgb())
 
-        # Draw status bar
-        sync = "Y" if color_distance(red.hue, violet.hue) < 30 else "N"
-        status = f"S:{sync}  H1:{int(red.hue)}  H2:{int(violet.hue)}"
-        for i, c in enumerate(status):
-            draw.text((i * 6, 2), c, fill=(255, 255, 255))
-
+        # Rotate image 180 degrees
+        img = img.rotate(180)
+        
         # Display
         matrix.SetImage(img)
         time.sleep(0.05)
