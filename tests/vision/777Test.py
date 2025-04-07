@@ -131,7 +131,7 @@ async def main():
             active_game.draw()
             
             # Update Display - this will rotate and send to the matrix through PrimaryVisualArea
-            layout_manager.update_display(rotate_degrees=270)
+            layout_manager.update_display(rotate_degrees=0)
             
             # Frame Limiter
             elapsed = time.time() - current_time
