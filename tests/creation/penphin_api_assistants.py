@@ -8,6 +8,7 @@ from rgbmatrix import RGBMatrix, RGBMatrixOptions
 import threading
 from threading import Event
 from PIL import Image
+import math
 
 # === CONFIG ===
 API_KEY = ""
@@ -86,12 +87,17 @@ CODE_ASSISTANT_MSG = (
     "Now create the game. ONLY output valid Python code. DO NOT wrap in markdown or explain anything."
 )
 VISUAL_ASSISTANT_MSG = (
-    "You are a visual AI named PenphinEyes. You respond ONLY with raw visual frame data. "
+    "You are a visual AI named PenphinEyes. You respond ONLY with raw visual frame data that SYMBOLICALLY represents the prompt. "
     "Each frame must consist of 64 lines. Each line must have 64 pixel values. "
     "Each pixel value must be in the format '#RRGGBB' (hex color only). "
     "If you want to show a second frame, separate it using the line:\n"
     "=== FRAME BREAK ===\n\n"
-    "No explanations, text, or formatting—only pure frame data."
+    "IMPORTANT RULES:\n"
+    "1. The visual MUST symbolically represent the prompt's meaning\n"
+    "2. Use colors and patterns that convey the prompt's essence\n"
+    "3. Create meaningful visual metaphors\n"
+    "4. No explanations, text, or formatting—only pure frame data\n"
+    "5. Each frame should tell a story or convey an emotion"
 )
 
 TITLE_GENERATOR_MSG = (
@@ -275,20 +281,133 @@ def show_structured_animation(progress):
         cells = new_cells
         time.sleep(0.1)
 
-def show_error_symbol():
+def show_error_symbol(error_message=None):
+    """
+    Display a stylized error symbol with optional error message.
+    
+    Args:
+        error_message (str, optional): Error message to display in the title area
+        
+    The display includes:
+    - A pulsing red X with glow effect
+    - An inner circle
+    - Optional error message in the title area
+    """
     # Clear the matrix first
     matrix.Clear()
     
-    # Draw a red X
-    for i in range(64):
-        # Draw main diagonal
-        matrix.SetPixel(i, i, 255, 0, 0)
-        # Draw anti-diagonal
-        matrix.SetPixel(63-i, i, 255, 0, 0)
+    try:
+        # Draw a stylized X with glow effect
+        for frame in range(20):  # Show for 20 frames
+            # Calculate pulse intensity
+            pulse = 0.5 + 0.5 * math.sin(time.time() * 5)
+            intensity = int(255 * pulse)
+            
+            # Clear the matrix
+            matrix.Clear()
+            
+            # Draw outer glow
+            for i in range(64):
+                for j in range(64):
+                    # Calculate distance from center
+                    dx = abs(i - 31.5)
+                    dy = abs(j - 31.5)
+                    dist = math.sqrt(dx*dx + dy*dy)
+                    
+                    # Create a circular glow effect
+                    if dist < 30:
+                        glow_intensity = int(intensity * (1 - dist/30))
+                        matrix.SetPixel(i, j, glow_intensity, 0, 0)
+            
+            # Draw stylized X
+            for i in range(64):
+                # Main X with thickness
+                for offset in range(-1, 2):
+                    # Main diagonal
+                    if 0 <= i+offset < 64 and 0 <= i+offset < 64:
+                        matrix.SetPixel(i+offset, i+offset, intensity, 0, 0)
+                    # Anti-diagonal
+                    if 0 <= 63-i+offset < 64 and 0 <= i+offset < 64:
+                        matrix.SetPixel(63-i+offset, i+offset, intensity, 0, 0)
+            
+            # Draw inner circle
+            for angle in range(0, 360, 5):
+                rad = math.radians(angle)
+                x = int(31.5 + 10 * math.cos(rad))
+                y = int(31.5 + 10 * math.sin(rad))
+                if 0 <= x < 64 and 0 <= y < 64:
+                    matrix.SetPixel(x, y, intensity, 0, 0)
+            
+            # Display error message if provided
+            if error_message:
+                display_error_text(error_message, intensity)
+            
+            time.sleep(0.05)  # 20fps animation
+        
+        # Keep the error displayed for 2 seconds
+        time.sleep(2)
+        
+    except Exception as e:
+        print(f"⚠️ Error in error display: {str(e)}")
+    finally:
+        matrix.Clear()
+
+def display_error_text(error_message, intensity):
+    """
+    Display error message text in the title area.
     
-    # Keep the error symbol displayed for 2 seconds
-    time.sleep(2)
-    matrix.Clear()
+    Args:
+        error_message (str): Error message to display
+        intensity (int): Current pulse intensity for the text
+    """
+    # Simple 3x5 font for error message
+    error_font = {
+        'A': [[1,1,1], [1,0,1], [1,1,1], [1,0,1], [1,0,1]],
+        'B': [[1,1,0], [1,0,1], [1,1,0], [1,0,1], [1,1,0]],
+        'C': [[1,1,1], [1,0,0], [1,0,0], [1,0,0], [1,1,1]],
+        'D': [[1,1,0], [1,0,1], [1,0,1], [1,0,1], [1,1,0]],
+        'E': [[1,1,1], [1,0,0], [1,1,1], [1,0,0], [1,1,1]],
+        'F': [[1,1,1], [1,0,0], [1,1,1], [1,0,0], [1,0,0]],
+        'G': [[1,1,1], [1,0,0], [1,0,1], [1,0,1], [1,1,1]],
+        'H': [[1,0,1], [1,0,1], [1,1,1], [1,0,1], [1,0,1]],
+        'I': [[1,1,1], [0,1,0], [0,1,0], [0,1,0], [1,1,1]],
+        'J': [[0,0,1], [0,0,1], [0,0,1], [1,0,1], [1,1,1]],
+        'K': [[1,0,1], [1,1,0], [1,0,0], [1,1,0], [1,0,1]],
+        'L': [[1,0,0], [1,0,0], [1,0,0], [1,0,0], [1,1,1]],
+        'M': [[1,0,1], [1,1,1], [1,1,1], [1,0,1], [1,0,1]],
+        'N': [[1,0,1], [1,1,1], [1,1,1], [1,0,1], [1,0,1]],
+        'O': [[1,1,1], [1,0,1], [1,0,1], [1,0,1], [1,1,1]],
+        'P': [[1,1,1], [1,0,1], [1,1,1], [1,0,0], [1,0,0]],
+        'Q': [[1,1,1], [1,0,1], [1,0,1], [1,1,1], [0,0,1]],
+        'R': [[1,1,1], [1,0,1], [1,1,1], [1,1,0], [1,0,1]],
+        'S': [[1,1,1], [1,0,0], [1,1,1], [0,0,1], [1,1,1]],
+        'T': [[1,1,1], [0,1,0], [0,1,0], [0,1,0], [0,1,0]],
+        'U': [[1,0,1], [1,0,1], [1,0,1], [1,0,1], [1,1,1]],
+        'V': [[1,0,1], [1,0,1], [1,0,1], [0,1,0], [0,1,0]],
+        'W': [[1,0,1], [1,0,1], [1,1,1], [1,1,1], [1,0,1]],
+        'X': [[1,0,1], [0,1,0], [0,1,0], [0,1,0], [1,0,1]],
+        'Y': [[1,0,1], [0,1,0], [0,1,0], [0,1,0], [0,1,0]],
+        'Z': [[1,1,1], [0,0,1], [0,1,0], [1,0,0], [1,1,1]],
+        ' ': [[0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0]],
+        ':': [[0,0,0], [0,1,0], [0,0,0], [0,1,0], [0,0,0]],
+        '.': [[0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,1,0]],
+        '_': [[0,0,0], [0,0,0], [0,0,0], [0,0,0], [1,1,1]]
+    }
+    
+    # Display error message in title area
+    error_text = f"ERR: {error_message[:20]}"  # Limit to 20 chars
+    text_x = 2
+    text_y = 2
+    
+    for i, char in enumerate(error_text.upper()):
+        char_data = error_font.get(char, error_font[' '])
+        for y in range(5):
+            for x in range(3):
+                if char_data[y][x]:
+                    if ROTATE == 2:  # 180 degrees
+                        matrix.SetPixel(63 - (text_x + i*4 + x), 63 - (text_y + y), intensity, 0, 0)
+                    else:
+                        matrix.SetPixel(text_x + i*4 + x, text_y + y, intensity, 0, 0)
 
 def show_loading_animation(is_graphic_designer=False, progress_text=None):
     # Set default text based on type
@@ -298,19 +417,26 @@ def show_loading_animation(is_graphic_designer=False, progress_text=None):
     # Game of Life setup
     cells = [[random.random() < 0.3 for _ in range(64)] for _ in range(64)]
     
-    # Progress bar setup
-    bar_width = 40
-    bar_height = 4
-    bar_x = (64 - bar_width) // 2
-    bar_y = 30
+    # Text setup - in title area (first 17 rows)
+    text_y = 8  # Moved down from 5 to 8
+    text_x = (64 - len(progress_text) * 4) // 2 + 2  # Moved right by adding 2 pixels
     
-    # Text setup - moved up to avoid overlap
-    text_y = 20  # Moved up from 25
-    text_x = (64 - len(progress_text) * 4) // 2  # Approximate text width
-    
-    # Progress bar animation
-    progress_speed = 1.0  # Faster progress
-    progress_width = 10  # Width of the moving section
+    # Simple 5x3 font for each character
+    font = {
+        'C': [[1,1,1], [1,0,0], [1,0,0], [1,0,0], [1,1,1]],
+        'R': [[1,1,1], [1,0,1], [1,1,1], [1,1,0], [1,0,1]],
+        'E': [[1,1,1], [1,0,0], [1,1,1], [1,0,0], [1,1,1]],
+        'A': [[0,1,0], [1,0,1], [1,1,1], [1,0,1], [1,0,1]],
+        'T': [[1,1,1], [0,1,0], [0,1,0], [0,1,0], [0,1,0]],
+        'I': [[1,1,1], [0,1,0], [0,1,0], [0,1,0], [1,1,1]],
+        'N': [[1,0,1], [1,1,1], [1,1,1], [1,0,1], [1,0,1]],
+        'G': [[1,1,1], [1,0,0], [1,0,1], [1,0,1], [1,1,1]],
+        'O': [[1,1,1], [1,0,1], [1,0,1], [1,0,1], [1,1,1]],
+        'D': [[1,1,0], [1,0,1], [1,0,1], [1,0,1], [1,1,0]],
+        'S': [[1,1,1], [1,0,0], [1,1,1], [0,0,1], [1,1,1]],
+        'F': [[1,1,1], [1,0,0], [1,1,1], [1,0,0], [1,0,0]],
+        '.': [[0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,1,0]]
+    }
     
     # Draw initial frame immediately
     matrix.Clear()
@@ -321,8 +447,8 @@ def show_loading_animation(is_graphic_designer=False, progress_text=None):
             new_cells = [[False for _ in range(64)] for _ in range(64)]
             for y in range(64):
                 for x in range(64):
-                    # Skip the text area to keep it clear
-                    if text_y <= y < text_y + 5 and text_x <= x < text_x + len(progress_text) * 4:
+                    # Skip the title area to keep it clear
+                    if y < 17:
                         continue
                         
                     # Count neighbors
@@ -365,38 +491,24 @@ def show_loading_animation(is_graphic_designer=False, progress_text=None):
             
             cells = new_cells
             
-            # Draw progress bar (rotated)
-            progress_pos = int((time.time() * progress_speed) % (bar_width + progress_width))
-            for y in range(bar_y, bar_y + bar_height):
-                for x in range(bar_x, bar_x + bar_width):
-                    # Apply rotation
-                    if ROTATE == 2:  # 180 degrees
-                        rot_x = 63 - x
-                        rot_y = 63 - y
-                    else:
-                        rot_x = x
-                        rot_y = y
-                    
-                    # Draw the moving section
-                    if x >= progress_pos - progress_width and x < progress_pos:
-                        matrix.SetPixel(rot_x, rot_y, 0, 255, 0)  # Green progress
-                    else:
-                        matrix.SetPixel(rot_x, rot_y, 0, 50, 0)  # Dark green background
+            # Draw pulsing text
+            pulse = 0.5 + 0.5 * math.sin(time.time() * 3)  # Pulsing effect
+            intensity = int(255 * pulse)
             
-            # Draw progress text (rotated) - with a clear background
-            # First, clear the text area
-            for y in range(text_y, text_y + 5):
-                for x in range(text_x, text_x + len(progress_text) * 4):
+            # Clear the title area
+            for y in range(17):
+                for x in range(64):
                     if ROTATE == 2:  # 180 degrees
                         matrix.SetPixel(63-x, 63-y, 0, 0, 0)
                     else:
                         matrix.SetPixel(x, y, 0, 0, 0)
             
-            # Then draw the text
+            # Draw each character
             for i, char in enumerate(progress_text):
+                char_data = font.get(char.upper(), font['.'])  # Use dot for unknown chars
                 for y in range(5):  # Character height
                     for x in range(3):  # Character width
-                        if random.random() < 0.8:  # Make text slightly flickery
+                        if char_data[y][x]:  # Only draw if the pixel should be on
                             # Apply rotation
                             if ROTATE == 2:  # 180 degrees
                                 rot_x = 63 - (text_x + i*4 + x)
@@ -404,9 +516,10 @@ def show_loading_animation(is_graphic_designer=False, progress_text=None):
                             else:
                                 rot_x = text_x + i*4 + x
                                 rot_y = text_y + y
-                            matrix.SetPixel(rot_x, rot_y, 255, 255, 255)
+                            matrix.SetPixel(rot_x, rot_y, intensity, intensity, intensity)
             
             time.sleep(0.05)  # Faster animation update
+            
     except Exception as e:
         print(f"⚠️ Error in loading animation: {str(e)}")
         show_error_symbol()
@@ -415,7 +528,7 @@ def show_loading_animation(is_graphic_designer=False, progress_text=None):
         matrix.Clear()
 
 def parse_raw_frames(raw_data):
-    """Parse raw hex color data into a list of frames, handling frame breaks"""
+    """Parse raw hex color data into a list of frames"""
     frames = []
     current_frame = [[(0, 0, 0) for _ in range(64)] for _ in range(64)]  # Initialize 64x64 grid with black
     pixel_count = 0
@@ -436,8 +549,9 @@ def parse_raw_frames(raw_data):
                 pixel_count = 0
             continue
             
-        # Process hex colors in the line
-        hex_colors = line.split('#')[1:]  # Split on # and ignore first empty element
+        # Remove commas and split on #
+        hex_colors = line.replace(',', '').split('#')[1:]  # Skip first empty element
+        
         for hex_color in hex_colors:
             try:
                 # Calculate x,y coordinates (0-based)
@@ -452,7 +566,14 @@ def parse_raw_frames(raw_data):
                     x = 0
                     y = 0
                 
-                # Parse hex color
+                # Ensure we have 6 characters
+                hex_color = hex_color.strip()
+                if len(hex_color) < 6:
+                    hex_color = hex_color.ljust(6, '0')
+                elif len(hex_color) > 6:
+                    hex_color = hex_color[:6]
+                
+                # Parse RGB values
                 r = int(hex_color[0:2], 16)
                 g = int(hex_color[2:4], 16)
                 b = int(hex_color[4:6], 16)
@@ -479,28 +600,80 @@ def parse_raw_frames(raw_data):
     return frames
 
 def show_visual_frames(raw_data):
-    """Display visual frames from raw hex color data"""
+    """
+    Display visual frames from raw hex color data and collect user feedback.
+    
+    Args:
+        raw_data (str): Raw hex color data containing frame information
+        
+    Returns:
+        tuple: (improvement_type, improvement_prompt) if user wants changes,
+               (None, None) if no changes needed or on error
+    """
     try:
         frames = parse_raw_frames(raw_data)
         
         if not frames:
             print("⚠️ No valid frames found in data.")
-            return
+            return None, None
             
+        # Display each frame with proper rotation
         for frame in frames:
             matrix.Clear()
             for y, row in enumerate(frame):
                 for x, (r, g, b) in enumerate(row):
-                    # Apply rotation
                     if ROTATE == 2:  # 180 degrees
                         matrix.SetPixel(63-x, 63-y, r, g, b)
                     else:
                         matrix.SetPixel(x, y, r, g, b)
             time.sleep(1)
             
+        # Keep the last frame displayed until user input
+        print("\nPress Enter to continue...")
+        input()
+        
+        # Only clear the display if no error occurred
+        matrix.Clear()
+        
+        # Collect user feedback
+        print("\n💭 What would you like to improve?")
+        print("1. Visual effects")
+        print("2. Animation timing")
+        print("3. Color scheme")
+        print("4. Overall design")
+        print("5. No changes needed")
+        
+        while True:
+            choice = input("\nChoose an option (1-5): ").strip()
+            
+            if choice in ['1', '2', '3', '4']:
+                improvement_type = {
+                    '1': 'visual effects',
+                    '2': 'animation timing',
+                    '3': 'color scheme',
+                    '4': 'overall design'
+                }[choice]
+                
+                prompt = input(f"\nDescribe the {improvement_type} changes you want: ").strip()
+                if prompt:  # Only return if we have a valid prompt
+                    return improvement_type, prompt
+                else:
+                    print("Please provide a description of the changes you want.")
+                    continue
+                    
+            elif choice == '5':
+                return None, None
+                
+            else:
+                print("Invalid choice. Please select 1-5.")
+                continue
+                
     except Exception as e:
         print(f"❌ Error displaying visual frames: {e}")
-        show_error_symbol()
+        # Keep the last frame displayed until user input
+        print("\nPress Enter to continue...")
+        input()
+        return None, None
 
 def call_coder_assistant(prompt, model="gpt-3.5-turbo"):
     try:
@@ -586,20 +759,47 @@ def call_graphic_designer_assistant(prompt, model="gpt-3.5-turbo"):
         print("📝 Processing visual data...")
         raw_data = response.choices[0].message.content
         
+        # Clean up the raw data
+        # Remove any JSON markers or other non-frame data
+        if raw_data.startswith('{"frames":'):
+            try:
+                data = json.loads(raw_data)
+                if "frames" in data:
+                    raw_data = data["frames"]
+            except:
+                pass
+                
+        # Ensure we have a string
+        if isinstance(raw_data, str):
+            # Remove any leading/trailing whitespace and newlines
+            raw_data = raw_data.strip()
+            # Remove any JSON markers
+            raw_data = raw_data.replace('{"frames":', '').replace('}', '')
+            # Remove any markdown code blocks
+            raw_data = raw_data.replace('```', '')
+            # Remove any other non-hex characters except # and newlines
+            raw_data = ''.join(c for c in raw_data if c.isalnum() or c in ['#', '\n'])
+        
         # Stop loading animation
         loading_stop_event.set()
         loading_thread.join()
         
-        return raw_data
+        # Show the frames immediately
+        improvement_type, improvement_prompt = show_visual_frames(raw_data)
+        
+        return improvement_type, improvement_prompt
         
     except Exception as e:
         print(f"⚠️ Error in visual generation: {str(e)}")
-        # Stop loading animation and show error
+        # Stop loading animation but don't show error symbol to preserve the display
         loading_stop_event.set()
-        show_error_symbol()
+        loading_thread.join()
+        # Keep the last frame displayed until user input
+        print("\nPress Enter to continue...")
+        input()
         if not isinstance(e, Exception):
             log_error("VISUAL_GENERATION", prompt, None, str(e))
-        return ""
+        return None, None
 
 def generate_fallback_content(prompt):
     # Create a meaningful fallback title
