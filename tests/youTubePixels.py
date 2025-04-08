@@ -1,78 +1,106 @@
+# === Streamed Playback Pipeline for LED Matrix (64x64) ===
 
-import random
-import os
+import subprocess
+import numpy as np
 import cv2
-from PIL import Image
+import time
+from PIL import Image, ImageDraw, ImageFont
 from yt_dlp import YoutubeDL
+from rgbmatrix import RGBMatrix, RGBMatrixOptions
 
-def download_video(youtube_url, output_path="temp_video.mp4"):
+# === LED Matrix Setup ===
+options = RGBMatrixOptions()
+options.rows = 64
+options.cols = 64
+options.chain_length = 1
+options.parallel = 1
+options.hardware_mapping = 'regular'
+options.brightness = 30  # Always max 30% brightness
+options.disable_hardware_pulsing = True
+matrix = RGBMatrix(options=options)
+
+# === Get Live Stream URL ===
+def get_stream_url(youtube_url):
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]',
-        'outtmpl': output_path,
         'quiet': True,
         'no_warnings': True,
+        'format': 'best[ext=mp4]',
     }
     with YoutubeDL(ydl_opts) as ydl:
-        ydl.download([youtube_url])
-    return output_path
+        info = ydl.extract_info(youtube_url, download=False)
+        return info['url'], info.get('title', 'Unknown'), info.get('uploader', 'Unknown')
 
-def extract_frames(video_path, max_frames=2):
-    cap = cv2.VideoCapture(video_path)
-    frames = []
-    count = 0
-    while cap.isOpened() and count < max_frames:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame = cv2.resize(frame, (64, 64))
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_frame = Image.fromarray(frame)
-        frames.append(pil_frame)
-        count += 1
-    cap.release()
-    return frames
+# === Display on Matrix ===
+def display_frame(video_frame, title_text, author_text):
+    full_image = Image.new("RGB", (64, 64))
+    draw = ImageDraw.Draw(full_image)
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 6)
 
-def frame_to_pixel_string(pil_img):
-    pixels = pil_img.load()
-    output = []
-    for y in range(64):
-        row = []
+    # Title Area (0-17)
+    draw.rectangle([0, 0, 63, 17], fill=(0, 0, 0))
+    draw.text((1, 2), title_text[:25], font=font, fill=(255, 255, 255))
+    draw.text((1, 9), author_text[:25], font=font, fill=(100, 100, 100))
+
+    # Game Area (18–57)
+    full_image.paste(video_frame, (0, 18))
+
+    # Ambient (58–63)
+    bar = video_frame.crop((0, 39, 64, 40))
+    pixels = bar.getdata()
+    r = sum(p[0] for p in pixels) // len(pixels)
+    g = sum(p[1] for p in pixels) // len(pixels)
+    b = sum(p[2] for p in pixels) // len(pixels)
+    for y in range(58, 64):
         for x in range(64):
-            r, g, b = pixels[x, y]
-            brightness = max(r, g, b) * 100 // 255
-            row.append(f"#{r:02X}{g:02X}{b:02X}:{brightness}")
-        output.append(" ".join(row))
-    return output
+            full_image.putpixel((x, y), (r, g, b))
 
-def main():
-    RANDOM_YOUTUBE_VIDEOS = [
-        "https://youtu.be/dQw4w9WgXcQ",
-        "https://youtu.be/fC_q9KPczAg",
-        "https://youtu.be/jfKfPfyJRdk"
-    ]
+    matrix.SetImage(full_image.rotate(180))
+
+# === Main Stream Display Loop ===
+def stream_video(youtube_url):
+    stream_url, title, author = get_stream_url(youtube_url)
+
+    print(f"🎥 Streaming: {title} by {author}")
+    command = [
+        'ffmpeg', '-i', stream_url,
+        '-f', 'image2pipe',
+        '-pix_fmt', 'rgb24',
+        '-vcodec', 'rawvideo', '-']
+
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    frame_width, frame_height = 640, 360  # Native input
+    raw_frame_size = frame_width * frame_height * 3
+    last_display = time.time()
+    frame_delay = 0.12  # Increase delay between frames for smoother playback
 
     try:
-        youtube_url = input("🎥 Enter YouTube video URL (or press Enter for a surprise): ").strip()
-        if not youtube_url:
-            youtube_url = random.choice(RANDOM_YOUTUBE_VIDEOS)
-            print(f"🎲 Surprise! Using: {youtube_url}")
+        while True:
+            raw = process.stdout.read(raw_frame_size)
+            if len(raw) != raw_frame_size:
+                break
 
-        print("📥 Downloading video...")
-        video_path = download_video(youtube_url)
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((frame_height, frame_width, 3))
+            frame = cv2.resize(frame, (64, 40), interpolation=cv2.INTER_AREA)
+            pil_frame = Image.fromarray(frame)
 
-        print("🎞️ Extracting frames...")
-        frames = extract_frames(video_path)
+            now = time.time()
+            if now - last_display >= frame_delay:
+                display_frame(pil_frame, title, author)
+                last_display = now
+            else:
+                time.sleep(0.01)  # prevent CPU overuse
 
-        print("🧼 Converting to 64x64 format...")
-        for i, frame in enumerate(frames):
-            print(f"\n=== FRAME {i + 1} ===")
-            for row in frame_to_pixel_string(frame):
-                print(row)
-
+    except KeyboardInterrupt:
+        print("🛑 Stream interrupted.")
     finally:
-        if os.path.exists("temp_video.mp4"):
-            os.remove("temp_video.mp4")
-            print("🗑️ Temporary video file removed.")
+        matrix.Clear()
+        process.terminate()
+        process.wait()
 
+# === Entry Point ===
 if __name__ == "__main__":
-    main()
+    url = input("📺 Enter YouTube URL to stream: ").strip()
+    if not url:
+        url = "https://youtu.be/dQw4w9WgXcQ"
+    stream_video(url)
