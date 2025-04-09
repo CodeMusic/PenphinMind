@@ -1,7 +1,7 @@
-<p align="center">
-  <h1>PenphinMind</h1>
-  <img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_small.jpg" alt="PenphinMind Logo" width="250">
-</p>
+<div align="center">
+<h1>PenphinMind</h1>
+<img src="https://github.com/CodeMusic/PenphinMind/blob/main/penphin_small.jpg" alt="PenphinMind Logo" width="250">
+</div>
 
 ## Overview
 
