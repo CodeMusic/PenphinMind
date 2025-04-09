@@ -4,6 +4,7 @@ import datetime
 import subprocess
 import random
 import json
+import math
 from penphin_api_assistants import (
     call_coder_assistant,
     call_graphic_designer_assistant,
@@ -12,7 +13,8 @@ from penphin_api_assistants import (
     show_error_symbol
 )
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
-from PIL import Image
+from PIL import Image, ImageDraw
+from io import BytesIO
 
 # === DISPLAY SETUP ===
 options = RGBMatrixOptions()
@@ -35,9 +37,6 @@ LIGHTING_AREA_HEIGHT = 10
 TITLE_AREA = (0, TITLE_AREA_HEIGHT)
 GAME_AREA = (TITLE_AREA_HEIGHT, TITLE_AREA_HEIGHT + GAME_AREA_HEIGHT)
 LIGHTING_AREA = (TITLE_AREA_HEIGHT + GAME_AREA_HEIGHT, 64)
-
-# Rotation constant (0=0°, 1=90°, 2=180°, 3=270°)
-ROTATE = 2
 
 # === CONFIG ===
 AUTOMATE_INPUT = False
@@ -74,40 +73,28 @@ def parse_hex_color(hex_bright):
     b = int(b * (brightness / 100))
     return r, g, b
 
-def show_visual_frames(json_data):
+def clean_up_pixel_art(img, size=(64, 64)):
+    return img.convert("RGB").resize(size, Image.NEAREST)
+
+def safe_load_image_from_response(response_content):
     try:
-        data = json.loads(json_data)
-        frames = data.get("frames", [])
-
-        if not frames:
-            print("⚠️ No frames found in JSON.")
-            return
-
-        for frame in frames:
-            matrix.Clear()
-            for y, row in enumerate(frame):
-                for x, px in enumerate(row):
-                    # Parse the color and brightness
-                    color_part, brightness = px.split(":")
-                    r = int(color_part[1:3], 16)
-                    g = int(color_part[3:5], 16)
-                    b = int(color_part[5:7], 16)
-                    brightness = int(brightness)
-                    
-                    # Apply brightness
-                    r = int(r * (brightness / 100))
-                    g = int(g * (brightness / 100))
-                    b = int(b * (brightness / 100))
-                    
-                    # Apply rotation
-                    if ROTATE == 2:  # 180 degrees
-                        matrix.SetPixel(63-x, 63-y, r, g, b)
-                    else:
-                        matrix.SetPixel(x, y, r, g, b)
-            time.sleep(1)
-
+        img = Image.open(BytesIO(response_content))
+        return clean_up_pixel_art(img)
     except Exception as e:
-        print(f"❌ Error displaying visual frames: {e}")
+        print("❌ Failed to load image from response:", e)
+        return Image.new("RGB", (64, 64), (255, 0, 0))  # Error tile
+
+def show_visual_frames(image_path):
+    try:
+        img = Image.open(image_path)
+        img = clean_up_pixel_art(img)
+        for y in range(64):
+            for x in range(64):
+                r, g, b = img.getpixel((x, y))
+                matrix.SetPixel(x, y, r, g, b)
+        time.sleep(1)
+    except Exception as e:
+        print(f"❌ Error displaying image: {e}")
         show_error_symbol()
 
 def list_existing_folders(base_path):
@@ -153,9 +140,7 @@ def create_animation():
         folder = folders[idx]
         latest = get_latest_attempt(os.path.join(PIXEL_ART_DIR, folder))
         if latest:
-            with open(os.path.join(PIXEL_ART_DIR, folder, latest), 'r') as f:
-                data = f.read()
-                show_visual_frames(data)
+            show_visual_frames(os.path.join(PIXEL_ART_DIR, folder, latest))
         return
 
     prompt = input("\nDescribe an animation: ").strip()
@@ -230,36 +215,99 @@ def refine_game(current_code, error=None, improvement_type=None, prompt=None):
         f"Current code:\n{current_code}"
     )
 
-def show_loading_animation(is_graphic_designer=False):
-    # Clear the matrix first
+def show_loading_animation(is_graphic_designer=False, progress_text=None):
+    # Set default text based on type
+    if progress_text is None:
+        progress_text = "DESIGNING..." if is_graphic_designer else "CODING..."
+    
+    # Game of Life setup
+    cells = [[random.random() < 0.3 for _ in range(64)] for _ in range(64)]
+    
+    # Text setup - in title area (first 17 rows)
+    text_y = 8  # Moved down from 5 to 8
+    text_x = (64 - len(progress_text) * 4) // 2 + 2  # Moved right by adding 2 pixels
+    
+    # Simple 5x3 font for each character
+    font = {
+        'C': [[1,1,1], [1,0,0], [1,0,0], [1,0,0], [1,1,1]],
+        'R': [[1,1,1], [1,0,1], [1,1,1], [1,1,0], [1,0,1]],
+        'E': [[1,1,1], [1,0,0], [1,1,1], [1,0,0], [1,1,1]],
+        'A': [[0,1,0], [1,0,1], [1,1,1], [1,0,1], [1,0,1]],
+        'T': [[1,1,1], [0,1,0], [0,1,0], [0,1,0], [0,1,0]],
+        'I': [[1,1,1], [0,1,0], [0,1,0], [0,1,0], [1,1,1]],
+        'N': [[1,0,1], [1,1,1], [1,1,1], [1,0,1], [1,0,1]],
+        'G': [[1,1,1], [1,0,0], [1,0,1], [1,0,1], [1,1,1]],
+        'O': [[1,1,1], [1,0,1], [1,0,1], [1,0,1], [1,1,1]],
+        'D': [[1,1,0], [1,0,1], [1,0,1], [1,0,1], [1,1,0]],
+        'S': [[1,1,1], [1,0,0], [1,1,1], [0,0,1], [1,1,1]],
+        'F': [[1,1,1], [1,0,0], [1,1,1], [1,0,0], [1,0,0]],
+        '.': [[0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,1,0]]
+    }
+    
+    # Draw initial frame immediately
     matrix.Clear()
     
-    # Set up text
-    text = "CREATING..." if is_graphic_designer else "CODING..."
-    text_width = len(text) * 4  # Approximate width of each character
-    text_x = (64 - text_width) // 2
-    text_y = 30  # Center vertically
-    
     try:
-        while not loading_stop_event.is_set():
-            # Clear previous frame
-            matrix.Clear()
+        while not loading_stop_event.is_set():  # Check for stop event
+            # Update Game of Life
+            new_cells = [[False for _ in range(64)] for _ in range(64)]
+            for y in range(64):
+                for x in range(64):
+                    # Skip the title area to keep it clear
+                    if y < 17:
+                        continue
+                        
+                    # Count neighbors
+                    neighbors = 0
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            if dx == 0 and dy == 0:
+                                continue
+                            nx, ny = (x + dx) % 64, (y + dy) % 64
+                            if cells[ny][nx]:
+                                neighbors += 1
+                    
+                    # Apply rules
+                    if cells[y][x]:
+                        new_cells[y][x] = neighbors in [2, 3]
+                    else:
+                        new_cells[y][x] = neighbors == 3
+                    
+                    # Draw cell
+                    if new_cells[y][x]:
+                        if is_graphic_designer:
+                            r = random.randint(0, 255)
+                            g = random.randint(0, 255)
+                            b = random.randint(0, 255)
+                        else:
+                            r = random.randint(0, 50)
+                            g = random.randint(0, 100)
+                            b = random.randint(0, 50)
+                        matrix.SetPixel(x, y, r, g, b)
+                    else:
+                        matrix.SetPixel(x, y, 0, 0, 0)
             
-            # Draw text
-            for i, char in enumerate(text):
+            cells = new_cells
+            
+            # Draw pulsing text
+            pulse = 0.5 + 0.5 * math.sin(time.time() * 3)  # Pulsing effect
+            intensity = int(255 * pulse)
+            
+            # Clear the title area
+            for y in range(17):
+                for x in range(64):
+                    matrix.SetPixel(x, y, 0, 0, 0)
+            
+            # Draw each character
+            for i, char in enumerate(progress_text):
+                char_data = font.get(char.upper(), font['.'])  # Use dot for unknown chars
                 for y in range(5):  # Character height
                     for x in range(3):  # Character width
-                        if random.random() < 0.8:  # Make text slightly flickery
-                            # Apply rotation
-                            if ROTATE == 2:  # 180 degrees
-                                rot_x = 63 - (text_x + i*4 + x)
-                                rot_y = 63 - (text_y + y)
-                            else:
-                                rot_x = text_x + i*4 + x
-                                rot_y = text_y + y
-                            matrix.SetPixel(rot_x, rot_y, 255, 255, 255)
+                        if char_data[y][x]:  # Only draw if the pixel should be on
+                            matrix.SetPixel(text_x + i*4 + x, text_y + y, intensity, intensity, intensity)
             
-            time.sleep(0.05)
+            time.sleep(0.05)  # Faster animation update
+            
     except Exception as e:
         print(f"⚠️ Error in loading animation: {str(e)}")
         show_error_symbol()
@@ -334,7 +382,7 @@ def create_game(prompt=None, title=None):
     print("\n🚀 Launching game...")
     
     # Add retry logic for running the game
-    max_consecutive_failures = 3
+    max_consecutive_failures = 7
     consecutive_failures = 0
     last_error = None
     current_code = result
@@ -371,7 +419,7 @@ def create_game(prompt=None, title=None):
                         f"- Previous game state must be cleared before new game starts\n"
                         f"- Screen sections:\n"
                         f"  - Top {TITLE_AREA_HEIGHT} pixels: Title area\n"
-                        f"  - Middle {GAME_AREA_HEIGHT} pixels: Main game area\n"
+                        f"  - Middle {GAME_AREA_HEIGHT}, pixels: Main game area\n"
                         f"  - Bottom {LIGHTING_AREA_HEIGHT} pixels: Lighting effects\n\n"
                         f"Current code with error:\n{current_code}"
                     )

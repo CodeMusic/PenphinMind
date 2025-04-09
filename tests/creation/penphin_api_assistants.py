@@ -9,9 +9,15 @@ import threading
 from threading import Event
 from PIL import Image
 import math
+from io import BytesIO
+import requests
+from game_creator import safe_load_image_from_response
+
+# Add after imports
+loading_stop_event = Event()
 
 # === CONFIG ===
-API_KEY = ""
+API_KEY = os.getenv('OPENAI_API_KEY', 'your-default-api-key')  # Use environment variable for API key
 DEBUG_MODE = True  # Enable debug mode by default
 
 # Get the current script's directory
@@ -19,9 +25,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_DIR = os.path.join(SCRIPT_DIR, "error_logs")
 PIXEL_ART_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR))), "PixelArt")
 
-# Ensure directories exist
-os.makedirs(ERROR_LOG_DIR, exist_ok=True, mode=0o755)
-os.makedirs(PIXEL_ART_DIR, exist_ok=True, mode=0o755)
+# Ensure directories exist with proper permissions
+os.makedirs(ERROR_LOG_DIR, exist_ok=True, mode=0o777)
+os.makedirs(PIXEL_ART_DIR, exist_ok=True, mode=0o777)
 
 # Cache for OpenAI client
 _client = None
@@ -86,6 +92,10 @@ CODE_ASSISTANT_MSG = (
     "matrix = RGBMatrix(options=options)\n\n"
     "Now create the game. ONLY output valid Python code. DO NOT wrap in markdown or explain anything."
 )
+PIXEL_ART_PROMPT_MSG = (
+    "You are a creative assistant who generates pixel art style illustrations in response to prompts. Each image should be clear, focused, and artistic—think retro 8-bit or 16-bit style icons. Avoid excessive shading, text, or background clutter. Return a single vibrant image (PNG or JPEG format)."
+)
+
 VISUAL_ASSISTANT_MSG = (
     "You are a visual AI named PenphinEyes. You respond ONLY with raw visual frame data that SYMBOLICALLY represents the prompt. "
     "Each frame must consist of 64 lines. Each line must have 64 pixel values. "
@@ -128,8 +138,9 @@ matrix = RGBMatrix(options=matrix_options)
 # Rotation constant (0=0°, 1=90°, 2=180°, 3=270°)
 ROTATE = 2
 
-# Add after matrix setup
-loading_stop_event = Event()
+# Retry logic for API calls
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
 
 def log_error(error_type, prompt, response, error_message, target_dir=None):
     try:
@@ -722,84 +733,46 @@ def call_coder_assistant(prompt, model="gpt-3.5-turbo"):
         log_error("CODE_GENERATION", prompt, None, str(e))
         return f"# ERROR: {str(e)}"
 
-def call_graphic_designer_assistant(prompt, model="gpt-3.5-turbo"):
-    try:
-        print("\n🎨 Starting visual generation...")
-        # Reset the stop event
-        loading_stop_event.clear()
-        # Start loading animation in a separate thread
-        loading_thread = threading.Thread(
-            target=show_loading_animation,
-            args=(True, "DESIGNING...")
-        )
-        loading_thread.daemon = True
-        loading_thread.start()
-        
-        print("🧠 Processing visual concepts...")
-        messages = [
-            {"role": "system", "content": VISUAL_ASSISTANT_MSG},
-            {"role": "user", "content": prompt}
-        ]
-        
-        if DEBUG_MODE:
-            print("\n🔍 Request:")
-            print(json.dumps({"messages": messages}, indent=2))
-        
-        response = get_openai_client().chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=4000
-        )
-        
-        if DEBUG_MODE:
-            print("\n🔍 Response:")
-            print(response.choices[0].message.content)
-        
-        print("📝 Processing visual data...")
-        raw_data = response.choices[0].message.content
-        
-        # Clean up the raw data
-        # Remove any JSON markers or other non-frame data
-        if raw_data.startswith('{"frames":'):
-            try:
-                data = json.loads(raw_data)
-                if "frames" in data:
-                    raw_data = data["frames"]
-            except:
-                pass
-                
-        # Ensure we have a string
-        if isinstance(raw_data, str):
-            # Remove any leading/trailing whitespace and newlines
-            raw_data = raw_data.strip()
-            # Remove any JSON markers
-            raw_data = raw_data.replace('{"frames":', '').replace('}', '')
-            # Remove any markdown code blocks
-            raw_data = raw_data.replace('```', '')
-            # Remove any other non-hex characters except # and newlines
-            raw_data = ''.join(c for c in raw_data if c.isalnum() or c in ['#', '\n'])
-        
-        # Stop loading animation
-        loading_stop_event.set()
-        loading_thread.join()
-        
-        # Show the frames immediately
-        improvement_type, improvement_prompt = show_visual_frames(raw_data)
-        
-        return improvement_type, improvement_prompt
-        
-    except Exception as e:
-        print(f"⚠️ Error in visual generation: {str(e)}")
-        # Stop loading animation but don't show error symbol to preserve the display
-        loading_stop_event.set()
-        loading_thread.join()
-        # Keep the last frame displayed until user input
-        print("\nPress Enter to continue...")
-        input()
-        if not isinstance(e, Exception):
-            log_error("VISUAL_GENERATION", prompt, None, str(e))
-        return None, None
+# === Assistant ===
+def call_graphic_designer_assistant(prompt):
+    for attempt in range(MAX_RETRIES):
+        try:
+            print("🎨 Requesting pixel art from DALL·E 3...")
+            response = openai.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1
+            )
+            image_url = response.data[0].url
+
+            print("📥 Downloading generated image...")
+            image_response = requests.get(image_url)
+            if image_response.status_code != 200:
+                raise Exception(f"Failed to download image, status code {image_response.status_code}")
+
+            # Use the new safe image loading function
+            img = safe_load_image_from_response(image_response.content)
+
+            # Display the image on the matrix
+            for y in range(64):
+                for x in range(64):
+                    r, g, b = img.getpixel((x, y))
+                    matrix.SetPixel(x, y, r, g, b)
+
+            print("✅ Pixel art displayed on matrix.\nPress Enter to continue...")
+            input()
+            return img, None
+
+        except Exception as e:
+            print(f"⚠️ Error in image generation: {e}")
+            if attempt < MAX_RETRIES - 1:
+                print(f"Retrying in {RETRY_DELAY} seconds...")
+                time.sleep(RETRY_DELAY)
+            else:
+                print("❌ Failed to generate image after multiple attempts.")
+                return None, None
 
 def generate_fallback_content(prompt):
     # Create a meaningful fallback title
@@ -820,64 +793,55 @@ def generate_fallback_content(prompt):
     return fallback_title, fallback_desc, fallback_ascii
 
 def call_game_title_generator(prompt, model="gpt-3.5-turbo", target_dir=None):
-    try:
-        print("\n🧠 Generating game title...")
-        
-        messages = [
-            {
-                "role": "system",
-                "content": TITLE_GENERATOR_MSG
-            },
-            {
-                "role": "user",
-                "content": f"Create a game title based on this prompt: {prompt}"
-            }
-        ]
-        
-        if DEBUG_MODE:
-            print("\n🔍 Debug - Request:")
-            print(json.dumps({"messages": messages}, indent=2))
-        
+    for attempt in range(MAX_RETRIES):
+        try:
+            print("\n🧠 Generating game title...")
+            messages = [
+                {
+                    "role": "system",
+                    "content": TITLE_GENERATOR_MSG
+                },
+                {
+                    "role": "user",
+                    "content": f"Create a game title based on this prompt: {prompt}"
+                }
+            ]
+            if DEBUG_MODE:
+                print("\n🔍 Debug - Request:")
+                print(json.dumps({"messages": messages}, indent=2))
         response = client.chat.completions.create(
             model=model,
-            messages=messages,
-            temperature=0.8,
-            max_tokens=500
-        )
-        
-        response_content = response.choices[0].message.content
-        print("\n🔍 Debug - Raw Response:")
-        print(response_content)
-        
-        print("📝 Processing response...")
-        result = extract_json_from_response(response_content)
-        
-        if not result:
-            raise ValueError("Failed to extract valid JSON from response")
-            
-        # Validate and ensure all fields are present and meaningful
-        if not all(key in result for key in ["title", "description"]):
-            raise ValueError("Missing required fields in response")
-            
-        # Ensure title is valid
-        if not result["title"] or len(result["title"]) > 30 or " " in result["title"]:
-            result["title"] = "".join(word.capitalize() for word in prompt.split()[:3])
-            
-        # Ensure description is valid
-        if not result["description"] or len(result["description"]) > 100:
-            result["description"] = f"A game about {prompt.lower()}"
-            
-        print(f"\n✨ Title: {result['title']}")
-        print(f"📄 Description: {result['description']}")
-        
-        return result["title"], result["description"]
+                messages=messages,
+                temperature=0.8,
+                max_tokens=500
+            )
+            response_content = response.choices[0].message.content
+            print("\n🔍 Debug - Raw Response:")
+            print(response_content)
+            print("📝 Processing response...")
+            result = extract_json_from_response(response_content)
+            if not result:
+                raise ValueError("Failed to extract valid JSON from response")
+            if not all(key in result for key in ["title", "description"]):
+                raise ValueError("Missing required fields in response")
+            if not result["title"] or len(result["title"]) > 30 or " " in result["title"]:
+                result["title"] = "".join(word.capitalize() for word in prompt.split()[:3])
+            if not result["description"] or len(result["description"]) > 100:
+                result["description"] = f"A game about {prompt.lower()}"
+            print(f"\n✨ Title: {result['title']}")
+            print(f"📄 Description: {result['description']}")
+            return result["title"], result["description"]
     except Exception as e:
-        print(f"⚠️ Error in title generation: {str(e)}")
-        log_error("TITLE_GENERATION", prompt, response.choices[0].message.content if 'response' in locals() else None, str(e), target_dir)
-        # Use the fallback generator
-        fallback_title = "".join(word.capitalize() for word in prompt.split()[:3])
-        fallback_desc = f"A game about {prompt.lower()}"
-        return fallback_title, fallback_desc
+            print(f"⚠️ Error in title generation: {str(e)}")
+            if attempt < MAX_RETRIES - 1:
+                print(f"Retrying in {RETRY_DELAY} seconds...")
+                time.sleep(RETRY_DELAY)
+            else:
+                print("❌ Failed to generate title after multiple attempts.")
+                log_error("TITLE_GENERATION", prompt, response.choices[0].message.content if 'response' in locals() else None, str(e), target_dir)
+                fallback_title = "".join(word.capitalize() for word in prompt.split()[:3])
+                fallback_desc = f"A game about {prompt.lower()}"
+                return fallback_title, fallback_desc
 
 # === EXAMPLE ===
 if __name__ == "__main__":
