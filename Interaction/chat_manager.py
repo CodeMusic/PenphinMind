@@ -118,7 +118,13 @@ class ChatManager:
         journaling_manager.recordInfo("[ChatManager] Searching for suitable model")
         
         try:
-            # Get models through Mind
+            # First check if we have a configured default model in the Mind
+            default_model = self.mind.get_default_model()
+            if default_model:
+                journaling_manager.recordInfo(f"[ChatManager] Using configured default model: {default_model}")
+                return default_model
+            
+            # Get models through Mind if no default is configured or available
             models_result = await self.mind.list_models()
             models = models_result.get("response", []) if models_result.get("status") == "ok" else []
             
@@ -129,6 +135,13 @@ class ChatManager:
             # First filter for only LLM models
             llm_models = [m for m in models if m.get("type", "").lower() == "llm"]
             journaling_manager.recordInfo(f"[ChatManager] Found {len(llm_models)} LLM models")
+            
+            # Check specifically for deepseek model as that's the intended default
+            for model in llm_models:
+                model_mode = model.get("mode", "")
+                if "deepseek" in model_mode.lower():
+                    journaling_manager.recordInfo(f"[ChatManager] Selected deepseek model: {model_mode}")
+                    return model_mode
             
             if llm_models:
                 # First try to find small LLM models (more likely to work well)
@@ -160,7 +173,7 @@ class ChatManager:
                     return model_name
             
             # Fallback to a common model name
-            return "qwen2.5-0.5b"
+            return "llm-model-deepseek-r1-1.5b-ax630c"
             
         except Exception as e:
             journaling_manager.recordError(f"[ChatManager] Error finding suitable model: {e}")

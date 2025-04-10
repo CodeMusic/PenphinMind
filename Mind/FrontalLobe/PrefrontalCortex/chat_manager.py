@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List
 from Mind.CorpusCallosum.synaptic_pathways import SynapticPathways
 from Mind.Subcortex.neurocortical_bridge import NeurocorticalBridge
 from Mind.FrontalLobe.PrefrontalCortex.system_journeling_manager import SystemJournelingManager
-from config import CONFIG  # Use absolute import
+from config import CONFIG
 from Mind.Subcortex.api_commands import (
     LLMCommand, SystemCommand, parse_response
 )
